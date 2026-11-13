@@ -505,7 +505,12 @@ def t_call(a):
         rows = fetch(op, path, query, headers)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
-        return json.dumps(result, default=str)[:MAX_CHARS]
+        encoded = json.dumps(result, default=str)
+        if len(encoded) > MAX_CHARS and isinstance(result.get("rows"), list):
+            result["rows"] = result["rows"][:10]
+            result["truncated"] = "Output shortened for model context; use fields or narrower filters for more detail."
+            encoded = json.dumps(result, default=str)
+        return encoded
 
     return _prepare_mutation(op, path, query, a.get("body"), a.get("headers"))
 
