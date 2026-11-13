@@ -31,7 +31,7 @@ For write support, enable **Management** in the NinjaOne OAuth application and s
 NINJA_SCOPE=monitoring management
 ```
 
-The OAuth app must actually be granted those scopes. Changing `.env` cannot grant permissions that are not enabled in NinjaOne.
+The OAuth app must actually be granted those scopes. Changing `.env` cannot grant permissions that are not enabled in NinjaOne. NinjaOne documents Management as allowing device/organization changes and script execution, so protect the client secret and keep the app bound to the smallest scope set required. The Control scope is for remote access and is not requested by this agent.
 
 ## Start
 
