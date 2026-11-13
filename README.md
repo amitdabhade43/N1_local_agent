@@ -52,11 +52,7 @@ The Foundry endpoint/port and NinjaOne MCP endpoint/port are separate services. 
 
 Set `AGENT_BACKEND=mcp`. The app discovers tools from the configured MCP endpoint and uses the selected Foundry model for the LangChain agent. The currently exposed NinjaOne MCP tools are read-only.
 
-### Native mode (no MCP server)
-
-Set `AGENT_BACKEND=native` plus `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`, and the correct regional `NINJA_BASE_URL`. The native agent uses the same discovered Foundry endpoint/model as MCP mode. It loads NinjaOne API v2 operations from the OpenAPI spec, searches endpoints, paginates, counts, and resolves entities. Native API execution is currently GET-only/read-only.
-
-## Notes
+NaN
 
 - Qwen/VL screenshot uploads are enabled only when the discovered model ID is identified as vision-capable (for example, a model ID containing `-vl-`).
 - Chat session state is held in backend memory and is cleared when the backend restarts.
