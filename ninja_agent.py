@@ -1203,6 +1203,84 @@ def recipe_find(q):
     return f'Found {len(found)} match(es) for "{name}":\n' + "\n".join(lines)
 
 
+def recipe_person_device_access(q):
+    """Resolve a named NinjaOne user and report device access/assignment fields."""
+    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
+    if not re.search(r"\\b(access|accessible|accessibility|assigned|assignment|device access)\\b", text):
+        return None
+    match = re.search(
+        r"\\b(?:of|for|does|has)\\s+(?:the\\s+)?(?:user\\s+|technician\\s+|person\\s+)?"
+        r"([a-z][a-z .'-]{2,})$",
+        text,
+    )
+    if not match:
+        return None
+    name = re.sub(r"\\s+", " ", match.group(1)).strip(" .'-")
+    if not name or re.search(r"\\b(devices?|access|assigned|accessible|give|show|list)\\b", name):
+        return None
+
+    resolved = json.loads(t_resolve({"kind": "user", "name": name}))
+    matches = resolved.get("matches") or []
+    if not matches:
+        return f'No NinjaOne user matched "{name}".'
+    if len(matches) > 1 and matches[1].get("match", 0) >= matches[0].get("match", 0) - 0.08:
+        choices = ", ".join(row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
+                            for row in matches[:5])
+        return f'Multiple NinjaOne users closely match "{name}": {choices}. Please confirm which user.'
+
+    user = matches[0]
+    if user.get("match", 0) < 0.65:
+        return f'No sufficiently close NinjaOne user match for "{name}". Closest result: {row_name(user)}.'
+
+    def ids_for(*keys):
+        for key in keys:
+            value = user.get(key)
+            if isinstance(value, list):
+                return list(dict.fromkeys(value))
+        return []
+
+    accessible = ids_for("accessibleDeviceIds")
+    assigned = ids_for("assignedDeviceIds")
+    device_ids = ids_for("deviceIds")
+    all_ids = list(dict.fromkeys(accessible + assigned + device_ids))
+    devices = []
+    if all_ids:
+        op = op_by_path("/v2/devices")
+        if op:
+            device_rows = fetch(op, "/v2/devices", {})
+            by_id = {str(row.get("id")): row for row in device_rows
+                     if isinstance(row, dict) and row.get("id") is not None}
+            devices = [by_id.get(str(device_id)) for device_id in all_ids]
+
+    def describe_ids(label, values):
+        if not values:
+            return f"{label}: no IDs returned in the user record."
+        lines = []
+        for device_id in values:
+            row = next((item for item in devices if isinstance(item, dict)
+                        and str(item.get("id")) == str(device_id)), None)
+            if row:
+                lines.append(f'- {row_name(row)} (ID {device_id})')
+            else:
+                lines.append(f"- Device ID {device_id} (device details not returned)")
+        return f"{label} ({len(values)}):\\n" + "\\n".join(lines)
+
+    who = row_name(user)
+    email = f' <{user["email"]}>' if user.get("email") else ""
+    sections = [
+        f"NinjaOne device-access details for {who}{email}:",
+        describe_ids("Accessible devices", accessible),
+        describe_ids("Assigned devices", assigned),
+        describe_ids("Device IDs on user record", device_ids),
+    ]
+    if not any((accessible, assigned, device_ids)):
+        sections.append(
+            "The matched user record contains none of accessibleDeviceIds, assignedDeviceIds, "
+            "or deviceIds. The API response does not establish device-level access for this user."
+        )
+    return "\\n\\n".join(sections)
+
+
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
                   r"(?:organization\s+|org\s+|client\s+)?(.+?)\s*[?.!]*$", q.lower())
@@ -1236,7 +1314,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
