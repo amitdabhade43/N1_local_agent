@@ -147,6 +147,14 @@ class NativeApiActionTests(unittest.TestCase):
         )
         self.assertEqual(result["total"], 1)
 
+    def test_http_boundary_rejects_unapproved_writes_and_all_delete_paths(self):
+        with self.assertRaisesRegex(ValueError, "explicit user approval"):
+            core.http_request("POST", "/v2/things", body={"name": "Laptop"})
+        with self.assertRaisesRegex(ValueError, "Delete execution is disabled"):
+            core.http_request("POST", "/v2/things/delete", read_only=True)
+        with self.assertRaisesRegex(ValueError, "Delete execution is disabled"):
+            core.http_request("DELETE", "/v2/things", approved=True)
+
     def test_write_approval_requires_management_scope(self):
         core.SCOPE = "monitoring"
         prepared = json.loads(core.t_call({
