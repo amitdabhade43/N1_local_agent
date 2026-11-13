@@ -511,6 +511,7 @@ async def approve_native_action(action_id: str, req: ActionApprovalRequest):
     result = await asyncio.to_thread(
         ninja_native.core.execute_pending_action, action_id, req.session_id
     )
+    ninja_native.record_action_result(req.session_id, result)
     return result
 
 
@@ -521,7 +522,9 @@ async def reject_native_action(action_id: str, req: ActionApprovalRequest):
     rejected = await asyncio.to_thread(
         ninja_native.core.reject_pending_action, action_id, req.session_id
     )
-    return {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
+    result = {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
+    ninja_native.record_action_result(req.session_id, result)
+    return result
 
 
 @app.post("/api/chat")
