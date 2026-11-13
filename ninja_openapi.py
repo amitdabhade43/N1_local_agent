@@ -89,6 +89,9 @@ def _media_schema(request_body: dict) -> tuple[str | None, dict | None]:
     if content:
         media_type, entry = next(iter(content.items()))
         schema = entry.get("schema") if isinstance(entry, dict) else None
+        # NinjaOne uses */* for several structured JSON billing payloads.
+        if media_type == "*/*" and isinstance(schema, dict):
+            return "application/json", schema
         return media_type, schema if isinstance(schema, dict) else None
     return None, None
 
