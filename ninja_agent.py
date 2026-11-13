@@ -719,6 +719,10 @@ def t_call(a):
                 rows = unwrap(raw_result)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
+        if getattr(rows, "complete", True) is False:
+            result["partial"] = True
+            result["count_scope"] = "current page only"
+            result["pagination_note"] = getattr(rows, "note", "The API returned one page only.")
         encoded = json.dumps(result, default=str)
         if len(encoded) > MAX_CHARS and isinstance(result.get("rows"), list):
             result["rows"] = result["rows"][:10]
@@ -778,11 +782,15 @@ def t_resolve(a):
     scored.sort(key=lambda x: -x[0])
     matched = [(score, row) for score, row in scored if score > 0.45]
     top = [dict(slim(row), match=round(score, 2)) for score, row in matched[:10]]
-    return json.dumps({
+    result = {
         "matches": top,
         "total_matches": len(matched),
-        "note": "total_matches counts all matching records; matches contains at most 10 examples"
-    }, default=str)
+        "note": "total_matches counts matching records in the retrieved result; matches contains at most 10 examples"
+    }
+    if getattr(locals().get("rows"), "complete", True) is False:
+        result["partial"] = True
+        result["pagination_note"] = getattr(rows, "note", "The API returned one page only.")
+    return json.dumps(result, default=str)
 
 
 DISPATCH = {
