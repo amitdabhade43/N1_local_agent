@@ -132,7 +132,8 @@ def http_request(method, path, query=None, body=None, media_type="application/js
         raise ValueError(f"Unsupported HTTP method: {method}")
 
     query = query or {}
-    key = (method, path, json.dumps(query, sort_keys=True), json.dumps(body, sort_keys=True, default=str))
+    key = (method, path, json.dumps(query, sort_keys=True), json.dumps(body, sort_keys=True, default=str),
+           json.dumps(extra_headers or {}, sort_keys=True))
     hit = _cache.get(key) if method == "GET" else None
     if hit and time.time() - hit[0] < TTL:
         return hit[1]
@@ -178,8 +179,8 @@ def http_request(method, path, query=None, body=None, media_type="application/js
     return data
 
 
-def http_get(path, query=None):
-    return http_request("GET", path, query)
+def http_get(path, query=None, extra_headers=None):
+    return http_request("GET", path, query, extra_headers=extra_headers)
 
 
 
@@ -194,18 +195,18 @@ def unwrap(data):
     return []
 
 
-def fetch(op, path, query):
-    """Fetch all rows; auto-paginates ops that have after+pageSize (cursor = last id)."""
+def fetch(op, path, query, extra_headers=None):
+    """Fetch rows; only auto-paginate when the OpenAPI declares an integer ID cursor."""
     params = {p["name"]: p for p in op["params"]}
     # Only integer ID cursors are auto-paginated. Activity timestamps and opaque
     # backup cursors also use the name "after"/"cursor" but have different semantics.
     after_schema = params.get("after", {}).get("schema", {})
     if not ("after" in params and "pageSize" in params and after_schema.get("type") == "integer"):
-        return unwrap(http_get(path, query))
+        return unwrap(http_get(path, query, extra_headers))
     q, rows, last = dict(query), [], None
     q.setdefault("pageSize", 1000)
     for _ in range(200):
-        page = unwrap(http_get(path, q))
+        page = unwrap(http_get(path, q, extra_headers))
         if not page:
             break
         rows += page
@@ -487,7 +488,7 @@ def t_call(a):
 
     query = a.get("query") or {}
     if op["method"] == "GET":
-        rows = fetch(op, path, query)
+        rows = fetch(op, path, query, headers)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
         return json.dumps(result, default=str)[:MAX_CHARS]
