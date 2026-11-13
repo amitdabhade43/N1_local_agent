@@ -231,30 +231,108 @@ def unwrap(data):
     return []
 
 
+class FetchRows(list):
+    def __init__(self, values=(), complete=True, note=""):
+        super().__init__(values)
+        self.complete = complete
+        self.note = note
+
+
+def _opaque_cursor_spec(op):
+    params = {p["name"]: p for p in op.get("params", [])}
+    after = params.get("after") or {}
+    after_schema = after.get("schema") or {}
+    if after_schema.get("type") != "string" or "nextCursor" not in after.get("description", "") + after_schema.get("description", ""):
+        return None
+    for response in (op.get("responses") or {}).values():
+        if not isinstance(response, dict):
+            continue
+        schema = ((response.get("content") or {}).get("application/json") or {}).get("schema") or {}
+        properties = schema.get("properties") or {}
+        page_info = (properties.get("pageInfo") or {}).get("properties") or {}
+        if "nextCursor" not in page_info:
+            continue
+        list_fields = [name for name, prop in properties.items()
+                       if isinstance(prop, dict) and prop.get("type") == "array"]
+        if list_fields:
+            return list_fields[0]
+    return None
+
+
+def _has_unhandled_pagination(op):
+    params = {p["name"]: p for p in op.get("params", [])}
+    if "pageSize" not in params:
+        return False
+    cursor_names = {"after", "olderThan", "newerThan", "before"}
+    return bool(cursor_names.intersection(params)) and not (
+        params.get("after", {}).get("schema", {}).get("type") == "integer"
+        and "pageSize" in params
+    ) and not _opaque_cursor_spec(op)
+
+
 def fetch(op, path, query, extra_headers=None):
-    """Fetch rows; only auto-paginate when the OpenAPI declares an integer ID cursor."""
-    params = {p["name"]: p for p in op["params"]}
-    # Only integer ID cursors are auto-paginated. Activity timestamps and opaque
-    # backup cursors also use the name "after"/"cursor" but have different semantics.
+    """Fetch all pages only when request and response schemas define a safe cursor."""
+    params = {p["name"]: p for p in op.get("params", [])}
     after_schema = params.get("after", {}).get("schema", {})
-    if not ("after" in params and "pageSize" in params and after_schema.get("type") == "integer"):
-        return unwrap(http_get(path, query, extra_headers))
-    q, rows, last = dict(query), [], None
-    q.setdefault("pageSize", 1000)
-    for _ in range(200):
-        page = unwrap(http_get(path, q, extra_headers))
-        if not page:
-            break
-        rows += page
-        nxt = page[-1].get("id") if isinstance(page[-1], dict) else None
-        if nxt is None:
-            raise RuntimeError("NinjaOne returned a paginated result without an id cursor; refusing an incomplete total.")
-        if nxt == last:
-            raise RuntimeError("NinjaOne pagination cursor did not advance; refusing an incomplete total.")
-        last, q["after"] = nxt, nxt
-    else:
-        raise RuntimeError("NinjaOne pagination exceeded 200 pages; refusing to report a possibly incomplete total.")
-    return rows
+    if "after" in params and "pageSize" in params and after_schema.get("type") == "integer":
+        q, rows, last = dict(query), [], None
+        q.setdefault("pageSize", 1000)
+        for _ in range(200):
+            page = unwrap(http_get(path, q, extra_headers))
+            if not page:
+                break
+            rows += page
+            nxt = page[-1].get("id") if isinstance(page[-1], dict) else None
+            if nxt is None:
+                raise RuntimeError("NinjaOne returned a paginated result without an id cursor; refusing an incomplete total.")
+            if nxt == last:
+                raise RuntimeError("NinjaOne pagination cursor did not advance; refusing an incomplete total.")
+            last, q["after"] = nxt, nxt
+        else:
+            raise RuntimeError("NinjaOne pagination exceeded 200 pages; refusing to report a possibly incomplete total.")
+        return FetchRows(rows)
+
+    list_field = _opaque_cursor_spec(op)
+    if list_field:
+        q, rows = dict(query), []
+        page_schema = params.get("pageSize", {}).get("schema", {})
+        q.setdefault("pageSize", page_schema.get("default") or 100)
+        cursor = q.get("after")
+        for _ in range(200):
+            result = http_get(path, q, extra_headers)
+            if not isinstance(result, dict) or not isinstance(result.get(list_field), list):
+                return FetchRows(unwrap(result), complete=False,
+                                 note="The response did not match the documented cursor-paginated schema.")
+            page = result[list_field]
+            if not page:
+                break
+            rows.extend(page)
+            page_info = result.get("pageInfo") or {}
+            next_cursor = page_info.get("nextCursor")
+            has_more = page_info.get("hasMore")
+            if has_more is False:
+                break
+            if not next_cursor:
+                if has_more is True or len(page) >= int(q["pageSize"]):
+                    raise RuntimeError("NinjaOne reported more pages but did not provide nextCursor.")
+                break
+            if next_cursor == cursor:
+                raise RuntimeError("NinjaOne opaque pagination cursor did not advance.")
+            cursor = next_cursor
+            q["after"] = cursor
+        else:
+            raise RuntimeError("NinjaOne cursor pagination exceeded 200 pages; refusing an incomplete total.")
+        return FetchRows(rows)
+
+    rows = unwrap(http_get(path, query, extra_headers))
+    if _has_unhandled_pagination(op):
+        return FetchRows(
+            rows,
+            complete=False,
+            note="This endpoint exposes paging parameters, but the published response schema does not define a safe automatic cursor. The result is the returned page only.",
+        )
+    return FetchRows(rows)
+
 
 
 def op_by_path(path):
