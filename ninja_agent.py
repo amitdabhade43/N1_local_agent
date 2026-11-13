@@ -223,8 +223,10 @@ def fetch(op, path, query, extra_headers=None):
             break
         rows += page
         nxt = page[-1].get("id") if isinstance(page[-1], dict) else None
-        if nxt is None or nxt == last:
-            break
+        if nxt is None:
+            raise RuntimeError("NinjaOne returned a paginated result without an id cursor; refusing an incomplete total.")
+        if nxt == last:
+            raise RuntimeError("NinjaOne pagination cursor did not advance; refusing an incomplete total.")
         last, q["after"] = nxt, nxt
     else:
         raise RuntimeError("NinjaOne pagination exceeded 200 pages; refusing to report a possibly incomplete total.")
