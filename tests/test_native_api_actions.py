@@ -130,6 +130,18 @@ class NativeApiActionTests(unittest.TestCase):
         self.assertEqual(result["error"], "Request validation failed")
         self.assertFalse(result.get("approval_required"))
 
+    def test_entity_resolution_preserves_access_and_role_arrays(self):
+        record = core.slim({
+            "accessibleDeviceIds": [11, 12, 13],
+            "assignedDeviceIds": [11],
+            "deviceIds": [12, 13],
+            "roles": ["Helpdesk", "Administrator"],
+        })
+        self.assertEqual(record["accessibleDeviceIds_count"], 3)
+        self.assertEqual(record["assignedDeviceIds_count"], 1)
+        self.assertEqual(record["deviceIds"], [12, 13])
+        self.assertEqual(record["roles"], ["Helpdesk", "Administrator"])
+
     def test_tool_definitions_and_dispatch_are_in_sync(self):
         declared = {item["function"]["name"] for item in core.TOOLS}
         self.assertEqual(declared, set(core.DISPATCH))
