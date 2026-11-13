@@ -5,6 +5,7 @@ from ninja_openapi import (
     describe_operation,
     is_delete_operation,
     validate_payload,
+    is_read_only_operation,
 )
 
 
@@ -107,6 +108,12 @@ class OpenApiCatalogTests(unittest.TestCase):
         self.assertTrue(is_delete_operation("DELETE", "/v2/things/1", "removeThing", "Remove"))
         self.assertTrue(is_delete_operation("POST", "/v2/things/delete", "deleteThings", "Delete things"))
         self.assertFalse(is_delete_operation("POST", "/v2/things", "createThing", "Create thing"))
+
+    def test_only_documented_read_only_post_operations_are_direct_reads(self):
+        self.assertTrue(is_read_only_operation("GET", "getDevices", "List devices"))
+        self.assertTrue(is_read_only_operation("POST", "getTicketsByBoard", "List of tickets for board"))
+        self.assertFalse(is_read_only_operation("POST", "createTicket", "Create ticket"))
+        self.assertFalse(is_read_only_operation("PATCH", "updateDevice", "Update device"))
 
     def test_operation_description_includes_schema_and_parameter_constraints(self):
         operation = build_operations(self.spec)["createThing"]
