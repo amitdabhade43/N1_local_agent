@@ -460,12 +460,12 @@ KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["tec
 
 def recipe_list_technician_names(q):
     """Return technician first/last names directly for simple inventory requests."""
-    text = re.sub(r"\\s+", " ", q.lower().strip())
-    has_technicians = bool(re.search(r"\\btechnicians?\\b|\\btechs?\\b", text))
-    asks_list = bool(re.search(r"\\b(list|show|display|get|fetch|give|provide|what are|who are)\\b", text))
+    text = re.sub(r"\s+", " ", q.lower().strip())
+    has_technicians = bool(re.search(r"\btechnicians?\b|\btechs?\b", text))
+    asks_list = bool(re.search(r"\b(list|show|display|get|fetch|give|provide|what are|who are)\b", text))
     asks_names = bool(
-        re.search(r"\\b(first\\s*name|firstname)\\b", text)
-        and re.search(r"\\b(last\\s*name|lastname)\\b", text)
+        re.search(r"\b(first\s*name|firstname)\b", text)
+        and re.search(r"\b(last\s*name|lastname)\b", text)
     )
     if not (has_technicians and asks_list and asks_names):
         return None
@@ -489,7 +489,7 @@ def recipe_list_technician_names(q):
             f"NinjaOne returned {len(rows)} technician record(s), but none contained "
             "firstName and lastName fields."
         )
-    return f"{len(names)} technician(s):\\n" + "\\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
+    return f"{len(names)} technician(s):\n" + "\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
 
 
 def recipe_count_named(q):
