@@ -589,6 +589,13 @@ TOOLS = [
             "operation_id": {"type": "string"}
         }, "required": ["operation_id"]}}},
     {"type": "function", "function": {
+        "name": "resolve_entity",
+        "description": "Resolve a NinjaOne organization, device, end user, technician or user name to matching records and IDs. Use before device/person-specific operations and before preparing writes.",
+        "parameters": {"type": "object", "properties": {
+            "kind": {"type": "string", "enum": ["organization", "device", "end_user", "technician", "user"]},
+            "name": {"type": "string"}
+        }, "required": ["kind", "name"]}}},
+    {"type": "function", "function": {
         "name": "call_api",
         "description": "Execute validated GET and explicitly read-only POST queries immediately. For state-changing POST, PUT or PATCH this ONLY prepares a request for explicit user approval in the chat UI; it never executes the mutation. DELETE and explicit delete actions are blocked. Use inspect_api first for write schemas.",
         "parameters": {"type": "object", "properties": {
@@ -613,6 +620,7 @@ For NinjaOne data questions, call tools; never invent records, totals, fields, p
 
 API workflow:
 - search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
+- resolve_entity matches organization, device, end-user, technician and user names to actual NinjaOne records. Resolve names to IDs before calling entity-specific endpoints.
 - inspect_api retrieves the exact request schema, required parameters, enums and body fields. Use it whenever a write body or parameter is unclear.
 - call_api executes GET operations and POST operations that the OpenAPI catalog explicitly identifies as read-only queries. It prepares state-changing POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
 - Never claim a mutation succeeded until the UI approval action returns a successful NinjaOne response.
