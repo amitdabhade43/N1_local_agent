@@ -456,6 +456,8 @@ async def config():
         **discovery,
         "foundry_base_url": discovery.get("base_url"),
         "mcp_url": MCP_URL,
+        "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
+        "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
     }
 
 
@@ -466,6 +468,8 @@ async def refresh_foundry():
         **discovery,
         "foundry_base_url": discovery.get("base_url"),
         "mcp_url": MCP_URL,
+        "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
+        "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
     }
 
 
