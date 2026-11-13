@@ -15,7 +15,7 @@ from openai import OpenAI
 
 import ninja_agent as core
 
-MAX_STEPS = 6
+MAX_STEPS = 10
 _ready, _sessions, _clients = False, {}, {}
 
 
