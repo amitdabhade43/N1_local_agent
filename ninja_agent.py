@@ -472,16 +472,6 @@ def _prepare_mutation(op, path, query, body, headers=None):
 
 
 def execute_pending_action(action_id, session_id):
-    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
-    if "management" not in scopes:
-        return {
-            "ok": False,
-            "error": (
-                "The configured NINJA_SCOPE does not include 'management'. "
-                "Enable the Management scope for this NinjaOne OAuth app and set "
-                "NINJA_SCOPE=monitoring management in .env before approving write operations."
-            ),
-        }
     with _pending_lock:
         action = _pending_actions.get(action_id)
         if not action:
@@ -492,6 +482,17 @@ def execute_pending_action(action_id, session_id):
             _pending_actions.pop(action_id, None)
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
         _pending_actions.pop(action_id, None)
+
+    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
+    if "management" not in scopes:
+        return {
+            "ok": False,
+            "error": (
+                "The configured NINJA_SCOPE does not include 'management'. "
+                "Enable the Management scope for this NinjaOne OAuth app and set "
+                "NINJA_SCOPE=monitoring management in .env before approving write operations."
+            ),
+        }
 
     try:
         result = http_request(
