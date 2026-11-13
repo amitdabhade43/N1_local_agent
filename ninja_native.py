@@ -44,7 +44,7 @@ def _ensure():
     _ready = True
 
 
-def _run(session_id, model_id, content, base):
+def _run_inner(session_id, model_id, content, base):
     _ensure()
     q = _text(content)
     fp = core.fast_path(q)  # no-LLM answer for plain "how many devices" style questions
@@ -69,6 +69,12 @@ def _run(session_id, model_id, content, base):
                 out = core.exec_tool(*tc)
                 activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
+                try:
+                    prepared = json.loads(out)
+                    if prepared.get("approval_required"):
+                        activity.append({"kind": "approval_required", "action": prepared})
+                except (ValueError, AttributeError):
+                    pass
                 msgs += [{"role": "assistant", "content": m.content},
                          {"role": "user", "content": core.text_call_followup(tc[0], out)}]
                 continue
@@ -105,10 +111,23 @@ def _run(session_id, model_id, content, base):
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
             activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
             activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
+            try:
+                prepared = json.loads(out)
+                if prepared.get("approval_required"):
+                    activity.append({"kind": "approval_required", "action": prepared})
+            except (ValueError, AttributeError):
+                pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     _sessions[session_id] = (hist + [{"role": "user", "content": q},
                                      {"role": "assistant", "content": answer}])[-12:]
     return answer, activity
+
+def _run(session_id, model_id, content, base):
+    core.set_active_session(session_id)
+    try:
+        return _run_inner(session_id, model_id, content, base)
+    finally:
+        core.clear_active_session()
 
 
 async def run_native(session_id, model_id, content, base_url):
