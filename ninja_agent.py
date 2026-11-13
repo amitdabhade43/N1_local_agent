@@ -460,28 +460,28 @@ KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["tec
 
 def recipe_list_entity_fields(q):
     """Deterministically list requested name/email fields for NinjaOne people inventories."""
-    text = re.sub(r"\\s+", " ", q.lower().strip())
+    text = re.sub(r"\s+", " ", q.lower().strip())
     # Correct common typing errors seen in short natural-language requests.
-    text = re.sub(r"\\b(fisrtname|fristname|firstanme)\\b", "firstname", text)
-    text = re.sub(r"\\b(latsname|lastnamee|lastnme)\\b", "lastname", text)
-    if not re.search(r"\\b(list|show|display|get|fetch|give|provide|who are|what are)\\b", text):
+    text = re.sub(r"\b(fisrtname|fristname|firstanme)\b", "firstname", text)
+    text = re.sub(r"\b(latsname|lastnamee|lastnme)\b", "lastname", text)
+    if not re.search(r"\b(list|show|display|get|fetch|give|provide|who are|what are)\b", text):
         return None
 
-    if re.search(r"\\bend[\\s-]?users?\\b", text):
+    if re.search(r"\bend[\s-]?users?\b", text):
         kind, path, label = "end_user", "/v2/user/end-users", "end user"
-    elif re.search(r"\\btechnicians?\\b|\\btechs?\\b", text):
+    elif re.search(r"\btechnicians?\b|\btechs?\b", text):
         kind, path, label = "technician", "/v2/user/technicians", "technician"
-    elif re.search(r"\\b(users?|people|accounts?)\\b", text):
+    elif re.search(r"\b(users?|people|accounts?)\b", text):
         kind, path, label = "user", "/v2/users", "user"
     else:
         return None
 
     requested = []
-    if re.search(r"\\b(first\\s*name|firstname)\\b", text):
+    if re.search(r"\b(first\s*name|firstname)\b", text):
         requested.append(("firstName", ("firstName", "first_name", "firstname")))
-    if re.search(r"\\b(last\\s*name|lastname)\\b", text):
+    if re.search(r"\b(last\s*name|lastname)\b", text):
         requested.append(("lastName", ("lastName", "last_name", "lastname")))
-    if re.search(r"\\b(email(?:\\s+ids?)?s?)\\b", text):
+    if re.search(r"\b(email(?:\s+ids?)?s?)\b", text):
         requested.append(("email", ("email", "emailAddress", "email_address")))
     if not requested:
         return None
@@ -504,7 +504,7 @@ def recipe_list_entity_fields(q):
     if not output:
         return (f"NinjaOne returned {len(rows)} {label} record(s), but none contained "
                 f"the requested fields ({', '.join(name for name, _ in requested)}).")
-    return f"{len(output)} {label}(s):\\n" + "\\n".join(
+    return f"{len(output)} {label}(s):\n" + "\n".join(
         f"{index}. {value}" for index, value in enumerate(output, 1)
     )
 
