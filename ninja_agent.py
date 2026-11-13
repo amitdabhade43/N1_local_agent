@@ -496,6 +496,55 @@ def clear_pending_session(session_id):
             _pending_actions.pop(key, None)
 
 
+def _has_cursor_post_schema(op):
+    body_schema = ((op.get("request_body") or {}).get("schema") or {})
+    body_props = body_schema.get("properties") or {}
+    if "lastCursorId" not in body_props:
+        return False
+    for response in (op.get("responses") or {}).values():
+        if not isinstance(response, dict):
+            continue
+        schema = ((response.get("content") or {}).get("application/json") or {}).get("schema") or {}
+        props = schema.get("properties") or {}
+        metadata_props = (props.get("metadata") or {}).get("properties") or {}
+        if "data" in props and "lastCursorId" in metadata_props:
+            return True
+    return False
+
+
+def fetch_cursor_post(op, path, query, body, headers):
+    """Follow an OpenAPI-described lastCursorId in request and response schemas."""
+    request_body = dict(body or {})
+    page_size = int(request_body.get("pageSize") or 100)
+    request_body["pageSize"] = page_size
+    cursor = request_body.get("lastCursorId")
+    rows = []
+    for _ in range(200):
+        result = http_request(
+            op["method"], path, query, request_body,
+            (op.get("request_body") or {}).get("media_type") or "application/json",
+            headers, read_only=True,
+        )
+        if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+            return unwrap(result)
+        page = result["data"]
+        if not page:
+            break
+        rows.extend(page)
+        next_cursor = (result.get("metadata") or {}).get("lastCursorId")
+        if len(page) < page_size:
+            break
+        if next_cursor is None:
+            raise RuntimeError("NinjaOne ticket pagination returned a full page without lastCursorId.")
+        if next_cursor == cursor:
+            raise RuntimeError("NinjaOne ticket pagination cursor did not advance.")
+        cursor = next_cursor
+        request_body["lastCursorId"] = cursor
+    else:
+        raise RuntimeError("NinjaOne ticket pagination exceeded 200 pages; refusing an incomplete total.")
+    return rows
+
+
 def t_call(a):
     op = OPS.get(a.get("operation_id", ""))
     if not op:
@@ -521,11 +570,14 @@ def t_call(a):
         if op["method"] == "GET":
             rows = fetch(op, path, query, headers)
         else:
-            media_type = (op.get("request_body") or {}).get("media_type") or "application/json"
-            raw_result = http_request(
-                op["method"], path, query, a.get("body"), media_type, headers, read_only=True
-            )
-            rows = unwrap(raw_result)
+            if _has_cursor_post_schema(op):
+                rows = fetch_cursor_post(op, path, query, a.get("body"), headers)
+            else:
+                media_type = (op.get("request_body") or {}).get("media_type") or "application/json"
+                raw_result = http_request(
+                    op["method"], path, query, a.get("body"), media_type, headers, read_only=True
+                )
+                rows = unwrap(raw_result)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
         encoded = json.dumps(result, default=str)
