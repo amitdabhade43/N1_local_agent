@@ -53,6 +53,19 @@ class NativeApiActionTests(unittest.TestCase):
                         ],
                     }
                 },
+                "/v2/uploads": {
+                    "post": {
+                        "operationId": "uploadFile",
+                        "summary": "Upload file",
+                        "requestBody": {
+                            "required": True,
+                            "content": {"multipart/form-data": {
+                                "schema": {"type": "object", "required": ["file"],
+                                           "properties": {"file": {"type": "string", "format": "binary"}}}
+                            }}
+                        }
+                    }
+                },
                 "/v2/devices": {
                     "get": {
                         "operationId": "getDevices",
@@ -252,6 +265,13 @@ class NativeApiActionTests(unittest.TestCase):
         self.assertEqual(request.call_args_list[2].args[3]["lastCursorId"], 6)
         self.assertTrue(all(call.kwargs == {"read_only": True} for call in request.call_args_list))
         self.assertEqual(result["total"], 2)
+
+    def test_multipart_operation_is_disclosed_and_never_sent(self):
+        with patch.object(core, "http_request") as request:
+            result = json.loads(core.t_call({"operation_id": "uploadFile"}))
+        self.assertIn("multipart/form-data", result["error"])
+        self.assertIn("No request was sent", result["error"])
+        request.assert_not_called()
 
     def test_http_boundary_rejects_unapproved_writes_and_all_delete_paths(self):
         with self.assertRaisesRegex(ValueError, "explicit user approval"):
