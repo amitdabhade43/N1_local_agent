@@ -155,6 +155,46 @@ class NativeApiActionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Delete execution is disabled"):
             core.http_request("DELETE", "/v2/things", approved=True)
 
+    def test_token_uses_current_oauth_route_with_legacy_fallback(self):
+        class FakeResponse:
+            def __init__(self, status_code, payload=None):
+                self.status_code = status_code
+                self.payload = payload or {}
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise RuntimeError(f"HTTP {self.status_code}")
+
+            def json(self):
+                return self.payload
+
+        original = {
+            "CID": core.CID,
+            "CSECRET": core.CSECRET,
+            "BASE": core.BASE,
+            "TOKEN_URL": core.TOKEN_URL,
+            "token_cache": dict(core._tok),
+        }
+        try:
+            core.CID = "client-id"
+            core.CSECRET = "client-secret"
+            core.BASE = "https://eu.ninjarmm.com"
+            core.TOKEN_URL = ""
+            core._tok.update(v=None, exp=0)
+            with patch.object(core.requests, "post", side_effect=[
+                FakeResponse(404),
+                FakeResponse(200, {"access_token": "test-token", "expires_in": 3600}),
+            ]) as post:
+                self.assertEqual(core.token(), "test-token")
+            self.assertEqual(post.call_args_list[0].args[0], "https://eu.ninjarmm.com/oauth/token")
+            self.assertEqual(post.call_args_list[1].args[0], "https://eu.ninjarmm.com/ws/oauth/token")
+        finally:
+            core.CID = original["CID"]
+            core.CSECRET = original["CSECRET"]
+            core.BASE = original["BASE"]
+            core.TOKEN_URL = original["TOKEN_URL"]
+            core._tok.update(original["token_cache"])
+
     def test_write_approval_requires_management_scope(self):
         core.SCOPE = "monitoring"
         prepared = json.loads(core.t_call({
