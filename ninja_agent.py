@@ -662,7 +662,19 @@ def ask(q, history):
                          {"role": "user", "content": text_call_followup(tc[0], exec_tool(*tc))}]
                 continue
             txt = clean(m.content)
-            bad = not called and bool(PLAN.search(txt) or BADCALL.search(txt))
+            tool_intent = bool(re.search(
+                r"\b(?:i(?:\s+will|\x27ll)|going\s+to)\s+(?:call|use|invoke)\b|\b(?:retrieve|fetch|look\s+up)\s+(?:the\s+)?(?:list|records|data)\b",
+                txt,
+                re.I,
+            ))
+            question_words = set(re.findall(r"[a-z]+", q.lower()))
+            lookup_intent = not called and any(
+                word in NOUN_WORDS or (word.endswith("s") and word[:-1] in NOUN_WORDS)
+                for word in question_words
+            )
+            bad = tool_intent or (
+                not called and bool(PLAN.search(txt) or BADCALL.search(txt) or lookup_intent)
+            )
             if bad and not nudged:
                 nudged = True
                 msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": NUDGE}]
