@@ -1218,7 +1218,7 @@ def recipe_add_device_access(q):
     if not match:
         return None
 
-    device_label, user_label = match.group(1).strip(" \t'"""), match.group(2).strip()
+    device_label, user_label = match.group(1).strip().strip("\'").strip('"'), match.group(2).strip()
     email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
     email = email_match.group(1).strip().lower() if email_match else ""
     user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
