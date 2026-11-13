@@ -516,6 +516,7 @@ def t_call(a):
         path = path.replace("{" + name + "}", quote(str(path_params[name]), safe=""))
 
     query = a.get("query") or {}
+    headers = a.get("headers") or {}
     if op.get("read_only"):
         if op["method"] == "GET":
             rows = fetch(op, path, query, headers)
@@ -541,11 +542,27 @@ DISPATCH = {
     "search_api": t_search,
     "inspect_api": t_inspect,
     "call_api": t_call,
+    "resolve_entity": t_resolve,
 }
 
 
-ENT = {"organization": "/v2/organizations", "device": "/v2/devices", "end_user": "/v2/user/end-users",
-       "technician": "/v2/user/technicians", "user": "/v2/users"}
+ENT = {
+    "organization": "/v2/organizations",
+    "device": "/v2/devices",
+    "end_user": "/v2/user/end-users",
+    "technician": "/v2/user/technicians",
+    "user": "/v2/users",
+    "policy": "/v2/policies",
+    "location": "/v2/locations",
+    "group": "/v2/groups",
+    "device_role": "/v2/roles",
+    "user_role": "/v2/user/roles",
+    "contact": "/v2/contacts",
+    "script": "/v2/automation/scripts",
+    "alert": "/v2/alerts",
+    "software_product": "/v2/software-products",
+    "ticket_board": "/v2/ticketing/trigger/boards",
+}
 
 
 def t_resolve(a):
@@ -558,7 +575,14 @@ def t_resolve(a):
     for r in fetch(op, path, {}):
         if not isinstance(r, dict):
             continue
-        labels = [str(r.get(k, "")) for k in ("name", "systemName", "dnsName", "displayName", "email")]
+        labels = [
+            str(r.get(k, ""))
+            for k in (
+                "name", "systemName", "dnsName", "displayName", "email", "title",
+                "subject", "hostname", "serialNumber", "productName", "conditionName",
+                "deviceName", "number", "uid",
+            )
+        ]
         labels.append(f'{r.get("firstName", "")} {r.get("lastName", "")}'.strip())
         best = max((difflib.SequenceMatcher(None, name, l.lower()).ratio() + (0.4 if name in l.lower() else 0)
                     for l in labels if l), default=0)
@@ -592,7 +616,7 @@ TOOLS = [
         "name": "resolve_entity",
         "description": "Resolve a NinjaOne organization, device, end user, technician or user name to matching records and IDs. Use before device/person-specific operations and before preparing writes.",
         "parameters": {"type": "object", "properties": {
-            "kind": {"type": "string", "enum": ["organization", "device", "end_user", "technician", "user"]},
+            "kind": {"type": "string", "enum": ["organization", "device", "end_user", "technician", "user", "policy", "location", "group", "device_role", "user_role", "contact", "script", "alert", "software_product", "ticket_board"]},
             "name": {"type": "string"}
         }, "required": ["kind", "name"]}}},
     {"type": "function", "function": {
