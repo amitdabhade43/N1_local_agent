@@ -44,6 +44,40 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         self.assertIn("rene@example.com", answer)
         self.assertNotIn("Rene", answer)
 
+    def test_named_user_device_access_is_resolved_without_llm(self):
+        user = {
+            "id": 42, "firstName": "Richard", "lastName": "Otrebski",
+            "email": "richard@example.com", "accessibleDeviceIds": [10],
+            "assignedDeviceIds": [11], "deviceIds": [10, 11], "match": 0.91,
+        }
+        devices = [
+            {"id": 10, "systemName": "RICHARD-LAPTOP"},
+            {"id": 11, "systemName": "RICHARD-DESKTOP"},
+        ]
+        with patch.object(ninja_agent, "t_resolve", return_value='{"matches": [' + __import__("json").dumps(user) + ']}'), patch.object(
+            ninja_agent, "op_by_path", return_value={"path": "/v2/devices"}
+        ), patch.object(ninja_agent, "fetch", return_value=devices):
+            answer = ninja_agent.fast_path("can you give me device access of richard otrebaski")
+        self.assertIn("Richard Otrebski", answer)
+        self.assertIn("RICHARD-LAPTOP", answer)
+        self.assertIn("RICHARD-DESKTOP", answer)
+        self.assertIn("Accessible devices (1)", answer)
+        self.assertIn("Assigned devices (1)", answer)
+
+    def test_named_user_device_access_asks_for_clarification_when_ambiguous(self):
+        payload = {
+            "matches": [
+                {"firstName": "Richard", "lastName": "Otrebski", "match": 0.94},
+                {"firstName": "Richard", "lastName": "Other", "match": 0.90},
+            ]
+        }
+        with patch.object(ninja_agent, "t_resolve", return_value=__import__("json").dumps(payload)):
+            answer = ninja_agent.recipe_person_device_access(
+                "can you give me device access of richard otrebaski"
+            )
+        self.assertIn("Multiple NinjaOne users", answer)
+        self.assertIn("Please confirm", answer)
+
     def test_non_field_question_is_not_claimed(self):
         self.assertIsNone(ninja_agent.recipe_list_entity_fields("how many technicians?"))
 
