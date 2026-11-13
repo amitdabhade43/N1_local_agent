@@ -130,6 +130,19 @@ class NativeApiActionTests(unittest.TestCase):
         self.assertEqual(result["error"], "Request validation failed")
         self.assertFalse(result.get("approval_required"))
 
+    def test_technician_resolution_requests_role_details_from_users_endpoint(self):
+        operation = {"id": "getUsers", "path": "/v2/users", "method": "GET", "params": []}
+        with patch.object(core, "op_by_path", return_value=operation), patch.object(
+            core, "fetch", return_value=[{
+                "id": 77, "firstName": "Richard", "lastName": "Otrebski",
+                "roles": ["Helpdesk"], "assignedDeviceIds": [100, 101],
+            }]
+        ) as fetch:
+            result = json.loads(core.t_resolve({"kind": "technician", "name": "Richard Otrebski"}))
+        self.assertEqual(fetch.call_args.args[2], {"userType": "TECHNICIAN", "includeRoles": True})
+        self.assertEqual(result["matches"][0]["roles"], ["Helpdesk"])
+        self.assertEqual(result["matches"][0]["assignedDeviceIds_count"], 2)
+
     def test_entity_resolution_preserves_access_and_role_arrays(self):
         record = core.slim({
             "accessibleDeviceIds": [11, 12, 13],
