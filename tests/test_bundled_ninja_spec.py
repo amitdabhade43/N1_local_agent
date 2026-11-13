@@ -30,7 +30,7 @@ class BundledNinjaSpecTests(unittest.TestCase):
 
     def test_read_only_ticket_board_post_is_distinguished_from_mutations(self):
         self.assertTrue(self.operations["getTicketsByBoard"]["read_only"])
-        self.assertFalse(self.operations["createTicket"]["read_only"])
+        self.assertFalse(self.operations["create_2"]["read_only"])
         self.assertFalse(self.operations["runScriptOnDevice"]["read_only"])
 
     def test_wildcard_json_request_media_type_is_normalized(self):
