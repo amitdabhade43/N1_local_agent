@@ -69,11 +69,12 @@ def _run(session_id, model_id, content, base):
                          {"role": "user", "content": core.text_call_followup(tc[0], out)}]
                 continue
             txt = core.clean(m.content)
-            if not called and not nudged and core.PLAN.search(txt):
+            bad = not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt))
+            if bad and not nudged:
                 nudged = True
                 msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": core.NUDGE}]
                 continue
-            answer = txt or "The model returned no text response."
+            answer = core.FALLBACK if bad else (txt or "The model returned no text response.")
             break
         called = True
         msgs.append(m.model_dump(exclude_none=True))

@@ -368,22 +368,103 @@ def text_call_followup(name, out):
             "in 1-2 plain sentences, number first.")
 
 
+NOUN_WORDS = {"device", "machine", "computer", "endpoint", "organization", "org", "client", "customer",
+              "company", "technician", "tech", "enduser", "user", "staff", "people", "account", "person"}
+BADCALL = re.compile(r"^\s*(call[\s_]|<tool_call|\{\s*\")", re.I)  # model printed a pseudo tool call
+FALLBACK = ("I couldn't turn that into a NinjaOne lookup with the current model. Try a simpler wording, e.g. "
+            '"search technician rene", "devices per organization", "how many devices in <organization>", '
+            "or switch to a larger model that supports tool calling.")
+
+
+def _orgs():
+    op = op_by_path("/v2/organizations")
+    return {o.get("id"): o.get("name") for o in fetch(op, "/v2/organizations", {}) if isinstance(o, dict)} if op else {}
+
+
+def recipe_per_org(q):
+    if not re.search(r"\b(device|machine|computer|endpoint)s?\b.*\b(per|by|each|every)\b.*\b(org|organization|client|customer)", q.lower()):
+        return None
+    dop = op_by_path("/v2/devices")
+    if not dop:
+        return None
+    devs = [d for d in fetch(dop, "/v2/devices", {}) if isinstance(d, dict)]
+    if not devs:
+        return "No devices returned by NinjaOne."
+    if not any("organizationId" in d for d in devs):
+        return "The devices list has no organizationId field, so I can't group it. Fields seen: " + ", ".join(list(devs[0])[:15])
+    names, c = _orgs(), Counter(d.get("organizationId") for d in devs)
+    lines = [f"{names.get(k) or 'organization ' + str(k)}: {n}" for k, n in c.most_common(40)]
+    return f"{len(devs)} devices across {len(c)} organizations:\n" + "\n".join(lines)
+
+
+KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["technician"],
+            "organization": ["organization"], "org": ["organization"], "client": ["organization"],
+            "customer": ["organization"], "device": ["device"], "machine": ["device"],
+            "computer": ["device"], "endpoint": ["device"]}
+
+
+def recipe_find(q):
+    t = re.sub(r"end[\s-]?users?", "enduser", q.lower().strip().rstrip("?.! "))
+    m = re.match(r"^(?:please\s+)?(?:search|find|look\s*up|lookup|locate|who\s+is)\s+(?:for\s+)?(?:(?:the|an?|me)\s+)*"
+                 r"(?:(enduser|technician|tech|user|account|person|organization|org|client|customer|device|machine|computer|endpoint)s?\s+)?"
+                 r"(?:account\s+)?(?:(?:with|by)\s+(?:the\s+)?name\s+|named\s+|called\s+|name\s+)?(.+)$", t)
+    if not m:
+        return None
+    kindw, name = m.group(1), m.group(2).strip()
+    if not name or re.search(r"\b(how|many|count|per|each|which|what|all)\b", name):
+        return None
+    kinds = KIND_MAP.get(kindw, ["technician", "end_user"])
+    found = []
+    for k in kinds:
+        for row in json.loads(t_resolve({"kind": k, "name": name})).get("matches", []):
+            found.append((k, row))
+    if not found:
+        return f'No match for "{name}" among {", ".join(k.replace("_", " ") for k in kinds)}.'
+    found.sort(key=lambda x: -x[1].get("match", 0))
+    lines = [f'{k.replace("_", " ")}: {row_name(r)}' + (f' <{r["email"]}>' if r.get("email") else "") + f' (id {r.get("id")})'
+             for k, r in found[:10]]
+    return f'Found {len(found)} match(es) for "{name}":\n' + "\n".join(lines)
+
+
+def recipe_devices_in(q):
+    m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
+                  r"(?:organization\s+|org\s+|client\s+)?(.+?)\s*[?.!]*$", q.lower())
+    if not m or re.search(r"\b(how|many|count|per|each|which|what|all)\b", m.group(1)):
+        return None
+    dop = op_by_path("/v2/devices")
+    ms = json.loads(t_resolve({"kind": "organization", "name": m.group(1)})).get("matches", [])
+    if not dop or not ms or ms[0].get("match", 0) < 0.9 or (len(ms) > 1 and ms[1]["match"] > ms[0]["match"] - 0.2):
+        return None
+    devs = [d for d in fetch(dop, "/v2/devices", {}) if isinstance(d, dict)]
+    if not any("organizationId" in d for d in devs):
+        return None
+    n = sum(1 for d in devs if d.get("organizationId") == ms[0].get("id"))
+    return f'{n} devices in {ms[0].get("name")}.'
+
+
 def fast_path(q):
     if GREET.match(q):
         return HELP
-    q = re.sub(r"end[\s-]?users?", "enduser", q.lower())
-    words = re.findall(r"[a-z]+", q)
+    q1 = re.sub(r"end[\s-]?users?", "enduser", q.lower())
+    words = re.findall(r"[a-z]+", q1)
     cw = {(w[:-1] if len(w) > 3 and w.endswith("s") else w) for w in words if w not in FILLER}
     for nouns, path, label in FAST:
         if cw and cw <= nouns:
             op = op_by_path(path)
             if not op:
-                return None
+                break
             rows = fetch(op, path, {})
             if set(words) & {"many", "count", "number", "total"}:
                 return f"{len(rows)} {label} in NinjaOne."
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
+    try:
+        for rec in (recipe_per_org, recipe_find, recipe_devices_in):
+            out = rec(q)
+            if out:
+                return out
+    except requests.HTTPError as e:
+        return f"NinjaOne request failed (HTTP {e.response.status_code}). Check the credentials and NINJA_BASE_URL region."
     return None
 
 
@@ -414,11 +495,12 @@ def ask(q, history):
                          {"role": "user", "content": text_call_followup(tc[0], exec_tool(*tc))}]
                 continue
             txt = clean(m.content)
-            if not called and not nudged and PLAN.search(txt):
+            bad = not called and bool(PLAN.search(txt) or BADCALL.search(txt))
+            if bad and not nudged:
                 nudged = True
                 msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": NUDGE}]
                 continue
-            return txt
+            return FALLBACK if bad else txt
         called = True
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
