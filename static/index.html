@@ -37,7 +37,7 @@ small{color:var(--muted)}
 <aside>
 <div>
 <div class="brand">NinjaOne Expert</div>
-<div class="sub">Local Foundry + MCP agent</div>
+<div class="sub">Local Foundry + NinjaOne API / MCP</div>
 </div>
 <div>
 <label for="model">Local model</label>
@@ -45,7 +45,7 @@ small{color:var(--muted)}
 <button id="refreshFoundryBtn" type="button">Refresh Foundry models</button>
 </div>
 <div class="status" id="status">Checking local services…</div>
-<button id="toolsBtn">Discover MCP tools</button>
+<button id="toolsBtn">Discover agent tools</button>
 <div class="sub">Native API: GET runs directly. POST/PUT/PATCH require your approval. Delete actions are disabled.</div>
 <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
 <button id="newBtn">New conversation</button>
@@ -98,7 +98,7 @@ function addActivity(parent,activity){
    const action=item.action||{};
    const b=document.createElement('b');b.textContent='APPROVAL REQUIRED · '+(action.method||'WRITE')+' '+(action.path||'');row.append(b);
    const pre=document.createElement('pre');
-   pre.textContent=JSON.stringify({summary:action.summary,query:action.query,body:action.body},null,2);
+   pre.textContent=JSON.stringify({summary:action.summary,query:action.query,headers:action.headers,body:action.body,media_type:action.media_type,expires_in_seconds:action.expires_in_seconds},null,2);
    row.append(pre);
    const controls=document.createElement('div');controls.style.display='flex';controls.style.gap='8px';controls.style.marginTop='8px';
    const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
@@ -160,7 +160,7 @@ async function loadFoundry(force=false){
   }else{
    if((d.models||[]).some(item=>item.id===previous))model.value=previous;
    document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'Select a model';
-   statusEl.textContent=`Foundry connected · ${d.foundry_base_url} · ${d.models.length} loaded model(s) · MCP ${d.mcp_url}`;
+   statusEl.textContent=`Foundry connected · ${d.foundry_base_url} · ${d.models.length} loaded model(s) · Backend ${d.backend||"mcp"}${d.backend==="mcp"?" · MCP "+d.mcp_url:" · Ninja scope "+(d.ninja_scope||"monitoring")}`;
   }
  }catch(e){statusEl.textContent='Foundry discovery failed: '+e.message}
 }
@@ -207,7 +207,7 @@ document.getElementById('clearBtn').onclick=async()=>{
 document.getElementById('refreshFoundryBtn').onclick=()=>loadFoundry(true);
 model.onchange=()=>{document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'No model selected'};
 document.getElementById('toolsBtn').onclick=async()=>{
- try{const r=await fetch('/api/tools');const d=await r.json();const box=addMessage('assistant',`Discovered ${d.tools.length} MCP tools:\n`+d.tools.map(t=>`• ${t.name} — ${t.description}`).join('\n'))}
+ try{const r=await fetch('/api/tools');const d=await r.json();const box=addMessage('assistant',`Discovered ${d.tools.length} agent tools:\n`+d.tools.map(t=>`• ${t.name} — ${t.description}`).join('\n'))}
  catch(e){addMessage('assistant','Could not discover tools: '+e.message)}
 };
 loadFoundry();
