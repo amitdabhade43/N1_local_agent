@@ -1,5 +1,8 @@
 """Native NinjaOne backend for N1_local_agent's FastAPI UI (no MCP server needed).
 
+The Foundry base URL is discovered by app.py and passed into run_native, so this
+backend follows dynamic Foundry port changes just like the MCP backend.
+
 Keeps the UI contract of app.py: returns (answer, activity) where activity is a list of
 {"kind":"call","tool","arguments"} / {"kind":"result","tool","result"} items.
 Reuses the spec index, tools and fast path from ninja_agent.py.
@@ -16,6 +19,7 @@ MAX_STEPS = 6
 _ready, _sessions, _clients = False, {}, {}
 
 
+# Cache clients by endpoint because Foundry can receive a new port after restart.
 def _client(base):
     if base not in _clients:
         _clients[base] = OpenAI(base_url=base, api_key=os.getenv("FOUNDRY_API_KEY", "local"),
