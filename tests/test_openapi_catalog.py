@@ -91,7 +91,7 @@ class OpenApiCatalogTests(unittest.TestCase):
         schema = operation["request_body"]["schema"]
         self.assertIn("name", schema["properties"])
         errors = validate_payload(schema, {"name": "A", "kind": "invalid"}, self.spec)
-        self.assertTrue(any("minLength" in error for error in errors))
+        self.assertTrue(any("too short" in error for error in errors))
         self.assertTrue(any("not one of" in error for error in errors))
 
     def test_valid_nullable_payload_is_accepted(self):
