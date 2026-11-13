@@ -1260,11 +1260,11 @@ def recipe_person_device_access(q):
 
     # Count-only questions use the authoritative ID arrays directly. Do not
     # fetch the device inventory or render a device list for these requests.
-    count_only = bool(re.search(r"\\b(count|how many|total|number of)\\b", text))
+    count_only = bool(re.search(r"\b(count|how many|total|number of)\b", text))
     if count_only:
         return (
-            f"NinjaOne device-access count for {who}{email}:\\n"
-            f"Accessible devices: {len(accessible)}\\n"
+            f"NinjaOne device-access count for {who}{email}:\n"
+            f"Accessible devices: {len(accessible)}\n"
             f"Assigned devices (separate from access): {len(assigned)}"
         )
 
