@@ -53,6 +53,20 @@ class NativeApiActionTests(unittest.TestCase):
                         ],
                     }
                 },
+                "/v2/devices": {
+                    "get": {
+                        "operationId": "getDevices",
+                        "summary": "List devices",
+                        "parameters": [
+                            {"name": "after", "in": "query", "schema": {"type": "integer"}},
+                            {"name": "pageSize", "in": "query", "schema": {"type": "integer"}},
+                        ],
+                        "responses": {"200": {"content": {"application/json": {
+                            "schema": {"type": "array", "items": {"type": "object",
+                                "properties": {"id": {"type": "integer"}, "systemName": {"type": "string"}}}}
+                        }}}},
+                    }
+                },
                 "/v2/relationships": {
                     "get": {
                         "operationId": "getRelationships",
@@ -286,6 +300,19 @@ class NativeApiActionTests(unittest.TestCase):
             core.BASE = original["BASE"]
             core.TOKEN_URL = original["TOKEN_URL"]
             core._tok.update(original["token_cache"])
+
+    def test_integer_id_cursor_get_paginates_all_pages(self):
+        with patch.object(core, "http_get", side_effect=[
+            [{"id": 1, "systemName": "PC-1"}],
+            [{"id": 2, "systemName": "PC-2"}],
+            [],
+        ]) as request:
+            rows = core.fetch(core.OPS["getDevices"], "/v2/devices", {})
+        self.assertEqual([row["id"] for row in rows], [1, 2])
+        self.assertTrue(rows.complete)
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[1].args[1]["after"], 1)
+        self.assertEqual(request.call_args_list[2].args[1]["after"], 2)
 
     def test_opaque_get_cursor_uses_response_page_info_schema(self):
         operation = core.OPS["getRelationships"]
