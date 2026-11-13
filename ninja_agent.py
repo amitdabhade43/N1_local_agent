@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """NinjaOne API agent driven by the bundled OpenAPI specification.
 
-GET requests execute directly. POST/PUT/PATCH requests are schema-validated and
-prepared for explicit UI approval. DELETE and explicit delete actions are blocked.
+GET and spec-confirmed read-only POST queries execute directly. State-changing
+POST/PUT/PATCH requests are schema-validated and prepared for explicit UI approval.
+DELETE and explicit delete actions are blocked.
 The local model selects operations; the OpenAPI catalog validates their contracts.
 """
 import ast, difflib, json, math, os, re, sys, time, threading, secrets
@@ -849,7 +850,7 @@ For NinjaOne data questions, call tools; never invent records, totals, fields, p
 
 API workflow:
 - search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
-- resolve_entity matches organization, device, end-user, technician and user names to actual NinjaOne records. Resolve names to IDs before calling entity-specific endpoints.
+- resolve_entity resolves names for organizations, devices, users, technicians, policies, locations, groups, roles, contacts, scripts, alerts, software products and ticket boards. Resolve names to IDs before calling entity-specific endpoints.
 - inspect_api retrieves the exact request schema, required parameters, enums and body fields. Use it whenever a write body or parameter is unclear.
 - call_api executes GET operations and POST operations that the OpenAPI catalog explicitly identifies as read-only queries. It prepares state-changing POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
 - Never claim a mutation succeeded until the UI approval action returns a successful NinjaOne response.
