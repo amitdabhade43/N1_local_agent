@@ -78,8 +78,10 @@ def _run(session_id, model_id, content, base):
                 txt,
                 re.I,
             ))
-            lookup_intent = not called and bool(
-                set(re.findall(r"[a-z]+", q.lower())) & core.NOUN_WORDS
+            question_words = set(re.findall(r"[a-z]+", q.lower()))
+            lookup_intent = not called and any(
+                word in core.NOUN_WORDS or (word.endswith("s") and word[:-1] in core.NOUN_WORDS)
+                for word in question_words
             )
             bad = tool_intent or (
                 not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
