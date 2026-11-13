@@ -44,11 +44,16 @@ def _ensure():
     _ready = True
 
 
-def _run_inner(session_id, model_id, content, base):
+def _run_inner(session_id, model_id, content, base, progress=None):
+    def emit(message, stage='working'):
+        if progress:
+            progress({'stage': stage, 'message': message})
     _ensure()
     q = _text(content)
+    emit("Checking whether this question can be answered directly.", "understanding")
     fp = core.fast_path(q)  # no-LLM answer for plain "how many devices" style questions
     if fp:
+        emit("Direct answer prepared; no model or API call was needed.", "complete")
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
 
     activity = []
@@ -58,7 +63,8 @@ def _run_inner(session_id, model_id, content, base):
     answer = "I couldn't finish within the step limit. Try a more specific question."
     called = nudged = False
     steps_text = 0
-    for _ in range(MAX_STEPS):
+    for step in range(MAX_STEPS):
+        emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
         m = _client(base).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
@@ -66,7 +72,9 @@ def _run_inner(session_id, model_id, content, base):
             if tc and steps_text < 3:
                 steps_text += 1
                 called = True
+                emit(f'Calling NinjaOne operation: {tc[0]}', 'tool')
                 out = core.exec_tool(*tc)
+                emit(f'Received a response from {tc[0]}.', 'result')
                 activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
                 try:
@@ -109,7 +117,9 @@ def _run_inner(session_id, model_id, content, base):
                 args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
             except Exception as e:
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
+            emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
             activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
+            emit(f"Received a response from {tc.function.name}.", "result")
             activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
             try:
                 prepared = json.loads(out)
@@ -130,17 +140,17 @@ def _run_inner(session_id, model_id, content, base):
                                      {"role": "assistant", "content": answer}])[-12:]
     return answer, activity
 
-def _run(session_id, model_id, content, base):
+def _run(session_id, model_id, content, base, progress=None):
     core.set_active_session(session_id)
     try:
-        return _run_inner(session_id, model_id, content, base)
+        return _run_inner(session_id, model_id, content, base, progress)
     finally:
         core.clear_active_session()
 
 
-async def run_native(session_id, model_id, content, base_url):
+async def run_native(session_id, model_id, content, base_url, progress=None):
     try:
-        return await asyncio.to_thread(_run, session_id, model_id, content, base_url)
+        return await asyncio.to_thread(_run, session_id, model_id, content, base_url, progress)
     except HTTPException:
         raise
     except Exception as exc:
