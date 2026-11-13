@@ -1326,17 +1326,17 @@ def recipe_person_device_access(q):
 
 def recipe_device_details(q):
     """Resolve a device name/system name to its numeric ID, then fetch its full detail record."""
-    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
+    text = re.sub(r"\s+", " ", q.lower().strip().rstrip("?.! "))
     match = re.search(
-        r"\\b(?:system|device|computer|machine|endpoint)\\s+"
-        r"(?:details?|information|info|specifications?)\\s+"
-        r"(?:of|for|about)\\s+(.+)$",
+        r"\b(?:system|device|computer|machine|endpoint)\s+"
+        r"(?:details?|information|info|specifications?)\s+"
+        r"(?:of|for|about)\s+(.+)$",
         text,
     )
     if not match:
         return None
 
-    identifier = match.group(1).strip().strip("\\\"'")
+    identifier = match.group(1).strip().strip("\\"'")
     if not identifier:
         return "Please provide a device name or identifier."
 
@@ -1420,7 +1420,7 @@ def recipe_device_details(q):
 
     return (
         f'NinjaOne system details for {row_name(device)} (device ID {device_id}) '
-        f'from GET {path.replace("{id}", str(device_id))}:\\n'
+        f'from GET {path.replace("{id}", str(device_id))}:\n'
         + json.dumps(rows[0], indent=2, default=str)
     )
 
