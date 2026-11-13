@@ -115,7 +115,8 @@ def describe(o):
         schema = body.get("schema") or {}
         required = schema.get("required", []) if isinstance(schema, dict) else []
         body_hint = f' | body: {body.get("media_type") or "unknown"}; required fields: {required}'
-    return f'{o["id"]}: {o["method"]} {o["path"]} - {o["summary"]} | params: {ps or "none"}{body_hint}'
+    access = "read-only" if o.get("read_only") else "approval-gated write"
+    return f'{o["id"]}: {o["method"]} {o["path"]} - {o["summary"]} [{access}] | params: {ps or "none"}{body_hint}'
 
 
 # ---------------------------------------------------------------- HTTP
