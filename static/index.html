@@ -46,7 +46,7 @@ small{color:var(--muted)}
 </div>
 <div class="status" id="status">Checking local services…</div>
 <button id="toolsBtn">Discover agent tools</button>
-<div class="sub">Native API: GET runs directly. POST/PUT/PATCH require your approval. Delete actions are disabled.</div>
+<div class="sub" id="backendPolicy">Native API: GET runs directly. Mutations require your approval. Delete actions are disabled.</div>
 <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
 <button id="newBtn">New conversation</button>
 <button id="clearBtn">Clear current conversation</button>
@@ -161,6 +161,10 @@ async function loadFoundry(force=false){
    if((d.models||[]).some(item=>item.id===previous))model.value=previous;
    document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'Select a model';
    statusEl.textContent=`Foundry connected · ${d.foundry_base_url} · ${d.models.length} loaded model(s) · Backend ${d.backend||"mcp"}${d.backend==="mcp"?" · MCP "+d.mcp_url:" · Ninja scope "+(d.ninja_scope||"monitoring")}`;
+   const policy=document.getElementById('backendPolicy');
+   if(policy)policy.textContent=d.backend==='native'
+    ?'Native API: OpenAPI-driven reads and approved writes. Delete actions are disabled.'
+    :'MCP mode: available capabilities depend on the tools exposed by your MCP server.';
   }
  }catch(e){statusEl.textContent='Foundry discovery failed: '+e.message}
 }
