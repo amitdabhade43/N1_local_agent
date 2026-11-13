@@ -703,7 +703,7 @@ API workflow:
 - Never call a write operation merely to explore its schema. Use inspect_api first.
 - For mutations, resolve target entities and IDs first, validate the exact intended change, then prepare the smallest request body. The user must approve the exact method, path, query and body in the UI.
 - If a request is missing required fields or violates an enum/type, correct it using inspect_api. Do not guess.
-- GET pagination is automatic only where the OpenAPI parameter schema confirms an integer ID cursor. Do not assume timestamps or opaque cursors are IDs.
+- Pagination is automatic only when the OpenAPI request and response schemas establish a matching integer cursor (including documented read-only POST ticket queries). Do not assume timestamps or opaque cursors are IDs.
 - Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
 - Distinguish end-user device access from technician role/organization permissions. Do not equate assigned devices with organization access.
 - If a person name resolves ambiguously, show the matching records and ask one concise clarification.
