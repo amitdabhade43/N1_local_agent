@@ -119,6 +119,12 @@ class NativeApiActionTests(unittest.TestCase):
         self.assertEqual(result["error"], "Request validation failed")
         self.assertFalse(result.get("approval_required"))
 
+    def test_tool_definitions_and_dispatch_are_in_sync(self):
+        declared = {item["function"]["name"] for item in core.TOOLS}
+        self.assertEqual(declared, set(core.DISPATCH))
+        self.assertIn("inspect_api", declared)
+        self.assertIn("resolve_entity", declared)
+
     def test_delete_verbs_and_post_delete_actions_are_not_in_catalog(self):
         self.assertNotIn("deleteThings", core.OPS)
         self.assertNotIn("deleteThingsByPost", core.OPS)
