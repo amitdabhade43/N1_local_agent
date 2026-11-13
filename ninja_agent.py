@@ -596,7 +596,7 @@ ENT = {
     "organization": "/v2/organizations",
     "device": "/v2/devices",
     "end_user": "/v2/user/end-users",
-    "technician": "/v2/user/technicians",
+    "technician": "/v2/users",
     "user": "/v2/users",
     "policy": "/v2/policies",
     "location": "/v2/locations",
