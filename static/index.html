@@ -203,7 +203,7 @@ imageInput.onchange=()=>{
  if(selectedImage){preview.src=URL.createObjectURL(selectedImage);preview.style.display='block'}
 };
 model.onchange=()=>{document.getElementById('modelTag').textContent=model.options[model.selectedIndex].text};
-document.getElementById('newBtn').onclick=()=>{sessionId=null;chat.innerHTML='<div class="welcome"><h2>New conversation</h2><p>Ask a NinjaOne question or start an investigation.</p></div>'};
+document.getElementById('newBtn').onclick=async()=>{if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});sessionId=null;chat.innerHTML='<div class="welcome"><h2>New conversation</h2><p>Ask a NinjaOne question or start an investigation.</p></div>'};
 document.getElementById('clearBtn').onclick=async()=>{
  if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});
  sessionId=null;chat.innerHTML='<div class="welcome"><h2>Conversation cleared</h2><p>Start a new NinjaOne investigation.</p></div>';
