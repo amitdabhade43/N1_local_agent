@@ -286,41 +286,64 @@ TOOLS = [
                        "required": ["kind", "name"]}}},
 ]
 
-SYSTEM = """You answer questions about a NinjaOne tenant using tools. Read-only. Never guess numbers.
-Rules:
-1. A name (person, organization, device) -> resolve_entity first, then use its id.
-2. Otherwise search_api, then call_api with the exact operation_id and parameter names it returned.
-3. Counts: call_api with count_only=true (the tool paginates; never count rows yourself). "Per X": group_by.
-   Filtering by organization: where={"organizationId": <id>} (check field names in a sample if unsure).
-4. Unsure of field names: call once with limit=3 and read them. On an error, fix the call using its hint.
-5. "How many devices does PERSON have access to": resolve the person as end_user AND technician. End user =
-   assigned devices; technician = devices in organizations they may access; device owner = owner field. If the
-   meaning or the match is ambiguous, ask ONE short question. Always say what the number measures.
-6. If an API has no way to answer, say so plainly. Do not invent endpoints.
-Answer in 1-3 short sentences with the number first. Use at most 5 tool steps."""
+SYSTEM = """You answer questions about a NinjaOne tenant by CALLING TOOLS. Read-only.
+Your first reply must be a tool call (or, if the question is not about NinjaOne data, a short answer). Never write plans, steps or numbered lists. Never guess numbers.
+
+How to work:
+- The 'Likely endpoints' list (if shown) holds operation_ids; pass one to call_api exactly as written. If none fits, call search_api with 2-3 keywords.
+- To count something: call_api with count_only=true. For 'per X' add group_by. To filter use where={"field": value}.
+- resolve_entity is ONLY for a person/organization/device name the user typed (e.g. Richard, Acme). Never for the word NinjaOne.
+- Unsure of field names: call_api with limit=3 and read them. If a call returns an error, fix it using the hint and call again.
+- Person access question: resolve the person as end_user and as technician; end user = assigned devices, technician = devices in organizations they can access. If unclear, ask ONE short question and say what the number measures.
+- If the API cannot answer, say so. Never invent endpoints.
+
+Example: "how many technicians?" -> call_api with the technicians list operation_id and count_only=true -> answer "N technicians."
+Final answer: 1-2 short sentences, number first, plain text."""
+
+
+def candidates(q):
+    hits = IDX.search(q, 3) if IDX else []
+    return ("\nLikely endpoints:\n" + "\n".join(describe(o) for o in hits)) if hits else ""
+
+
+PLAN = re.compile(r"(?m)^\s*\d+[.)]\s")  # numbered list = the model is describing a plan
+NUDGE = "Do not describe steps. Call a tool now, using an operation_id from the Likely endpoints list."
 
 
 # ---------------------------------------------------------------- fast path (no LLM)
 FILLER = set("how many count number of total the all we have do are there is in ninjaone ninja ninjarmm "
-             "our my a an show me give list what whats".split())
-DEV = {"device", "machine", "computer", "endpoint"}
-ORG = {"organization", "org", "client", "customer", "company"}
+             "our my a an show me give list what whats tell us".split())
+FAST = [  # (noun set, endpoint, label)
+    ({"device", "machine", "computer", "endpoint"}, "/v2/devices", "devices"),
+    ({"organization", "org", "client", "customer", "company"}, "/v2/organizations", "organizations"),
+    ({"technician", "tech"}, "/v2/user/technicians", "technicians"),
+    ({"enduser"}, "/v2/user/end-users", "end users"),
+    ({"user", "staff", "people"}, "/v2/users", "users"),
+]
+
+
+def row_name(r):
+    if not isinstance(r, dict):
+        return str(r)
+    full = f'{r.get("firstName", "")} {r.get("lastName", "")}'.strip()
+    return str(r.get("name") or r.get("systemName") or full or r.get("email") or r.get("id"))
 
 
 def fast_path(q):
-    words = re.findall(r"[a-z]+", q.lower())
-    core = {(w[:-1] if len(w) > 3 and w.endswith("s") else w) for w in words if w not in FILLER}
-    if not core or not (core <= DEV or core <= ORG):
-        return None
-    path, label = ("/v2/devices", "devices") if core <= DEV else ("/v2/organizations", "organizations")
-    op = op_by_path(path)
-    if not op:
-        return None
-    rows = fetch(op, path, {})
-    if set(words) & {"many", "count", "number", "total"}:
-        return f"{len(rows)} {label} in NinjaOne."
-    names = [str(r.get("name") or r.get("systemName") or r.get("id")) for r in rows[:50]]
-    return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
+    q = re.sub(r"end[\s-]?users?", "enduser", q.lower())
+    words = re.findall(r"[a-z]+", q)
+    cw = {(w[:-1] if len(w) > 3 and w.endswith("s") else w) for w in words if w not in FILLER}
+    for nouns, path, label in FAST:
+        if cw and cw <= nouns:
+            op = op_by_path(path)
+            if not op:
+                return None
+            rows = fetch(op, path, {})
+            if set(words) & {"many", "count", "number", "total"}:
+                return f"{len(rows)} {label} in NinjaOne."
+            names = [row_name(r) for r in rows[:50]]
+            return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
+    return None
 
 
 # ---------------------------------------------------------------- agent loop
@@ -335,12 +358,19 @@ def ask(q, history):
     fp = fast_path(q)
     if fp:
         return fp
-    msgs = [{"role": "system", "content": SYSTEM + ("\n/no_think" if NO_THINK else "")}] + history[-6:]
+    msgs = [{"role": "system", "content": SYSTEM + candidates(q) + ("\n/no_think" if NO_THINK else "")}] + history[-6:]
     msgs.append({"role": "user", "content": q})
+    called = nudged = False
     for _ in range(MAX_STEPS):
         m = llm.chat.completions.create(model=LLM_MODEL, messages=msgs, tools=TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
-            return clean(m.content)
+            txt = clean(m.content)
+            if not called and not nudged and PLAN.search(txt):
+                nudged = True
+                msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": NUDGE}]
+                continue
+            return txt
+        called = True
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
             try:

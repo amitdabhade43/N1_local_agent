@@ -49,15 +49,22 @@ def _run(session_id, model_id, content, base):
 
     activity = []
     hist = _sessions.get(session_id, [])[-6:]
-    system = core.SYSTEM + "\nReply in plain text only (the UI shows raw text): no markdown, no bold, no tables." + ("\n/no_think" if core.NO_THINK else "")
+    system = core.SYSTEM + core.candidates(q) + "\nReply in plain text only (the UI shows raw text): no markdown, no bold, no tables." + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
+    called = nudged = False
     for _ in range(MAX_STEPS):
         m = _client(base).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
-            answer = core.clean(m.content) or "The model returned no text response."
+            txt = core.clean(m.content)
+            if not called and not nudged and core.PLAN.search(txt):
+                nudged = True
+                msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": core.NUDGE}]
+                continue
+            answer = txt or "The model returned no text response."
             break
+        called = True
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
             try:
