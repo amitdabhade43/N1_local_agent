@@ -617,8 +617,13 @@ def t_resolve(a):
     if not op:
         return err(f"kind must be one of {list(ENT)}")
     name = str(a.get("name", "")).lower().strip()
+    query = {}
+    if a.get("kind") == "user":
+        query["includeRoles"] = True
+    elif a.get("kind") == "technician" and path == "/v2/users":
+        query.update({"userType": "TECHNICIAN", "includeRoles": True})
     scored = []
-    for r in fetch(op, path, {}):
+    for r in fetch(op, path, query):
         if not isinstance(r, dict):
             continue
         labels = [
@@ -705,7 +710,9 @@ API workflow:
 - If a request is missing required fields or violates an enum/type, correct it using inspect_api. Do not guess.
 - Pagination is automatic only when the OpenAPI request and response schemas establish a matching integer cursor (including documented read-only POST ticket queries). Do not assume timestamps or opaque cursors are IDs.
 - Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
-- Distinguish end-user device access from technician role/organization permissions. Do not equate assigned devices with organization access.
+- Access semantics from the published API spec: end-user records expose accessibleDeviceIds and assignedDeviceIds; report accessibleDeviceIds as access and assignedDeviceIds separately. GET /v2/users?includeRoles=true exposes user deviceIds, assignedDeviceIds and role names.
+- Technician records expose assignedDeviceIds and role names. GET /v2/user/roles exposes role members, but this published spec has no GET operation to read a role's organizationPermissions (only a PATCH setter). Never infer a technician's organization-access count from role names; state this API limitation clearly.
+- If a person-access question does not distinguish assigned devices from accessible devices, ask one short clarification.
 - If a person name resolves ambiguously, show the matching records and ask one concise clarification.
 - Report counts only when based on the complete API result or an authoritative total count. State when results are partial or truncated.
 
