@@ -112,12 +112,13 @@ def build_operations(spec: dict) -> dict[str, dict]:
             if is_delete_operation(method_upper, path, operation_id, summary):
                 continue
 
-            params = []
+            params_by_key = {}
             for raw_param in list(shared_params) + list(raw.get("parameters") or []):
                 param = expand_refs(raw_param, spec)
                 if not isinstance(param, dict) or not param.get("name"):
                     continue
-                params.append({
+                key = (param.get("in"), param["name"])
+                params_by_key[key] = {
                     "name": param["name"],
                     "in": param.get("in"),
                     "required": bool(param.get("required")),
@@ -125,7 +126,8 @@ def build_operations(spec: dict) -> dict[str, dict]:
                     "schema": param.get("schema") or {},
                     "style": param.get("style"),
                     "explode": param.get("explode"),
-                })
+                }
+            params = list(params_by_key.values())
 
             raw_body = raw.get("requestBody")
             body = expand_refs(raw_body, spec) if raw_body else None
