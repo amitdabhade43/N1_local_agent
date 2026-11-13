@@ -41,10 +41,8 @@ small{color:var(--muted)}
 </div>
 <div>
 <label for="model">Local model</label>
-<select id="model">
-<option value="phi">Phi-4-mini</option>
-<option value="qwen">Qwen3-VL-4B-Instruct (Vision)</option>
-</select>
+<select id="model"><option value="">Discovering local models…</option></select>
+<button id="refreshFoundryBtn" type="button">Refresh Foundry models</button>
 </div>
 <div class="status" id="status">Checking local services…</div>
 <button id="toolsBtn">Discover MCP tools</button>
@@ -102,16 +100,39 @@ function addActivity(parent,activity){
  });
  parent.append(details);
 }
-async function checkHealth(){
+async function loadFoundry(force=false){
  try{
-  const r=await fetch('/api/health');const d=await r.json();
-  statusEl.textContent=`Agent backend online · Foundry ${d.foundry_base_url} · MCP ${d.mcp_url}`;
- }catch(e){statusEl.textContent='Agent backend unavailable. Start run.ps1.'}
+  const r=await fetch(force?'/api/foundry/refresh':'/api/config',{method:force?'POST':'GET'});
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.detail||'Foundry discovery failed');
+  const previous=model.value;
+  model.innerHTML='';
+  (d.models||[]).forEach(item=>{
+   const option=document.createElement('option');
+   option.value=item.id;
+   option.textContent=item.label+(item.vision?' (Vision)':'');
+   option.dataset.vision=item.vision?'true':'false';
+   model.append(option);
+  });
+  if(!d.connected||!d.models?.length){
+   const option=document.createElement('option');
+   option.value='';
+   option.textContent='No loaded Foundry models';
+   model.append(option);
+   statusEl.textContent='Foundry unavailable or no models loaded. Start/load a model, then Refresh.';
+  }else{
+   if((d.models||[]).some(item=>item.id===previous))model.value=previous;
+   document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'Select a model';
+   statusEl.textContent=`Foundry connected · ${d.foundry_base_url} · ${d.models.length} loaded model(s) · MCP ${d.mcp_url}`;
+  }
+ }catch(e){statusEl.textContent='Foundry discovery failed: '+e.message}
 }
+
 async function send(){
  if(busy)return;
  const text=message.value.trim();if(!text&&!selectedImage)return;
- if(selectedImage&&model.value!=='qwen'){alert('Select Qwen3-VL to send an image.');return}
+ if(!model.value){alert('No Foundry model is selected. Start/load a model and refresh discovery.');return}
+ if(selectedImage&&model.selectedOptions[0]?.dataset.vision!=='true'){alert('Select a discovered vision-capable model to send an image.');return}
  busy=true;document.getElementById('sendBtn').disabled=true;
  addMessage('user',(text||'Analyze this screenshot')+(selectedImage?' [image attached]':''));
  const pending=addMessage('assistant','Working…');
@@ -146,11 +167,13 @@ document.getElementById('clearBtn').onclick=async()=>{
  if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});
  sessionId=null;chat.innerHTML='<div class="welcome"><h2>Conversation cleared</h2><p>Start a new NinjaOne investigation.</p></div>';
 };
+document.getElementById('refreshFoundryBtn').onclick=()=>loadFoundry(true);
+model.onchange=()=>{document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'No model selected'};
 document.getElementById('toolsBtn').onclick=async()=>{
  try{const r=await fetch('/api/tools');const d=await r.json();const box=addMessage('assistant',`Discovered ${d.tools.length} MCP tools:\n`+d.tools.map(t=>`• ${t.name} — ${t.description}`).join('\n'))}
  catch(e){addMessage('assistant','Could not discover tools: '+e.message)}
 };
-checkHealth();
+loadFoundry();
 </script>
 </body>
 </html>
