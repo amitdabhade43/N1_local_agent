@@ -538,14 +538,6 @@ def t_call(a):
     return _prepare_mutation(op, path, query, a.get("body"), a.get("headers"))
 
 
-DISPATCH = {
-    "search_api": t_search,
-    "inspect_api": t_inspect,
-    "call_api": t_call,
-    "resolve_entity": t_resolve,
-}
-
-
 ENT = {
     "organization": "/v2/organizations",
     "device": "/v2/devices",
@@ -597,7 +589,12 @@ def t_resolve(a):
     }, default=str)
 
 
-DISPATCH = {"search_api": t_search, "call_api": t_call, "resolve_entity": t_resolve}
+DISPATCH = {
+    "search_api": t_search,
+    "inspect_api": t_inspect,
+    "call_api": t_call,
+    "resolve_entity": t_resolve,
+}
 
 TOOLS = [
     {"type": "function", "function": {
@@ -614,7 +611,7 @@ TOOLS = [
         }, "required": ["operation_id"]}}},
     {"type": "function", "function": {
         "name": "resolve_entity",
-        "description": "Resolve a NinjaOne organization, device, end user, technician or user name to matching records and IDs. Use before device/person-specific operations and before preparing writes.",
+        "description": "Resolve names for common NinjaOne entities (organization, device, user, technician, policy, location, role, contact, script, alert and more) to matching records and IDs. Use before entity-specific operations and before preparing writes.",
         "parameters": {"type": "object", "properties": {
             "kind": {"type": "string", "enum": ["organization", "device", "end_user", "technician", "user", "policy", "location", "group", "device_role", "user_role", "contact", "script", "alert", "software_product", "ticket_board"]},
             "name": {"type": "string"}
