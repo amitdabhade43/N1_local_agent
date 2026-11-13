@@ -147,6 +147,16 @@ async def run_native(session_id, model_id, content, base_url):
         raise HTTPException(status_code=502, detail=f"Native NinjaOne agent failed: {exc}")
 
 
+def record_action_result(session_id, result):
+    """Keep approved/rejected API outcomes available to the next chat turn."""
+    history = _sessions.get(session_id, [])
+    history.append({
+        "role": "assistant",
+        "content": "NinjaOne API approval outcome: " + json.dumps(result, default=str)[:3000],
+    })
+    _sessions[session_id] = history[-12:]
+
+
 def clear_session(session_id):
     _sessions.pop(session_id, None)
     core.clear_pending_session(session_id)
