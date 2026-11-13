@@ -348,9 +348,8 @@ def text_call(txt):
     allowed = set(DISPATCH)
     try:
         text = (txt or "").strip()
-        # Preferred: Python-call syntax, e.g. resolve_entity(kind="user", name="rene").
-        # Parse as an AST and accept literals only; never eval model-generated code.
-        for match in re.finditer(r"\\b(search_api|call_api|resolve_entity)\\s*\\(", text):
+        # Parse Python-call syntax safely; only literal arguments are accepted.
+        for match in re.finditer(r"\b(search_api|call_api|resolve_entity)\s*\(", text):
             start = match.start()
             depth, quote, escaped, end = 0, None, False, None
             for index in range(match.end() - 1, len(text)):
@@ -358,7 +357,7 @@ def text_call(txt):
                 if quote:
                     if escaped:
                         escaped = False
-                    elif char == "\\\\":
+                    elif char == "\\":
                         escaped = True
                     elif char == quote:
                         quote = None
@@ -463,12 +462,12 @@ def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
     text = q.lower().strip().rstrip("?.! ")
     match = re.search(
-        r"\\b(?:users?|people|accounts?)\\b.*?\\b(?:with|having)\\s+(?:the\\s+)?name\\s+(.+)$",
+        r"\b(?:users?|people|accounts?)\b.*?\b(?:with|having)\s+(?:the\s+)?name\s+(.+)$",
         text
     )
     if not match:
         return None
-    name = match.group(1).strip().strip("\\\"'")
+    name = match.group(1).strip().strip("\"'")
     if not name or len(name) < 2:
         return None
     result = json.loads(t_resolve({"kind": "user", "name": name}))
