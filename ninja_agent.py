@@ -764,7 +764,8 @@ def t_resolve(a):
     elif a.get("kind") == "technician" and path == "/v2/users":
         query.update({"userType": "TECHNICIAN", "includeRoles": True})
     scored = []
-    for r in fetch(op, path, query):
+    rows = fetch(op, path, query)
+    for r in rows:
         if not isinstance(r, dict):
             continue
         labels = [
@@ -787,7 +788,7 @@ def t_resolve(a):
         "total_matches": len(matched),
         "note": "total_matches counts matching records in the retrieved result; matches contains at most 10 examples"
     }
-    if getattr(locals().get("rows"), "complete", True) is False:
+    if getattr(rows, "complete", True) is False:
         result["partial"] = True
         result["pagination_note"] = getattr(rows, "note", "The API returned one page only.")
     return json.dumps(result, default=str)
