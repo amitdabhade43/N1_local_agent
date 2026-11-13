@@ -701,7 +701,7 @@ def text_call(txt):
     try:
         text = (txt or "").strip()
         # Parse Python-call syntax safely; only literal arguments are accepted.
-        for match in re.finditer(r"\b(search_api|call_api|resolve_entity)\s*\(", text):
+        for match in re.finditer(r"\b(search_api|inspect_api|call_api|resolve_entity)\s*\(", text):
             start = match.start()
             depth, quote, escaped, end = 0, None, False, None
             for index in range(match.end() - 1, len(text)):
