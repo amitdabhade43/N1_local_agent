@@ -35,11 +35,13 @@ def _normalize_base_url(value: str) -> str | None:
     if parsed.scheme not in ("http", "https") or parsed.hostname not in ("127.0.0.1", "localhost", "::1"):
         return None
     path = parsed.path.rstrip("/")
-    if path.endswith("/models"):
+    path_lower = path.lower()
+    if path_lower.endswith("/models"):
         path = path[:-7].rstrip("/")
+        path_lower = path.lower()
     if not path:
         path = "/v1"
-    elif not (path.endswith("/v1") or path.endswith("/openai")):
+    elif not (path_lower.endswith("/v1") or path_lower.endswith("/openai")):
         path += "/v1"
     return f"{parsed.scheme}://{parsed.netloc}{path}"
 
@@ -112,7 +114,8 @@ def _models_from_payload(payload: Any) -> list[dict[str, Any]]:
 
 
 def _fetch_models(base_url: str) -> list[dict[str, Any]] | None:
-    for suffix in ("/models",):
+    # Foundry builds have exposed both lowercase and title-case route names.
+    for suffix in ("/models", "/Models"):
         try:
             response = requests.get(base_url.rstrip("/") + suffix, timeout=2.5)
             if response.ok:
