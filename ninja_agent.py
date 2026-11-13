@@ -266,11 +266,21 @@ def slim(r):
     if not isinstance(r, dict):
         return r
     o = {}
+    list_fields = {
+        "accessibleDeviceIds", "assignedDeviceIds", "deviceIds", "roles", "tags",
+        "members", "organizationPermissions",
+    }
     for k, v in r.items():
         if isinstance(v, (str, int, float, bool)) and v != "":
             o[k] = v[:80] if isinstance(v, str) else v
         elif isinstance(v, dict) and v.get("name"):
             o[k + "_name"] = str(v["name"])[:60]
+        elif isinstance(v, list) and k in list_fields:
+            o[k + "_count"] = len(v)
+            if all(not isinstance(item, (dict, list)) for item in v):
+                o[k] = v[:50]
+            else:
+                o[k] = [slim(item) for item in v[:20]]
     return o
 
 
