@@ -305,7 +305,7 @@ def fetch(op, path, query, extra_headers=None):
         q, rows, last = dict(query), [], None
         q.setdefault("pageSize", 1000)
         for _ in range(200):
-            page = _extract_rows(op, http_get(path, q, extra_headers))
+            page = _extract_rows(op, http_get(path, dict(q), extra_headers))
             if not page:
                 break
             rows += page
@@ -326,7 +326,7 @@ def fetch(op, path, query, extra_headers=None):
         q.setdefault("pageSize", page_schema.get("default") or 100)
         cursor = q.get("after")
         for _ in range(200):
-            result = http_get(path, q, extra_headers)
+            result = http_get(path, dict(q), extra_headers)
             if not isinstance(result, dict) or not isinstance(result.get(list_field), list):
                 return FetchRows(unwrap(result), complete=False,
                                  note="The response did not match the documented cursor-paginated schema.")
@@ -659,7 +659,7 @@ def fetch_cursor_post(op, path, query, body, headers):
     rows = []
     for _ in range(200):
         result = http_request(
-            op["method"], path, query, request_body,
+            op["method"], path, query, dict(request_body),
             (op.get("request_body") or {}).get("media_type") or "application/json",
             headers, read_only=True,
         )
