@@ -264,6 +264,7 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
         ("technicians", ["technician", "technicians"], ["list_technicians"]),
         ("devices", ["device", "devices", "endpoint", "endpoints"], ["list_devices"]),
         ("organizations", ["organization", "organizations", "org", "orgs"], ["list_organizations"]),
+        ("end_users", ["end user", "end users"], ["list_end_users", "list_endusers"]),
         ("users", ["user", "users"], ["list_users"]),
         ("roles", ["role", "roles"], ["list_roles"]),
     ]
@@ -291,7 +292,7 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
         return None
 
     fields = None
-    if plural in {"users", "technicians"} and field_intent:
+    if plural in {"users", "end_users", "technicians"} and field_intent:
         if re.search(r"\b(email|email id|email ids|emails)\b", text):
             fields = ["email"]
         else:
