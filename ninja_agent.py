@@ -7,11 +7,13 @@ Read-only, driven at runtime by the NinjaOne OpenAPI spec, tuned for local
 Design: 3 tools only (search_api, call_api, resolve_entity), a no-LLM fast path for
 trivial questions, server-side pagination/filtering/counting, compact tool output.
 """
-import ast, difflib, json, math, os, re, sys, time
+import ast, difflib, json, math, os, re, sys, time, threading, secrets
 from collections import Counter
+from urllib.parse import quote
 
 import requests
 from openai import OpenAI
+from ninja_openapi import build_operations, describe_operation, operation_document, validate_payload, is_delete_operation
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
 BASE = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").rstrip("/")  # use your region host
@@ -22,8 +24,10 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b")
 NO_THINK = os.getenv("NO_THINK", "0") == "1"  # set 1 for Qwen3 to skip thinking (faster)
 MAX_STEPS, MAX_ROWS, MAX_CHARS, TTL = 6, 25, 6000, 60
 
-OPS, IDX = {}, None
+OPS, IDX, SPEC_DATA = {}, None, {}
 _tok, _cache = {"v": None, "exp": 0.0}, {}
+_pending_actions, _pending_lock = {}, threading.Lock()
+_active_session = threading.local()
 
 
 # ---------------------------------------------------------------- spec index
@@ -39,25 +43,20 @@ def deref(spec, x):
 
 
 def load_ops():
+    """Load the bundled OpenAPI document and build the complete safe operation catalog."""
+    global SPEC_DATA
     cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ninja_spec.json")
     if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
-        spec = json.load(open(cache))
+        with open(cache, "r", encoding="utf-8") as handle:
+            spec = json.load(handle)
     else:
-        spec = requests.get(SPEC_URL, timeout=60).json()
-        json.dump(spec, open(cache, "w"))
-    ops = {}
-    for path, item in spec.get("paths", {}).items():
-        shared = item.get("parameters", [])
-        for method, op in item.items():
-            if method not in ("get", "post", "put", "patch", "delete"):
-                continue
-            ps = [deref(spec, p) for p in shared + op.get("parameters", [])]
-            ps = [{"name": p["name"], "in": p.get("in"), "required": bool(p.get("required"))}
-                  for p in ps if isinstance(p, dict) and p.get("name")]
-            oid = op.get("operationId") or f"{method}_{path}"
-            ops[oid] = dict(id=oid, method=method.upper(), path=path,
-                            summary=op.get("summary", ""), tags=op.get("tags", []), params=ps)
-    return ops
+        response = requests.get(SPEC_URL, timeout=60)
+        response.raise_for_status()
+        spec = response.json()
+        with open(cache, "w", encoding="utf-8") as handle:
+            json.dump(spec, handle)
+    SPEC_DATA = spec
+    return build_operations(spec)
 
 
 SYN = {"count": "list", "many": "list", "total": "list", "number": "list", "machine": "device",
@@ -75,8 +74,7 @@ def toks(s):
 class Index:
     def __init__(self, ops):
         self.ops = ops
-        self.docs = {i: set(toks(" ".join([o["id"], o["summary"], " ".join(o["tags"]),
-                                           re.sub(r"[{}]", " ", o["path"])]))) for i, o in ops.items()}
+        self.docs = {i: set(toks(operation_document(o))) for i, o in ops.items()}
         df = Counter(t for d in self.docs.values() for t in d)
         n = max(len(self.docs), 1)
         self.idf = {t: math.log(1 + n / c) for t, c in df.items()}
@@ -89,7 +87,7 @@ class Index:
         detail = bool(qt & {"detail", "id", "specific"})
         out = []
         for i, o in self.ops.items():
-            if o["method"] != "GET":  # read-only agent
+            if is_delete_operation(o["method"], o["path"], o["id"], o.get("summary", "")):
                 continue
             segs = set(toks(o["path"])) - {"v2", "list"}
             s = sum(self.idf.get(t, 0) for t in qt if t in self.docs[i])
@@ -103,7 +101,13 @@ class Index:
 
 def describe(o):
     ps = ", ".join(f'{p["name"]}({p["in"]}{",req" if p["required"] else ""})' for p in o["params"])
-    return f'{o["id"]}: GET {o["path"]} - {o["summary"]} | params: {ps or "none"}'
+    body = o.get("request_body") or {}
+    body_hint = ""
+    if body:
+        schema = body.get("schema") or {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        body_hint = f' | body: {body.get("media_type") or "unknown"}; required fields: {required}'
+    return f'{o["id"]}: {o["method"]} {o["path"]} - {o["summary"]} | params: {ps or "none"}{body_hint}'
 
 
 # ---------------------------------------------------------------- HTTP
@@ -119,22 +123,60 @@ def token():
     return _tok["v"]
 
 
-def http_get(path, query=None):
-    key = (path, json.dumps(query or {}, sort_keys=True))
-    hit = _cache.get(key)
+def http_request(method, path, query=None, body=None, media_type="application/json"):
+    """Execute a validated NinjaOne request. GET responses are cached; writes are not."""
+    method = method.upper()
+    if method == "DELETE":
+        raise ValueError("DELETE execution is disabled by policy.")
+    if method not in {"GET", "POST", "PUT", "PATCH"}:
+        raise ValueError(f"Unsupported HTTP method: {method}")
+
+    query = query or {}
+    key = (method, path, json.dumps(query, sort_keys=True), json.dumps(body, sort_keys=True, default=str))
+    hit = _cache.get(key) if method == "GET" else None
     if hit and time.time() - hit[0] < TTL:
         return hit[1]
+
+    headers = {"Authorization": "Bearer " + token(), "Accept": "application/json"}
+    kwargs = {"params": query, "timeout": 90, "headers": headers}
+    if method != "GET" and body is not None:
+        if media_type == "application/json":
+            kwargs["json"] = body
+            headers["Content-Type"] = "application/json"
+        elif media_type == "application/x-www-form-urlencoded":
+            kwargs["data"] = body
+        else:
+            raise ValueError(
+                f"Request media type '{media_type}' is not supported by the JSON agent interface. "
+                "This operation needs a file or multipart payload."
+            )
+
     for attempt in (0, 1):
-        r = requests.get(BASE + path, params=query, timeout=60,
-                         headers={"Authorization": "Bearer " + token(), "Accept": "application/json"})
-        if r.status_code == 401 and attempt == 0:
+        response = requests.request(method, BASE + path, **kwargs)
+        if response.status_code == 401 and attempt == 0:
             _tok["v"] = None
+            kwargs["headers"]["Authorization"] = "Bearer " + token()
             continue
         break
-    r.raise_for_status()
-    data = r.json() if r.text else []
-    _cache[key] = (time.time(), data)
+    response.raise_for_status()
+    if not response.content:
+        data = {"ok": True, "status_code": response.status_code}
+    else:
+        try:
+            data = response.json()
+        except ValueError:
+            data = {"status_code": response.status_code, "text": response.text[:4000]}
+
+    if method == "GET":
+        _cache[key] = (time.time(), data)
+    else:
+        _cache.clear()
     return data
+
+
+def http_get(path, query=None):
+    return http_request("GET", path, query)
+
 
 
 def unwrap(data):
@@ -150,8 +192,11 @@ def unwrap(data):
 
 def fetch(op, path, query):
     """Fetch all rows; auto-paginates ops that have after+pageSize (cursor = last id)."""
-    names = {p["name"] for p in op["params"]}
-    if not ("after" in names and "pageSize" in names):
+    params = {p["name"]: p for p in op["params"]}
+    # Only integer ID cursors are auto-paginated. Activity timestamps and opaque
+    # backup cursors also use the name "after"/"cursor" but have different semantics.
+    after_schema = params.get("after", {}).get("schema", {})
+    if not ("after" in params and "pageSize" in params and after_schema.get("type") == "integer"):
         return unwrap(http_get(path, query))
     q, rows, last = dict(query), [], None
     q.setdefault("pageSize", 1000)
@@ -214,32 +259,197 @@ def err(msg):
 
 
 def t_search(a):
-    hits = IDX.search(a.get("query", ""), 5)
+    hits = IDX.search(a.get("query", ""), int(a.get("limit", 8)))
     return "\n".join(describe(o) for o in hits) or err("no match; try different keywords")
+
+
+def t_inspect(a):
+    operation = OPS.get(a.get("operation_id", ""))
+    if not operation:
+        return err("Unknown operation_id. Use search_api first.")
+    details = describe_operation(operation, include_schema=True)
+    return json.dumps(details, default=str)[:MAX_CHARS]
+
+
+def _argument_errors(op, args):
+    errors = []
+    path_params = args.get("path_params") or {}
+    query = args.get("query") or {}
+    headers = args.get("headers") or {}
+    declared = op.get("params", [])
+    path_defs = {p["name"]: p for p in declared if p.get("in") == "path"}
+    query_defs = {p["name"]: p for p in declared if p.get("in") == "query"}
+    header_defs = {p["name"].lower(): p for p in declared if p.get("in") == "header"}
+
+    missing_path = [name for name, p in path_defs.items() if p.get("required") and name not in path_params]
+    if missing_path:
+        errors.append("Missing path parameters: " + ", ".join(missing_path))
+    unknown_path = sorted(set(path_params) - set(path_defs))
+    if unknown_path:
+        errors.append("Unknown path parameters: " + ", ".join(unknown_path))
+
+    missing_query = [name for name, p in query_defs.items() if p.get("required") and name not in query]
+    if missing_query:
+        errors.append("Missing required query parameters: " + ", ".join(missing_query))
+    unknown_query = sorted(set(query) - set(query_defs))
+    if unknown_query:
+        errors.append("Unknown query parameters: " + ", ".join(unknown_query))
+
+    for name in headers:
+        if name.lower() not in header_defs:
+            errors.append(f"Header '{name}' is not declared by the OpenAPI operation.")
+        if name.lower() in {"authorization", "cookie", "host", "content-length"}:
+            errors.append(f"Header '{name}' cannot be overridden by the agent.")
+
+    for name, value in path_params.items():
+        schema = path_defs.get(name, {}).get("schema") or {}
+        errors.extend(f"path_params.{name}: {e}" for e in validate_payload(schema, value, SPEC_DATA))
+    for name, value in query.items():
+        schema = query_defs.get(name, {}).get("schema") or {}
+        errors.extend(f"query.{name}: {e}" for e in validate_payload(schema, value, SPEC_DATA))
+
+    request_body = op.get("request_body")
+    body = args.get("body")
+    if request_body and request_body.get("required") and body is None:
+        errors.append("This operation requires a request body.")
+    if body is not None:
+        if not request_body:
+            errors.append("This operation does not define a request body.")
+        else:
+            errors.extend(validate_payload(request_body.get("schema"), body, SPEC_DATA))
+    return errors
+
+
+def set_active_session(session_id):
+    _active_session.value = session_id
+
+
+def clear_active_session():
+    _active_session.value = None
+
+
+def _prepare_mutation(op, path, query, body):
+    session_id = getattr(_active_session, "value", None)
+    if not session_id:
+        return err("Mutation blocked: no active chat session is associated with this request.")
+    request_body = op.get("request_body") or {}
+    media_type = request_body.get("media_type") or "application/json"
+    if media_type not in {"application/json", "application/x-www-form-urlencoded"}:
+        return err(
+            f"Mutation not prepared: {media_type} payloads require a file/multipart workflow "
+            "that is not yet available in the chat UI."
+        )
+    action_id = secrets.token_urlsafe(24)
+    action = {
+        "action_id": action_id,
+        "session_id": session_id,
+        "operation_id": op["id"],
+        "method": op["method"],
+        "path": path,
+        "query": query,
+        "body": body,
+        "media_type": media_type,
+        "summary": op.get("summary", ""),
+        "expires_at": time.time() + 600,
+    }
+    with _pending_lock:
+        _pending_actions[action_id] = action
+    return json.dumps({
+        "approval_required": True,
+        "action_id": action_id,
+        "method": action["method"],
+        "path": action["path"],
+        "summary": action["summary"],
+        "query": query,
+        "body": body,
+        "expires_in_seconds": 600,
+        "note": "The request has NOT been executed. The user must approve it in the chat UI."
+    }, default=str)
+
+
+def execute_pending_action(action_id, session_id):
+    with _pending_lock:
+        action = _pending_actions.get(action_id)
+        if not action:
+            return {"ok": False, "error": "Approval request not found or already used."}
+        if action["session_id"] != session_id:
+            return {"ok": False, "error": "Approval request belongs to a different chat session."}
+        if time.time() > action["expires_at"]:
+            _pending_actions.pop(action_id, None)
+            return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
+        _pending_actions.pop(action_id, None)
+
+    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
+    if "management" not in scopes:
+        return {
+            "ok": False,
+            "error": (
+                "The configured NINJA_SCOPE does not include 'management'. "
+                "Enable the Management scope for this NinjaOne OAuth app and set "
+                "NINJA_SCOPE=monitoring management in .env before approving write operations."
+            ),
+        }
+    try:
+        result = http_request(
+            action["method"], action["path"], action["query"], action["body"], action["media_type"]
+        )
+        return {
+            "ok": True,
+            "operation_id": action["operation_id"],
+            "method": action["method"],
+            "path": action["path"],
+            "result": result,
+        }
+    except requests.HTTPError as exc:
+        response = exc.response
+        return {"ok": False, "error": f"NinjaOne HTTP {response.status_code}: {response.text[:3000]}"}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def reject_pending_action(action_id, session_id):
+    with _pending_lock:
+        action = _pending_actions.get(action_id)
+        if not action or action.get("session_id") != session_id:
+            return False
+        _pending_actions.pop(action_id, None)
+        return True
 
 
 def t_call(a):
     op = OPS.get(a.get("operation_id", ""))
     if not op:
-        sug = "; ".join(o["id"] for o in IDX.search(a.get("operation_id", ""), 3))
-        return err(f"unknown operation_id. Valid examples: {sug or 'none'}. Use search_api to find the right one.")
-    if op["method"] != "GET":
-        return err("read-only agent: only GET operations are allowed")
+        sug = "; ".join(o["id"] for o in IDX.search(a.get("operation_id", ""), 5))
+        return err(f"Unknown operation_id. Likely matches: {sug or 'none'}. Use search_api.")
+    if is_delete_operation(op["method"], op["path"], op["id"], op.get("summary", "")):
+        return err("Delete operations are disabled by policy and cannot be prepared or executed.")
+
+    errors = _argument_errors(op, a)
+    if errors:
+        return json.dumps({"error": "Request validation failed", "details": errors})
+
     path = op["path"]
-    pp = a.get("path_params") or {}
+    path_params = a.get("path_params") or {}
     for name in re.findall(r"\{([^}]+)\}", path):
-        if name not in pp:
-            return err(f"missing path_params.{name}")
-        path = path.replace("{" + name + "}", str(pp[name]))
-    q = a.get("query") or {}
-    valid = {p["name"] for p in op["params"] if p["in"] == "query"}
-    bad = [k for k in q if k not in valid]
-    if bad:
-        return err(f"unknown query params {bad}; valid: {sorted(valid)}")
-    rows = fetch(op, path, q)
-    res = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
-                a.get("fields"), bool(a.get("count_only")), a.get("limit"))
-    return json.dumps(res, default=str)[:MAX_CHARS]
+        if name not in path_params:
+            return err(f"Missing path_params.{name}")
+        path = path.replace("{" + name + "}", quote(str(path_params[name]), safe=""))
+
+    query = a.get("query") or {}
+    if op["method"] == "GET":
+        rows = fetch(op, path, query)
+        result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
+                       a.get("fields"), bool(a.get("count_only")), a.get("limit"))
+        return json.dumps(result, default=str)[:MAX_CHARS]
+
+    return _prepare_mutation(op, path, query, a.get("body"))
+
+
+DISPATCH = {
+    "search_api": t_search,
+    "inspect_api": t_inspect,
+    "call_api": t_call,
+}
 
 
 ENT = {"organization": "/v2/organizations", "device": "/v2/devices", "end_user": "/v2/user/end-users",
@@ -275,36 +485,57 @@ DISPATCH = {"search_api": t_search, "call_api": t_call, "resolve_entity": t_reso
 
 TOOLS = [
     {"type": "function", "function": {
-        "name": "search_api", "description": "Find NinjaOne GET endpoints by keywords. Returns operation_id, path, params.",
-        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+        "name": "search_api",
+        "description": "Search the NinjaOne OpenAPI catalog for supported GET, POST, PUT and PATCH operations. DELETE and explicit delete operations are excluded.",
+        "parameters": {"type": "object", "properties": {
+            "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 12}
+        }, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "inspect_api",
+        "description": "Inspect an exact operation_id from search_api. Returns path/query parameters, required fields, request-body schema and media type. Call before writes or when arguments are unclear.",
+        "parameters": {"type": "object", "properties": {
+            "operation_id": {"type": "string"}
+        }, "required": ["operation_id"]}}},
     {"type": "function", "function": {
         "name": "call_api",
-        "description": "Call a GET operation. Auto-paginates. Use count_only for counts, group_by for 'per X', "
-                       "where for exact field match, contains for text match, fields to pick columns.",
+        "description": "Execute a validated GET request immediately. For POST, PUT or PATCH this ONLY prepares a request for explicit user approval in the chat UI; it never executes the mutation. DELETE and explicit delete actions are blocked. Use inspect_api first for write schemas.",
         "parameters": {"type": "object", "properties": {
-            "operation_id": {"type": "string"}, "path_params": {"type": "object"}, "query": {"type": "object"},
-            "count_only": {"type": "boolean"}, "group_by": {"type": "string"}, "where": {"type": "object"},
-            "contains": {"type": "string"}, "fields": {"type": "array", "items": {"type": "string"}},
-            "limit": {"type": "integer"}}, "required": ["operation_id"]}}},
-    {"type": "function", "function": {
-        "name": "resolve_entity", "description": "Fuzzy-match a name to an id. kind: organization|device|end_user|technician|user.",
-        "parameters": {"type": "object", "properties": {"kind": {"type": "string"}, "name": {"type": "string"}},
-                       "required": ["kind", "name"]}}},
+            "operation_id": {"type": "string"},
+            "path_params": {"type": "object", "additionalProperties": True},
+            "query": {"type": "object", "additionalProperties": True},
+            "headers": {"type": "object", "additionalProperties": True},
+            "body": {},
+            "count_only": {"type": "boolean"},
+            "group_by": {"type": "string"},
+            "where": {"type": "object"},
+            "contains": {"type": "string"},
+            "fields": {"type": "array", "items": {"type": "string"}},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+        }, "required": ["operation_id"]}}},
 ]
 
-SYSTEM = """You answer questions about a NinjaOne tenant by CALLING TOOLS. Read-only.
-If the question is about NinjaOne data, your first reply must be a tool call. For greetings or anything else, answer in one short sentence with no tools. Never write plans, steps or numbered lists. Never guess numbers.
 
-How to work:
-- The 'Likely endpoints' list (if shown) holds operation_ids; pass one to call_api exactly as written. If none fits, call search_api with 2-3 keywords.
-- To count something: call_api with count_only=true. For 'per X' add group_by. To filter use where={"field": value}.
-- resolve_entity is ONLY for a person/organization/device name the user typed (e.g. Richard, Acme). Never for the word NinjaOne.
-- Unsure of field names: call_api with limit=3 and read them. If a call returns an error, fix it using the hint and call again.
-- Person access question: resolve the person as end_user and as technician; end user = assigned devices, technician = devices in organizations they can access. If unclear, ask ONE short question and say what the number measures.
-- If the API cannot answer, say so. Never invent endpoints.
+SYSTEM = """You are a reliable NinjaOne API agent. Use the bundled official NinjaOne OpenAPI specification as the source of truth.
 
-Example: "how many technicians?" -> call_api with the technicians list operation_id and count_only=true -> answer "N technicians."
-Final answer: 1-2 short sentences, number first, plain text."""
+For NinjaOne data questions, call tools; never invent records, totals, fields, permissions or endpoint behavior. For greetings and unrelated questions, answer briefly.
+
+API workflow:
+- search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
+- inspect_api retrieves the exact request schema, required parameters, enums and body fields. Use it whenever a write body or parameter is unclear.
+- call_api executes GET operations. It prepares POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
+- Never claim a mutation succeeded until the UI approval action returns a successful NinjaOne response.
+- DELETE operations and any operation explicitly named/described as delete are unavailable. Never attempt to bypass this restriction using POST, PATCH or another method.
+- Never call a write operation merely to explore its schema. Use inspect_api first.
+- For mutations, resolve target entities and IDs first, validate the exact intended change, then prepare the smallest request body. The user must approve the exact method, path, query and body in the UI.
+- If a request is missing required fields or violates an enum/type, correct it using inspect_api. Do not guess.
+- GET pagination is automatic only where the OpenAPI parameter schema confirms an integer ID cursor. Do not assume timestamps or opaque cursors are IDs.
+- Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
+- Distinguish end-user device access from technician role/organization permissions. Do not equate assigned devices with organization access.
+- If a person name resolves ambiguously, show the matching records and ask one concise clarification.
+- Report counts only when based on the complete API result or an authoritative total count. State when results are partial or truncated.
+
+Final answers should be concise, factual, and clearly distinguish completed reads, prepared actions awaiting approval, and completed writes."""
+
 
 
 def candidates(q):
