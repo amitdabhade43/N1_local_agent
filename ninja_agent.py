@@ -458,6 +458,40 @@ KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["tec
             "computer": ["device"], "endpoint": ["device"]}
 
 
+def recipe_list_technician_names(q):
+    """Return technician first/last names directly for simple inventory requests."""
+    text = re.sub(r"\\s+", " ", q.lower().strip())
+    has_technicians = bool(re.search(r"\\btechnicians?\\b|\\btechs?\\b", text))
+    asks_list = bool(re.search(r"\\b(list|show|display|get|fetch|give|provide|what are|who are)\\b", text))
+    asks_names = bool(
+        re.search(r"\\b(first\\s*name|firstname)\\b", text)
+        and re.search(r"\\b(last\\s*name|lastname)\\b", text)
+    )
+    if not (has_technicians and asks_list and asks_names):
+        return None
+
+    path = "/v2/user/technicians"
+    op = op_by_path(path)
+    if not op:
+        return "The NinjaOne technician-list endpoint was not found in the loaded API specification."
+    rows = fetch(op, path, {})
+    names = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        first = row.get("firstName") or row.get("first_name") or row.get("firstname") or ""
+        last = row.get("lastName") or row.get("last_name") or row.get("lastname") or ""
+        full = " ".join(str(value).strip() for value in (first, last) if value not in (None, ""))
+        if full:
+            names.append(full)
+    if not names:
+        return (
+            f"NinjaOne returned {len(rows)} technician record(s), but none contained "
+            "firstName and lastName fields."
+        )
+    return f"{len(names)} technician(s):\\n" + "\\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
+
+
 def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
     text = q.lower().strip().rstrip("?.! ")
@@ -541,7 +575,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
