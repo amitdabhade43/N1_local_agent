@@ -514,6 +514,36 @@ def recipe_list_entity_fields(q):
     )
 
 
+def recipe_list_organizations(q):
+    """List organization names for natural-language organization inventory requests."""
+    text = re.sub(r"\\s+", " ", q.lower().strip())
+    asks_for_names = bool(re.search(r"\\b(name|names)\\b", text))
+    asks_list = bool(re.search(
+        r"\\b(list|show|display|get|fetch|give|provide|what are|which are|can i get|could i get)\\b",
+        text,
+    ))
+    asks_count = bool(re.search(r"\\b(how many|count|number of|total)\\b", text))
+    has_organization = bool(re.search(r"\\b(organizations?|orgs?|clients?|customers?)\\b", text))
+    if not (has_organization and (asks_list or asks_for_names) and not asks_count):
+        return None
+
+    path = "/v2/organizations"
+    op = op_by_path(path)
+    if not op:
+        return "The NinjaOne organization-list endpoint was not found in the loaded API specification."
+    rows = fetch(op, path, {})
+    names = [
+        str(row.get("name")).strip()
+        for row in rows
+        if isinstance(row, dict) and row.get("name") not in (None, "")
+    ]
+    if not names:
+        return f"NinjaOne returned {len(rows)} organization record(s), but no organization names were present."
+    return f"{len(names)} organization(s):\\n" + "\\n".join(
+        f"{index}. {name}" for index, name in enumerate(names, 1)
+    )
+
+
 def recipe_list_technician_names(q):
     """Return technician first/last names directly for simple inventory requests."""
     text = re.sub(r"\s+", " ", q.lower().strip())
@@ -631,7 +661,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_list_entity_fields, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
