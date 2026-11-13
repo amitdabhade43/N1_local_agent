@@ -62,8 +62,31 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         self.assertIn("RICHARD-LAPTOP", answer)
         self.assertIn("RICHARD-DESKTOP", answer)
         self.assertIn("Accessible devices (1)", answer)
-        self.assertIn("Assigned devices (1)", answer)
+        self.assertIn("Assigned devices", answer)
+        self.assertIn("separate from device access", answer)
 
+
+    def test_named_user_device_access_count_does_not_fetch_or_list_devices(self):
+        user = {
+            "id": 42, "firstName": "Richard", "lastName": "Otrebski",
+            "email": "richard@example.com",
+            "accessibleDeviceIds": list(range(1, 301)),
+            "assignedDeviceIds": list(range(201, 251)),
+            "match": 0.96,
+        }
+        payload = __import__("json").dumps({"matches": [user]})
+        with patch.object(ninja_agent, "t_resolve", return_value=payload), patch.object(
+            ninja_agent, "op_by_path"
+        ) as op_lookup, patch.object(ninja_agent, "fetch") as fetch:
+            answer = ninja_agent.fast_path(
+                "can you give me total device access count of richard otrebaski?"
+            )
+
+        self.assertIn("Accessible devices: 300", answer)
+        self.assertIn("Assigned devices (separate from access): 50", answer)
+        self.assertNotIn("DEVICE-", answer)
+        op_lookup.assert_not_called()
+        fetch.assert_not_called()
 
     def test_slim_preserves_all_accessible_device_ids(self):
         device_ids = list(range(1, 301))
