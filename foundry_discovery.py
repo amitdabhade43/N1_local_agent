@@ -48,7 +48,7 @@ def _urls_from_status(output: str) -> list[str]:
     found: list[str] = []
     # The CLI status output includes the local service URL. Accept both the
     # older text output and JSON output without depending on its exact schema.
-    for match in re.findall(r"https?://[^\s\\"'<>]+", output or "", flags=re.I):
+    for match in re.findall(r'https?://[^\s"<>]+', output or "", flags=re.I):
         base = _normalize_base_url(match)
         if base and base not in found:
             found.append(base)
@@ -101,7 +101,7 @@ def _models_from_payload(payload: Any) -> list[dict[str, Any]]:
             continue
         seen.add(model_id)
         capability_text = " ".join(str(metadata.get(key, "")) for key in ("id", "name", "description", "capabilities", "task"))
-        vision = bool(re.search(r"(^|[\\W_])(vl|vision|multimodal)([\\W_]|$)", capability_text, re.I))
+        vision = bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", capability_text, re.I))
         models.append({
             "id": model_id,
             "label": model_id,
@@ -179,4 +179,4 @@ def is_vision_model(model_id: str, discovery: dict[str, Any] | None = None) -> b
         for model in discovery.get("models", []):
             if model.get("id") == model_id:
                 return bool(model.get("vision"))
-    return bool(re.search(r"(^|[\\W_])(vl|vision|multimodal)([\\W_]|$)", model_id or "", re.I))
+    return bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", model_id or "", re.I))
