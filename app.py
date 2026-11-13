@@ -19,16 +19,12 @@ from pydantic import BaseModel
 
 load_dotenv()
 import ninja_native  # after load_dotenv so NINJA_* settings from .env are visible
+from foundry_discovery import discover_foundry, is_vision_model
 
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-BASE_URL = os.getenv("FOUNDRY_BASE_URL", "http://127.0.0.1:49934/v1")
 MCP_URL = os.getenv("MCP_URL", "http://127.0.0.1:8000/mcp")
-PHI_MODEL = os.getenv("FOUNDRY_MODEL_PHI", "phi-4-mini")
-QWEN_MODEL = os.getenv(
-    "FOUNDRY_MODEL_QWEN", "qwen3-vl-4b-instruct-generic-cpu"
-)
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8080"))
 MAX_HISTORY_MESSAGES = 8
@@ -89,12 +85,27 @@ class ChatRequest(BaseModel):
     message: str
 
 
-def model_id_for(choice: str) -> str:
-    if choice == "phi":
-        return PHI_MODEL
-    if choice == "qwen":
-        return QWEN_MODEL
-    raise HTTPException(status_code=400, detail="Unknown model selection")
+def model_id_for(choice: str, discovery: dict[str, Any]) -> str:
+    """Accept an exact discovered model ID; retain old phi/qwen UI aliases."""
+    available = {item["id"] for item in discovery.get("models", [])}
+    if choice in available:
+        return choice
+    aliases = {
+        "phi": os.getenv("FOUNDRY_MODEL_PHI", "phi-4-mini"),
+        "qwen": os.getenv("FOUNDRY_MODEL_QWEN", "qwen3-vl-4b-instruct-generic-cpu"),
+    }
+    legacy_id = aliases.get(choice)
+    if legacy_id and legacy_id in available:
+        return legacy_id
+    if not discovery.get("connected"):
+        raise HTTPException(
+            status_code=503,
+            detail=discovery.get("error") or "Foundry Local is unavailable. Start it and refresh discovery.",
+        )
+    raise HTTPException(
+        status_code=400,
+        detail=f"Model '{choice}' is not currently loaded in Foundry. Refresh the model list and select an available model.",
+    )
 
 
 async def get_tools():
@@ -111,10 +122,10 @@ async def get_tools():
         return _tools
 
 
-def get_model(model_id: str):
+def get_model(model_id: str, base_url: str):
     return ChatOpenAI(
         model=model_id,
-        base_url=BASE_URL,
+        base_url=base_url,
         api_key=os.getenv("FOUNDRY_API_KEY", "local"),
         temperature=0,
         timeout=120,
@@ -122,15 +133,16 @@ def get_model(model_id: str):
     )
 
 
-async def get_agent(model_id: str, tools):
+async def get_agent(model_id: str, base_url: str, tools):
+    cache_key = f"{base_url}|{model_id}"
     async with _agents_lock:
-        if model_id not in _agents:
-            _agents[model_id] = create_agent(
-                model=get_model(model_id),
+        if cache_key not in _agents:
+            _agents[cache_key] = create_agent(
+                model=get_model(model_id, base_url),
                 tools=tools,
                 system_prompt=SYSTEM_PROMPT,
             )
-        return _agents[model_id]
+        return _agents[cache_key]
 
 
 def _text_from_content(content: Any) -> str:
@@ -339,9 +351,10 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     return answer, activity
 
 
-async def run_agent(session_id: str, model_id: str, message_content: Any):
+async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
-        return await ninja_native.run_native(session_id, model_id, message_content, BASE_URL)
+        # Native backend receives the same discovered endpoint as MCP mode.
+        return await ninja_native.run_native(session_id, model_id, message_content, base_url)
 
     tools = await get_tools()
     if not tools:
@@ -353,7 +366,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any):
         tool_name, arguments, operation, fields = direct_request
         return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
 
-    agent = await get_agent(model_id, tools)
+    agent = await get_agent(model_id, base_url, tools)
     async with _session_lock:
         history = list(_sessions.get(session_id, []))[-MAX_HISTORY_MESSAGES:]
         history.append(HumanMessage(content=message_content))
@@ -411,12 +424,20 @@ async def index():
 
 @app.get("/api/config")
 async def config():
+    discovery = await asyncio.to_thread(discover_foundry)
     return {
-        "models": [
-            {"id": "phi", "label": "Phi-4-mini", "model_id": PHI_MODEL},
-            {"id": "qwen", "label": "Qwen3-VL-4B-Instruct", "model_id": QWEN_MODEL},
-        ],
-        "foundry_base_url": BASE_URL,
+        **discovery,
+        "foundry_base_url": discovery.get("base_url"),
+        "mcp_url": MCP_URL,
+    }
+
+
+@app.post("/api/foundry/refresh")
+async def refresh_foundry():
+    discovery = await asyncio.to_thread(discover_foundry, True)
+    return {
+        **discovery,
+        "foundry_base_url": discovery.get("base_url"),
         "mcp_url": MCP_URL,
     }
 
@@ -434,8 +455,9 @@ async def list_tools():
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
-    model_id = model_id_for(req.model)
-    answer, activity = await run_agent(session_id, model_id, req.message)
+    discovery = await asyncio.to_thread(discover_foundry)
+    model_id = model_id_for(req.model, discovery)
+    answer, activity = await run_agent(session_id, model_id, req.message, discovery["base_url"])
     return {"session_id": session_id, "model": req.model, "answer": answer, "activity": activity}
 
 
@@ -446,8 +468,10 @@ async def chat_image(
     session_id: str | None = Form(None),
     image: UploadFile = File(...),
 ):
-    if model != "qwen":
-        raise HTTPException(status_code=400, detail="Image input is currently enabled for Qwen3-VL only.")
+    discovery = await asyncio.to_thread(discover_foundry)
+    model_id = model_id_for(model, discovery)
+    if not is_vision_model(model_id, discovery):
+        raise HTTPException(status_code=400, detail="The selected Foundry model is not identified as a vision-capable model.")
     content_type = image.content_type or ""
     if not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Upload an image file.")
@@ -461,7 +485,7 @@ async def chat_image(
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
     ]
     sid = session_id or str(uuid.uuid4())
-    answer, activity = await run_agent(sid, model_id_for(model), content)
+    answer, activity = await run_agent(sid, model_id, content, discovery["base_url"])
     return {"session_id": sid, "model": model, "answer": answer, "activity": activity}
 
 
@@ -475,9 +499,13 @@ async def clear_session(session_id: str):
 
 @app.get("/api/health")
 async def health():
+    discovery = await asyncio.to_thread(discover_foundry)
     return {
         "ok": True,
-        "foundry_base_url": BASE_URL,
+        "foundry_connected": discovery.get("connected", False),
+        "foundry_base_url": discovery.get("base_url"),
+        "foundry_models": len(discovery.get("models", [])),
+        "foundry_error": discovery.get("error"),
         "mcp_url": MCP_URL,
         "mcp_tools_loaded": _tools is not None,
     }
