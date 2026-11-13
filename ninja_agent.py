@@ -1240,7 +1240,7 @@ def recipe_person_device_access(q):
     if len(matches) > 1 and matches[1].get("match", 0) >= matches[0].get("match", 0) - 0.08:
         choices = ", ".join(row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
                             for row in matches[:5])
-        return f'Multiple NinjaOne end users closely match "{name}": {choices}. Please confirm which user.'
+        return f'Multiple NinjaOne users (end-user records) closely match "{name}": {choices}. Please confirm which user.'
     user = matches[0]
     if user.get("match", 0) < 0.65:
         return f'No sufficiently close NinjaOne end-user match for "{name}". Closest result: {row_name(user)}.'
@@ -1255,6 +1255,19 @@ def recipe_person_device_access(q):
     accessible = ids_for("accessibleDeviceIds")
     assigned = ids_for("assignedDeviceIds")
     device_ids = ids_for("deviceIds")
+    who = row_name(user)
+    email = f' <{user["email"]}>' if user.get("email") else ""
+
+    # Count-only questions use the authoritative ID arrays directly. Do not
+    # fetch the device inventory or render a device list for these requests.
+    count_only = bool(re.search(r"\\b(count|how many|total|number of)\\b", text))
+    if count_only:
+        return (
+            f"NinjaOne device-access count for {who}{email}:\\n"
+            f"Accessible devices: {len(accessible)}\\n"
+            f"Assigned devices (separate from access): {len(assigned)}"
+        )
+
     all_ids = list(dict.fromkeys(accessible + assigned + device_ids))
     devices = []
     device_list_complete = True
@@ -1292,7 +1305,7 @@ def recipe_person_device_access(q):
     sections = [
         f"NinjaOne device-access details for {who}{email}:",
         describe_ids("Accessible devices", accessible),
-        describe_ids("Assigned devices (separate from access)", assigned),
+        describe_ids("Assigned devices", assigned) + " (assignment is separate from device access)",
     ]
     if device_ids and set(map(str, device_ids)) != set(map(str, accessible + assigned)):
         sections.append(describe_ids("Other device IDs on user record", device_ids))
