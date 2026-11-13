@@ -854,7 +854,8 @@ API workflow:
 - Never call a write operation merely to explore its schema. Use inspect_api first.
 - For mutations, resolve target entities and IDs first, validate the exact intended change, then prepare the smallest request body. The user must approve the exact method, path, query and body in the UI.
 - If a request is missing required fields or violates an enum/type, correct it using inspect_api. Do not guess.
-- Pagination is automatic only when the OpenAPI request and response schemas establish a matching integer cursor (including documented read-only POST ticket queries). Do not assume timestamps or opaque cursors are IDs.
+- Pagination is automatic only when the OpenAPI request/response schemas establish the cursor contract: integer ID cursors, documented opaque nextCursor/pageInfo cursors, or the read-only ticket-board lastCursorId body cursor. Do not treat activity timestamps as cursors.
+- If an endpoint exposes pageSize/cursor parameters but the spec does not define a safe continuation contract, label the result as the current page only and never report it as a complete tenant-wide count.
 - Multipart/file-upload operations are visible in the OpenAPI catalog but are not executable through the current chat transport. Do not fabricate an upload or claim it succeeded; explain the limitation.
 - Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
 - Access semantics from the published API spec: end-user records expose accessibleDeviceIds and assignedDeviceIds; report accessibleDeviceIds as access and assignedDeviceIds separately. GET /v2/users?includeRoles=true exposes user deviceIds, assignedDeviceIds and role names.
