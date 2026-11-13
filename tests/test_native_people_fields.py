@@ -64,6 +64,39 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         self.assertIn("Accessible devices (1)", answer)
         self.assertIn("Assigned devices (1)", answer)
 
+
+    def test_slim_preserves_all_accessible_device_ids(self):
+        device_ids = list(range(1, 301))
+        result = ninja_agent.slim({"accessibleDeviceIds": device_ids})
+        self.assertEqual(result["accessibleDeviceIds_count"], 300)
+        self.assertEqual(result["accessibleDeviceIds"], device_ids)
+
+    def test_named_user_device_access_lists_all_300_in_batches_of_20(self):
+        device_ids = list(range(1, 301))
+        user = {
+            "id": 42, "firstName": "Richard", "lastName": "Otrebski",
+            "email": "richard@example.com", "accessibleDeviceIds": device_ids,
+            "assignedDeviceIds": [], "match": 0.96,
+        }
+        devices = [
+            {"id": device_id, "systemName": f"DEVICE-{device_id:03d}"}
+            for device_id in device_ids
+        ]
+        payload = __import__("json").dumps({"matches": [user]})
+        with patch.object(ninja_agent, "t_resolve", return_value=payload) as resolve, patch.object(
+            ninja_agent, "op_by_path", return_value={"path": "/v2/devices"}
+        ), patch.object(ninja_agent, "fetch", return_value=devices):
+            answer = ninja_agent.fast_path(
+                "can you give me device access of richard otrebaski"
+            )
+
+        self.assertEqual(resolve.call_args.args[0]["kind"], "end_user")
+        self.assertIn("Accessible devices (300)", answer)
+        self.assertIn("devices 1-20 of 300", answer)
+        self.assertIn("devices 281-300 of 300", answer)
+        self.assertIn("DEVICE-300 (ID 300)", answer)
+        self.assertEqual(answer.count("DEVICE-"), 300)
+
     def test_named_user_device_access_asks_for_clarification_when_ambiguous(self):
         payload = {
             "matches": [
