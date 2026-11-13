@@ -663,7 +663,10 @@ def fetch_cursor_post(op, path, query, body, headers):
             headers, read_only=True,
         )
         if not isinstance(result, dict) or not isinstance(result.get("data"), list):
-            return unwrap(result)
+            return FetchRows(
+                unwrap(result), complete=False,
+                note="The response did not match the documented ticket cursor schema."
+            )
         page = result["data"]
         if not page:
             break
