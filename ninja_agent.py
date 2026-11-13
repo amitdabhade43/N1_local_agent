@@ -44,7 +44,8 @@ def load_ops():
     """Load the bundled OpenAPI document and build the complete safe operation catalog."""
     global SPEC_DATA
     cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ninja_spec.json")
-    if os.path.exists(cache) and time.time() - os.path.getmtime(cache) < 86400:
+    refresh_spec = os.getenv("NINJA_SPEC_REFRESH", "0").strip().lower() in {"1", "true", "yes"}
+    if os.path.exists(cache) and not refresh_spec:
         with open(cache, "r", encoding="utf-8") as handle:
             spec = json.load(handle)
     else:
