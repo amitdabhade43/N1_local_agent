@@ -741,6 +741,7 @@ API workflow:
 - For mutations, resolve target entities and IDs first, validate the exact intended change, then prepare the smallest request body. The user must approve the exact method, path, query and body in the UI.
 - If a request is missing required fields or violates an enum/type, correct it using inspect_api. Do not guess.
 - Pagination is automatic only when the OpenAPI request and response schemas establish a matching integer cursor (including documented read-only POST ticket queries). Do not assume timestamps or opaque cursors are IDs.
+- Multipart/file-upload operations are visible in the OpenAPI catalog but are not executable through the current chat transport. Do not fabricate an upload or claim it succeeded; explain the limitation.
 - Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
 - Access semantics from the published API spec: end-user records expose accessibleDeviceIds and assignedDeviceIds; report accessibleDeviceIds as access and assignedDeviceIds separately. GET /v2/users?includeRoles=true exposes user deviceIds, assignedDeviceIds and role names.
 - Technician records expose assignedDeviceIds and role names. GET /v2/user/roles exposes role members, but this published spec has no GET operation to read a role's organizationPermissions (only a PATCH setter). Never infer a technician's organization-access count from role names; state this API limitation clearly.
