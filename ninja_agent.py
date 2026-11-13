@@ -1205,6 +1205,113 @@ def recipe_find(q):
     return f'Found {len(found)} match(es) for "{name}":\n' + "\n".join(lines)
 
 
+def recipe_add_device_access(q):
+    """Prepare an explicit end-user device-access grant without relying on LLM tool selection.
+
+    This only creates the normal UI approval request; it never executes the PATCH.
+    """
+    text = re.sub(r"\s+", " ", str(q).strip())
+    match = re.search(
+        r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
+        text, re.I,
+    )
+    if not match:
+        return None
+
+    device_label, user_label = match.group(1).strip(" \t'"""), match.group(2).strip()
+    email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
+    email = email_match.group(1).strip().lower() if email_match else ""
+    user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
+    if not device_label or not user_name:
+        return "Please provide both a device name and an end-user name."
+
+    def normalized(value):
+        return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+    # Resolve the end-user using the email when supplied, then require an exact match.
+    lookup = email or user_name
+    try:
+        user_result = json.loads(t_resolve({"kind": "end_user", "name": lookup}))
+    except Exception as exc:
+        return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
+    user_matches = user_result.get("matches") or []
+    exact_users = [
+        row for row in user_matches
+        if (email and str(row.get("email", "")).strip().lower() == email)
+        or (not email and normalized(row_name(row)) == normalized(user_name))
+    ]
+    if not exact_users:
+        if user_matches:
+            return f'No exact end-user match for "{user_label}". Closest result: {row_name(user_matches[0])}. No change was prepared.'
+        return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
+    if len(exact_users) != 1:
+        return f'Multiple exact end-user records matched "{user_label}". Please clarify before changing access.'
+    user = exact_users[0]
+    user_id = user.get("id")
+    if not isinstance(user_id, int) and not str(user_id or "").isdigit():
+        return "The matched end-user record has no numeric NinjaOne ID. No change was prepared."
+
+    # Resolve the requested device name to its exact numeric NinjaOne device ID.
+    try:
+        device_result = json.loads(t_resolve({"kind": "device", "name": device_label}))
+    except Exception as exc:
+        return f"Could not resolve the device: {type(exc).__name__}: {exc}"
+    device_matches = device_result.get("matches") or []
+    exact_devices = []
+    for row in device_matches:
+        labels = (
+            row.get("systemName"), row.get("displayName"), row.get("dnsName"),
+            row.get("netbiosName"), row.get("serialNumber"), row.get("name"),
+        )
+        if any(normalized(label) == normalized(device_label) for label in labels if label):
+            exact_devices.append(row)
+    if not exact_devices:
+        if device_matches:
+            return f'No exact device match for "{device_label}". Closest result: {row_name(device_matches[0])}. No change was prepared.'
+        return f'No NinjaOne device matched "{device_label}". No change was prepared.'
+    if len(exact_devices) != 1:
+        return f'Multiple exact device records matched "{device_label}". Please clarify before changing access.'
+    device = exact_devices[0]
+    device_id = device.get("id")
+    if not isinstance(device_id, int) and not str(device_id or "").isdigit():
+        return "The matched device has no numeric NinjaOne ID. No change was prepared."
+    device_id = int(device_id)
+
+    accessible_ids = user.get("accessibleDeviceIds")
+    if not isinstance(accessible_ids, list):
+        return "The end-user lookup did not return accessibleDeviceIds. I cannot safely check for duplicate access; no change was prepared."
+    if device_id in [int(value) for value in accessible_ids if str(value).isdigit()]:
+        return f'{row_name(user)} already has access to {row_name(device)} (device ID {device_id}). No change is needed.'
+
+    op = next((
+        operation for operation in OPS.values()
+        if operation.get("method") == "PATCH"
+        and operation.get("path") == "/v2/user/end-user/{id}/device-access"
+    ), None)
+    if not op:
+        return "The bundled NinjaOne API catalog does not contain the documented end-user device-access PATCH. No change was prepared."
+
+    path_params = {
+        name: int(user_id) for name in re.findall(r"\{([^}]+)\}", op["path"])
+    }
+    prepared_raw = t_call({
+        "operation_id": op["id"],
+        "path_params": path_params,
+        "body": {"addDeviceIds": [device_id]},
+    })
+    try:
+        prepared = json.loads(prepared_raw)
+    except (TypeError, ValueError):
+        return f"Could not prepare the access change: {prepared_raw}"
+    if not prepared.get("approval_required"):
+        return f"Could not prepare the access change: {prepared_raw}"
+    prepared["summary"] = (
+        f'Add device access for {row_name(user)} ({user.get("email", "no email")}) '
+        f'to {row_name(device)} (device ID {device_id})'
+    )
+    return json.dumps(prepared, default=str)
+
+
 def recipe_person_device_access(q):
     """Resolve a named end user and report the complete accessible/assigned device lists."""
     text = re.sub(r"\s+", " ", q.lower().strip().rstrip("?.! "))
