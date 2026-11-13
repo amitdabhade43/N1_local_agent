@@ -275,8 +275,11 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
     if not selected:
         return None
 
-    # Keep filtered/detail/search requests on the agent path.
-    if re.search(r"\b(where|with|whose|matching|search for|details for|status of|named|called)\b", text):
+    # Keep true filtered/detail/search requests on the agent path. "with first name"
+    # is a field-selection request and should remain eligible for deterministic routing.
+    if re.search(r"\b(where|whose|matching|search for|details for|status of|named|called)\b", text):
+        return None
+    if re.search(r"\bwith\b", text) and not field_intent:
         return None
     # Person/scope/status questions need the agent, not a plain list or count.
     if re.search(r"\b(access|per|each|by|offline|online|owned|owner|assigned|belong\w*|under|inside)\b", text):
@@ -288,11 +291,17 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
         return None
 
     fields = None
-    if plural == "users" and field_intent:
+    if plural in {"users", "technicians"} and field_intent:
         if re.search(r"\b(email|email id|email ids|emails)\b", text):
             fields = ["email"]
-        elif re.search(r"\b(first name|last name|full name|names only)\b", text):
-            fields = ["firstName", "lastName"]
+        else:
+            fields = []
+            if re.search(r"\b(first name|firstname|fisrtname|fristname)\b", text):
+                fields.append("firstName")
+            if re.search(r"\b(last name|lastname)\b", text):
+                fields.append("lastName")
+            if not fields and re.search(r"\b(full name|names only)\b", text):
+                fields = ["firstName", "lastName"]
     elif plural == "organizations" and field_intent:
         fields = ["name"]
 
