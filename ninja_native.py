@@ -78,8 +78,11 @@ def _run(session_id, model_id, content, base):
                 txt,
                 re.I,
             ))
+            lookup_intent = not called and bool(
+                set(re.findall(r"[a-z]+", q.lower())) & core.NOUN_WORDS
+            )
             bad = tool_intent or (
-                not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt))
+                not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
             )
             if bad and not nudged:
                 nudged = True
