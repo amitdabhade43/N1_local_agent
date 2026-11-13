@@ -19,6 +19,12 @@ class MCPDirectRoutingTests(unittest.TestCase):
             ("list_users", {}, "fields", ["firstName", "lastName"]),
         )
 
+    def test_end_users_are_not_misrouted_to_general_users_tool(self):
+        tools = [SimpleNamespace(name="list_users")]
+        self.assertIsNone(
+            detect_direct_tool_request("list end users with first name and last name", tools)
+        )
+
     def test_person_access_question_stays_on_agent_path(self):
         tools = [SimpleNamespace(name="list_devices")]
         self.assertIsNone(
