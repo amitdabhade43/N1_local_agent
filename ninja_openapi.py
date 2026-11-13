@@ -11,7 +11,7 @@ import re
 from typing import Any
 
 HTTP_METHODS = ("get", "post", "put", "patch")
-DELETE_METHODS = {"delete"}
+DELETE_METHODS = {"DELETE"}
 
 
 def _pointer(root: dict, ref: str) -> Any:
@@ -169,6 +169,14 @@ def operation_document(operation: dict) -> str:
         f'{p.get("name")} {p.get("in")} {p.get("description", "")} {_schema_terms(p.get("schema"))}'
         for p in operation.get("params", [])
     )
+    response_terms = []
+    for response in (operation.get("responses") or {}).values():
+        if not isinstance(response, dict):
+            continue
+        content = response.get("content") or {}
+        json_response = content.get("application/json") or {}
+        response_terms.extend(_schema_terms(json_response.get("schema") or {}))
+        response_terms.append(response.get("description", ""))
     return " ".join((
         operation.get("id", ""),
         operation.get("method", ""),
@@ -179,6 +187,7 @@ def operation_document(operation: dict) -> str:
         param_text,
         body.get("description", ""),
         " ".join(_schema_terms(body_schema)),
+        " ".join(response_terms),
     ))
 
 
@@ -233,4 +242,18 @@ def describe_operation(operation: dict, include_schema: bool = False) -> dict:
     }
     if include_schema and operation.get("request_body"):
         result["request_body_schema"] = operation["request_body"].get("schema")
+    if include_schema:
+        response_details = {}
+        for status, response in (operation.get("responses") or {}).items():
+            if not str(status).startswith("2") and status != "default":
+                continue
+            if not isinstance(response, dict):
+                continue
+            content = response.get("content") or {}
+            json_response = content.get("application/json") or {}
+            response_details[str(status)] = {
+                "description": response.get("description", ""),
+                "schema": json_response.get("schema"),
+            }
+        result["responses"] = response_details
     return result
