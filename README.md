@@ -67,7 +67,7 @@ Capabilities:
 
 Every write requires both the Management OAuth scope and an explicit user approval. NinjaOne's own role permissions remain authoritative. Script execution, reboot, patch actions, decommissioning, policy changes and other state-changing operations are treated as writes and require approval.
 
-**Current transport limitation:** operations requiring multipart or binary file uploads are identified in the spec but cannot yet be submitted through the JSON chat interface. These are not silently converted into JSON.
+**Current transport limitation:** five multipart operations are catalogued but not yet executable through the JSON chat interface: `uploadTempAttachments`, `uploadKnowledgeBaseArticles`, `createRelatedItem`, `createComment`, and `updateScanGroup` (CSV upload). They are not silently converted into JSON; a session-bound file attachment workflow is required.
 
 ## MCP backend
 
