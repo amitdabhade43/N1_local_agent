@@ -422,6 +422,13 @@ def reject_pending_action(action_id, session_id):
         return True
 
 
+def clear_pending_session(session_id):
+    with _pending_lock:
+        stale = [key for key, value in _pending_actions.items() if value.get("session_id") == session_id]
+        for key in stale:
+            _pending_actions.pop(key, None)
+
+
 def t_call(a):
     op = OPS.get(a.get("operation_id", ""))
     if not op:
