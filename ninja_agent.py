@@ -854,8 +854,11 @@ def exec_tool(name, args):
 
 
 def text_call_followup(name, out):
-    return (f"Result of {name}: {out}\nNow call another tool if needed, otherwise give the final answer "
-            "in 1-2 plain sentences, number first.")
+    return (
+        f"Result of {name}: {out}\n"
+        "Use another tool if required to verify the answer. In the final response, state what was counted, "
+        "the source fields or records used, and any ambiguity, partial result, permission issue or API limitation."
+    )
 
 
 NOUN_WORDS = {
