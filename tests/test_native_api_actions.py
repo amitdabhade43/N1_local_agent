@@ -65,9 +65,20 @@ class NativeApiActionTests(unittest.TestCase):
                             "content": {"application/json": {
                                 "schema": {"type": "object", "properties": {
                                     "pageSize": {"type": "integer"},
-                                    "searchCriteria": {"type": "string"}
+                                    "searchCriteria": {"type": "string"},
+                                    "lastCursorId": {"type": "integer"}
                                 }}
                             }}
+                        },
+                        "responses": {
+                            "default": {"content": {"application/json": {
+                                "schema": {"type": "object", "properties": {
+                                    "data": {"type": "array", "items": {"type": "object"}},
+                                    "metadata": {"type": "object", "properties": {
+                                        "lastCursorId": {"type": "integer"}
+                                    }}
+                                }}
+                            }}}
                         }
                     }
                 },
@@ -139,19 +150,27 @@ class NativeApiActionTests(unittest.TestCase):
         fetch.assert_called_once()
         self.assertEqual(result["total"], 1)
 
-    def test_documented_read_only_post_query_executes_without_approval(self):
-        with patch.object(core, "http_request", return_value=[{"id": 5, "subject": "Printer offline"}]) as request:
+    def test_documented_read_only_post_query_uses_schema_driven_cursor_pagination(self):
+        pages = [
+            {"data": [{"id": 5, "subject": "Printer offline"}], "metadata": {"lastCursorId": 5}},
+            {"data": [{"id": 6, "subject": "Printer offline - second"}], "metadata": {"lastCursorId": 6}},
+            {"data": [], "metadata": {"lastCursorId": 6}},
+        ]
+        with patch.object(core, "http_request", side_effect=pages) as request:
             result = json.loads(core.t_call({
                 "operation_id": "getTicketsByBoard",
                 "path_params": {"boardId": 12},
                 "body": {"pageSize": 25, "searchCriteria": "printer"},
             }))
-        request.assert_called_once_with(
+        self.assertEqual(request.call_count, 3)
+        self.assertEqual(request.call_args_list[0].args, (
             "POST", "/v2/ticketing/trigger/board/12/run", {},
-            {"pageSize": 25, "searchCriteria": "printer"}, "application/json", {},
-            read_only=True
-        )
-        self.assertEqual(result["total"], 1)
+            {"pageSize": 25, "searchCriteria": "printer"}, "application/json", {}
+        ))
+        self.assertEqual(request.call_args_list[1].args[3]["lastCursorId"], 5)
+        self.assertEqual(request.call_args_list[2].args[3]["lastCursorId"], 6)
+        self.assertTrue(all(call.kwargs == {"read_only": True} for call in request.call_args_list))
+        self.assertEqual(result["total"], 2)
 
     def test_http_boundary_rejects_unapproved_writes_and_all_delete_paths(self):
         with self.assertRaisesRegex(ValueError, "explicit user approval"):
