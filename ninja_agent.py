@@ -132,13 +132,16 @@ def token():
     return _tok["v"]
 
 
-def http_request(method, path, query=None, body=None, media_type="application/json", extra_headers=None):
-    """Execute a validated NinjaOne request. GET responses are cached; writes are not."""
+def http_request(method, path, query=None, body=None, media_type="application/json",
+                 extra_headers=None, approved=False, read_only=False):
+    """Execute a validated request; state-changing methods require a consumed approval."""
     method = method.upper()
-    if method == "DELETE":
-        raise ValueError("DELETE execution is disabled by policy.")
+    if method == "DELETE" or re.search(r"(^|[/_-])delete($|[/_-])", path.lower()):
+        raise ValueError("Delete execution is disabled by policy.")
     if method not in {"GET", "POST", "PUT", "PATCH"}:
         raise ValueError(f"Unsupported HTTP method: {method}")
+    if method in {"POST", "PUT", "PATCH"} and not (approved or read_only):
+        raise ValueError("State-changing API requests must pass through explicit user approval.")
 
     query = query or {}
     key = (method, path, json.dumps(query, sort_keys=True), json.dumps(body, sort_keys=True, default=str),
@@ -451,7 +454,7 @@ def execute_pending_action(action_id, session_id):
     try:
         result = http_request(
             action["method"], action["path"], action["query"], action["body"],
-            action["media_type"], action.get("headers")
+            action["media_type"], action.get("headers"), approved=True
         )
         return {
             "ok": True,
@@ -508,7 +511,9 @@ def t_call(a):
             rows = fetch(op, path, query, headers)
         else:
             media_type = (op.get("request_body") or {}).get("media_type") or "application/json"
-            raw_result = http_request(op["method"], path, query, a.get("body"), media_type, headers)
+            raw_result = http_request(
+                op["method"], path, query, a.get("body"), media_type, headers, read_only=True
+            )
             rows = unwrap(raw_result)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
