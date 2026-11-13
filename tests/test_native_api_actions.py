@@ -53,6 +53,48 @@ class NativeApiActionTests(unittest.TestCase):
                         ],
                     }
                 },
+                "/v2/relationships": {
+                    "get": {
+                        "operationId": "getRelationships",
+                        "summary": "List relationships",
+                        "parameters": [
+                            {"name": "after", "in": "query",
+                             "description": "Cursor for forward pagination. Use nextCursor from previous response.",
+                             "schema": {"type": "string"}},
+                            {"name": "pageSize", "in": "query",
+                             "schema": {"type": "integer", "default": 2}},
+                        ],
+                        "responses": {"200": {"content": {"application/json": {
+                            "schema": {"type": "object", "properties": {
+                                "results": {"type": "array", "items": {"type": "object"}},
+                                "pageInfo": {"type": "object", "properties": {
+                                    "nextCursor": {"type": "string"},
+                                    "hasMore": {"type": "boolean"}
+                                }}
+                            }}
+                        }}}},
+                    }
+                },
+                "/v2/activities": {
+                    "get": {
+                        "operationId": "getActivities",
+                        "summary": "List activities",
+                        "parameters": [
+                            {"name": "after", "in": "query",
+                             "description": "Return activities recorded after to specified date",
+                             "schema": {"type": "string"}},
+                            {"name": "olderThan", "in": "query", "schema": {"type": "integer"}},
+                            {"name": "newerThan", "in": "query", "schema": {"type": "integer"}},
+                            {"name": "pageSize", "in": "query", "schema": {"type": "integer", "default": 200}},
+                        ],
+                        "responses": {"default": {"content": {"application/json": {
+                            "schema": {"type": "object", "properties": {
+                                "lastActivityId": {"type": "integer"},
+                                "activities": {"type": "array", "items": {"type": "object"}}
+                            }}
+                        }}}},
+                    }
+                },
                 "/v2/ticketing/trigger/board/{boardId}/run": {
                     "post": {
                         "operationId": "getTicketsByBoard",
@@ -244,6 +286,28 @@ class NativeApiActionTests(unittest.TestCase):
             core.BASE = original["BASE"]
             core.TOKEN_URL = original["TOKEN_URL"]
             core._tok.update(original["token_cache"])
+
+    def test_opaque_get_cursor_uses_response_page_info_schema(self):
+        operation = core.OPS["getRelationships"]
+        with patch.object(core, "http_get", side_effect=[
+            {"results": [{"id": 1}], "pageInfo": {"nextCursor": "cursor-1", "hasMore": True}},
+            {"results": [{"id": 2}], "pageInfo": {"nextCursor": None, "hasMore": False}},
+        ]) as request:
+            rows = core.fetch(operation, "/v2/relationships", {})
+        self.assertEqual([row["id"] for row in rows], [1, 2])
+        self.assertTrue(rows.complete)
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(request.call_args_list[1].args[1]["after"], "cursor-1")
+
+    def test_activity_endpoint_marks_page_only_results_as_partial(self):
+        with patch.object(core, "http_get", return_value={
+            "lastActivityId": 42, "activities": [{"id": 1, "message": "Device rebooted"}]
+        }):
+            result = json.loads(core.t_call({"operation_id": "getActivities"}))
+        self.assertEqual(result["total"], 1)
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["count_scope"], "current page only")
+        self.assertIn("does not define a safe automatic cursor", result["pagination_note"])
 
     def test_write_approval_requires_management_scope(self):
         core.SCOPE = "monitoring"
