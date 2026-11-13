@@ -532,11 +532,13 @@ def fetch_cursor_post(op, path, query, body, headers):
             break
         rows.extend(page)
         next_cursor = (result.get("metadata") or {}).get("lastCursorId")
-        if len(page) < page_size:
-            break
         if next_cursor is None:
+            if len(page) < page_size:
+                break
             raise RuntimeError("NinjaOne ticket pagination returned a full page without lastCursorId.")
         if next_cursor == cursor:
+            if len(page) < page_size:
+                break
             raise RuntimeError("NinjaOne ticket pagination cursor did not advance.")
         cursor = next_cursor
         request_body["lastCursorId"] = cursor
