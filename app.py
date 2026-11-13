@@ -423,6 +423,19 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 "tool": getattr(msg, "name", "tool"),
                 "result": str(getattr(msg, "content", ""))[:2500],
             })
+    has_tool_call = any(item.get("kind") == "call" for item in activity)
+    lookup_question = bool(re.search(
+        r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
+        message_text,
+        re.I,
+    ))
+    if lookup_question and not has_tool_call:
+        final_text = (
+            "I couldn't execute a NinjaOne lookup for that request. "
+            "No MCP tool was called, so I won't report unverified data. "
+            "Please retry or simplify the question."
+        )
+
     return final_text or "The model returned no text response.", activity
 
 
