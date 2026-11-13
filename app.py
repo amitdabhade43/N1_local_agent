@@ -253,7 +253,7 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
         return None
 
     count_intent = bool(re.search(r"\b(count|total|how many|number of)\b", text))
-    field_intent = bool(re.search(r"\b(first name|last name|full name|email|email id|email ids|names only|organization name|org name)\b", text))
+    field_intent = bool(re.search(r"\b(first name|last name|firstname|lastname|fisrtname|fristname|full name|email|email id|email ids|names only|organization name|org name)\b", text))
     list_intent = bool(re.search(r"\b(list|show|display|get|fetch|all|give me|what are|which are)\b", text))
     # Natural short prompts such as "organizations?" or "organization names"
     implicit_list = bool(re.search(r"\b(organizations?|orgs?|technicians?|devices?|endpoints?|users?|roles?)\b", text))
