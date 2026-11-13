@@ -140,6 +140,22 @@ def token():
     return _tok["v"]
 
 
+def _serialize_query(query):
+    """Serialize JSON tool arguments into HTTP query values consistently."""
+    result = {}
+    for key, value in (query or {}).items():
+        if isinstance(value, bool):
+            result[key] = "true" if value else "false"
+        elif isinstance(value, list):
+            result[key] = [
+                ("true" if item else "false") if isinstance(item, bool) else item
+                for item in value
+            ]
+        else:
+            result[key] = value
+    return result
+
+
 def http_request(method, path, query=None, body=None, media_type="application/json",
                  extra_headers=None, approved=False, read_only=False):
     """Execute a validated request; state-changing methods require a consumed approval."""
@@ -163,7 +179,7 @@ def http_request(method, path, query=None, body=None, media_type="application/js
         if name.lower() in {"authorization", "cookie", "host", "content-length"}:
             raise ValueError(f"Header '{name}' cannot be overridden.")
         headers[name] = str(value)
-    kwargs = {"params": query, "timeout": 90, "headers": headers}
+    kwargs = {"params": _serialize_query(query), "timeout": 90, "headers": headers}
     if method != "GET" and body is not None:
         if media_type == "application/json":
             kwargs["json"] = body
