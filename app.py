@@ -488,6 +488,10 @@ async def list_tools():
             for method in path_item
             if method.lower() in {"get", "post", "put", "patch", "delete"}
         )
+        multipart_count = sum(
+            1 for operation in operations.values()
+            if (operation.get("request_body") or {}).get("media_type") == "multipart/form-data"
+        )
         return {
             "tools": [{"name": t["function"]["name"], "description": t["function"]["description"]}
                       for t in ninja_agent.TOOLS],
@@ -495,7 +499,9 @@ async def list_tools():
                 "spec_version": (spec.get("info") or {}).get("version"),
                 "path_count": len(spec.get("paths") or {}),
                 "source_operation_count": source_operation_count,
-                "available_operation_count": len(operations),
+                "catalog_operation_count": len(operations),
+                "executable_operation_count": len(operations) - multipart_count,
+                "multipart_operation_count": multipart_count,
                 "blocked_delete_count": source_operation_count - len(operations),
                 "method_counts": method_counts,
             },
