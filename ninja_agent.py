@@ -1205,18 +1205,18 @@ def recipe_find(q):
 
 def recipe_person_device_access(q):
     """Resolve a named NinjaOne user and report device access/assignment fields."""
-    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
-    if not re.search(r"\\b(access|accessible|accessibility|assigned|assignment|device access)\\b", text):
+    text = re.sub(r"\s+", " ", q.lower().strip().rstrip("?.! "))
+    if not re.search(r"\b(access|accessible|accessibility|assigned|assignment|device access)\b", text):
         return None
     match = re.search(
-        r"\\b(?:of|for|does|has)\\s+(?:the\\s+)?(?:user\\s+|technician\\s+|person\\s+)?"
+        r"\b(?:of|for|does|has)\s+(?:the\s+)?(?:user\s+|technician\s+|person\s+)?"
         r"([a-z][a-z .'-]{2,})$",
         text,
     )
     if not match:
         return None
-    name = re.sub(r"\\s+", " ", match.group(1)).strip(" .'-")
-    if not name or re.search(r"\\b(devices?|access|assigned|accessible|give|show|list)\\b", name):
+    name = re.sub(r"\s+", " ", match.group(1)).strip(" .'-")
+    if not name or re.search(r"\b(devices?|access|assigned|accessible|give|show|list)\b", name):
         return None
 
     resolved = json.loads(t_resolve({"kind": "user", "name": name}))
@@ -1263,7 +1263,7 @@ def recipe_person_device_access(q):
                 lines.append(f'- {row_name(row)} (ID {device_id})')
             else:
                 lines.append(f"- Device ID {device_id} (device details not returned)")
-        return f"{label} ({len(values)}):\\n" + "\\n".join(lines)
+        return f"{label} ({len(values)}):\n" + "\n".join(lines)
 
     who = row_name(user)
     email = f' <{user["email"]}>' if user.get("email") else ""
@@ -1278,7 +1278,7 @@ def recipe_person_device_access(q):
             "The matched user record contains none of accessibleDeviceIds, assignedDeviceIds, "
             "or deviceIds. The API response does not establish device-level access for this user."
         )
-    return "\\n\\n".join(sections)
+    return "\n\n".join(sections)
 
 
 def recipe_devices_in(q):
