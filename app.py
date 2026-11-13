@@ -477,8 +477,29 @@ async def refresh_foundry():
 async def list_tools():
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         import ninja_agent
-        return {"tools": [{"name": t["function"]["name"], "description": t["function"]["description"]}
-                          for t in ninja_agent.TOOLS]}
+        operations = await asyncio.to_thread(ninja_agent.load_ops)
+        method_counts: dict[str, int] = {}
+        for operation in operations.values():
+            method = operation["method"]
+            method_counts[method] = method_counts.get(method, 0) + 1
+        spec = ninja_agent.SPEC_DATA
+        source_operation_count = sum(
+            1 for path_item in (spec.get("paths") or {}).values()
+            for method in path_item
+            if method.lower() in {"get", "post", "put", "patch", "delete"}
+        )
+        return {
+            "tools": [{"name": t["function"]["name"], "description": t["function"]["description"]}
+                      for t in ninja_agent.TOOLS],
+            "catalog": {
+                "spec_version": (spec.get("info") or {}).get("version"),
+                "path_count": len(spec.get("paths") or {}),
+                "source_operation_count": source_operation_count,
+                "available_operation_count": len(operations),
+                "blocked_delete_count": source_operation_count - len(operations),
+                "method_counts": method_counts,
+            },
+        }
     tools = await get_tools()
     return {"tools": [{"name": t.name, "description": t.description} for t in tools]}
 
