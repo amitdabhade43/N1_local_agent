@@ -458,6 +458,57 @@ KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["tec
             "computer": ["device"], "endpoint": ["device"]}
 
 
+def recipe_list_entity_fields(q):
+    """Deterministically list requested name/email fields for NinjaOne people inventories."""
+    text = re.sub(r"\\s+", " ", q.lower().strip())
+    # Correct common typing errors seen in short natural-language requests.
+    text = re.sub(r"\\b(fisrtname|fristname|firstanme)\\b", "firstname", text)
+    text = re.sub(r"\\b(latsname|lastnamee|lastnme)\\b", "lastname", text)
+    if not re.search(r"\\b(list|show|display|get|fetch|give|provide|who are|what are)\\b", text):
+        return None
+
+    if re.search(r"\\bend[\\s-]?users?\\b", text):
+        kind, path, label = "end_user", "/v2/user/end-users", "end user"
+    elif re.search(r"\\btechnicians?\\b|\\btechs?\\b", text):
+        kind, path, label = "technician", "/v2/user/technicians", "technician"
+    elif re.search(r"\\b(users?|people|accounts?)\\b", text):
+        kind, path, label = "user", "/v2/users", "user"
+    else:
+        return None
+
+    requested = []
+    if re.search(r"\\b(first\\s*name|firstname)\\b", text):
+        requested.append(("firstName", ("firstName", "first_name", "firstname")))
+    if re.search(r"\\b(last\\s*name|lastname)\\b", text):
+        requested.append(("lastName", ("lastName", "last_name", "lastname")))
+    if re.search(r"\\b(email(?:\\s+ids?)?s?)\\b", text):
+        requested.append(("email", ("email", "emailAddress", "email_address")))
+    if not requested:
+        return None
+
+    op = op_by_path(path)
+    if not op:
+        return f"The NinjaOne {label}-list endpoint {path} was not found in the loaded API specification."
+    rows = fetch(op, path, {})
+    output = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        values = []
+        for display, aliases in requested:
+            value = next((row.get(key) for key in aliases if row.get(key) not in (None, "")), None)
+            if value is not None:
+                values.append(str(value).strip())
+        if values:
+            output.append(" ".join(values))
+    if not output:
+        return (f"NinjaOne returned {len(rows)} {label} record(s), but none contained "
+                f"the requested fields ({', '.join(name for name, _ in requested)}).")
+    return f"{len(output)} {label}(s):\\n" + "\\n".join(
+        f"{index}. {value}" for index, value in enumerate(output, 1)
+    )
+
+
 def recipe_list_technician_names(q):
     """Return technician first/last names directly for simple inventory requests."""
     text = re.sub(r"\s+", " ", q.lower().strip())
@@ -575,7 +626,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_list_entity_fields, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
