@@ -63,6 +63,20 @@ def is_delete_operation(method: str, path: str, operation_id: str, summary: str)
     return False
 
 
+def is_read_only_operation(method: str, operation_id: str, summary: str) -> bool:
+    """Recognize the small set of POST operations explicitly documented as reads."""
+    method = method.upper()
+    if method == "GET":
+        return True
+    if method != "POST":
+        return False
+    operation_name = operation_id.lower()
+    description = summary.strip().lower()
+    read_name = operation_name.startswith(("get", "list", "search", "find", "query", "fetch", "retrieve"))
+    read_summary = description.startswith(("get ", "list ", "search ", "find ", "retrieve "))
+    return read_name and read_summary
+
+
 def _media_schema(request_body: dict) -> tuple[str | None, dict | None]:
     content = request_body.get("content") or {}
     # Prefer JSON, then URL-encoded form. Multipart/binary is intentionally
@@ -120,6 +134,7 @@ def build_operations(spec: dict) -> dict[str, dict]:
             operations[operation_id] = {
                 "id": operation_id,
                 "method": method_upper,
+                "read_only": is_read_only_operation(method_upper, operation_id, summary),
                 "path": path,
                 "summary": summary,
                 "description": raw.get("description") or "",
@@ -230,6 +245,7 @@ def describe_operation(operation: dict, include_schema: bool = False) -> dict:
     result = {
         "operation_id": operation["id"],
         "method": operation["method"],
+        "read_only": bool(operation.get("read_only")),
         "path": operation["path"],
         "summary": operation.get("summary", ""),
         "tags": operation.get("tags", []),
