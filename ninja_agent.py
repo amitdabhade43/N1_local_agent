@@ -17,6 +17,7 @@ SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRM
 BASE = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").rstrip("/")  # use your region host
 CID, CSECRET = os.getenv("NINJA_CLIENT_ID", ""), os.getenv("NINJA_CLIENT_SECRET", "")
 SCOPE = os.getenv("NINJA_SCOPE", "monitoring")
+TOKEN_URL = os.getenv("NINJA_TOKEN_URL", "").strip()
 LLM_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b")
 NO_THINK = os.getenv("NO_THINK", "0") == "1"  # set 1 for Qwen3 to skip thinking (faster)
@@ -123,9 +124,16 @@ def describe(o):
 def token():
     if _tok["v"] and time.time() < _tok["exp"] - 30:
         return _tok["v"]
-    r = requests.post(f"{BASE}/ws/oauth/token", timeout=30, data={
+    token_url = TOKEN_URL or f"{BASE}/oauth/token"
+    r = requests.post(token_url, timeout=30, data={
         "grant_type": "client_credentials", "client_id": CID,
         "client_secret": CSECRET, "scope": SCOPE})
+    # Keep compatibility with older regional tenants that still expose the
+    # legacy token route. The current Public API client-credentials flow uses /oauth/token.
+    if r.status_code in {404, 405} and not TOKEN_URL:
+        r = requests.post(f"{BASE}/ws/oauth/token", timeout=30, data={
+            "grant_type": "client_credentials", "client_id": CID,
+            "client_secret": CSECRET, "scope": SCOPE})
     r.raise_for_status()
     j = r.json()
     _tok.update(v=j["access_token"], exp=time.time() + j.get("expires_in", 3600))
