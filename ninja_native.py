@@ -1,0 +1,89 @@
+"""Native NinjaOne backend for N1_local_agent's FastAPI UI (no MCP server needed).
+
+Keeps the UI contract of app.py: returns (answer, activity) where activity is a list of
+{"kind":"call","tool","arguments"} / {"kind":"result","tool","result"} items.
+Reuses the spec index, tools and fast path from ninja_agent.py.
+"""
+import asyncio, json, os, re
+
+import requests
+from fastapi import HTTPException
+from openai import OpenAI
+
+import ninja_agent as core
+
+MAX_STEPS = 6
+_ready, _sessions, _clients = False, {}, {}
+
+
+def _client(base):
+    if base not in _clients:
+        _clients[base] = OpenAI(base_url=base, api_key=os.getenv("FOUNDRY_API_KEY", "local"),
+                                timeout=120, max_retries=0)
+    return _clients[base]
+
+
+def _text(content):
+    if isinstance(content, str):
+        return content
+    return " ".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")
+
+
+def _ensure():
+    global _ready
+    if _ready:
+        return
+    if not (core.CID and core.CSECRET):
+        raise RuntimeError("Set NINJA_CLIENT_ID and NINJA_CLIENT_SECRET (and NINJA_BASE_URL) in .env")
+    core.OPS = core.load_ops()
+    core.IDX = core.Index(core.OPS)
+    _ready = True
+
+
+def _run(session_id, model_id, content, base):
+    _ensure()
+    q = _text(content)
+    fp = core.fast_path(q)  # no-LLM answer for plain "how many devices" style questions
+    if fp:
+        return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
+
+    activity = []
+    hist = _sessions.get(session_id, [])[-6:]
+    system = core.SYSTEM + "\nReply in plain text only (the UI shows raw text): no markdown, no bold, no tables." + ("\n/no_think" if core.NO_THINK else "")
+    msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
+    answer = "I couldn't finish within the step limit. Try a more specific question."
+    for _ in range(MAX_STEPS):
+        m = _client(base).chat.completions.create(
+            model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
+        if not m.tool_calls:
+            answer = core.clean(m.content) or "The model returned no text response."
+            break
+        msgs.append(m.model_dump(exclude_none=True))
+        for tc in m.tool_calls:
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+                fn = core.DISPATCH.get(tc.function.name)
+                out = fn(args) if fn else core.err("unknown tool")
+            except requests.HTTPError as e:
+                args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+            except Exception as e:
+                args, out = {}, core.err(f"{type(e).__name__}: {e}")
+            activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
+            activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
+            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+    _sessions[session_id] = (hist + [{"role": "user", "content": q},
+                                     {"role": "assistant", "content": answer}])[-12:]
+    return answer, activity
+
+
+async def run_native(session_id, model_id, content, base_url):
+    try:
+        return await asyncio.to_thread(_run, session_id, model_id, content, base_url)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Native NinjaOne agent failed: {exc}")
+
+
+def clear_session(session_id):
+    _sessions.pop(session_id, None)

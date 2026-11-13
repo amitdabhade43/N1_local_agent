@@ -18,6 +18,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel
 
 load_dotenv()
+import ninja_native  # after load_dotenv so NINJA_* settings from .env are visible
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -265,6 +266,10 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
     # Keep filtered/detail/search requests on the agent path.
     if re.search(r"\b(where|with|whose|matching|search for|details for|status of|named|called)\b", text):
         return None
+    # Person/scope/status questions need the agent, not a plain list or count.
+    if re.search(r"\b(access|per|each|by|offline|online|owned|owner|assigned|belong\w*|under|inside)\b", text):
+        return None
+
     plural, tool_names = selected
     tool = next((t for t in tools if t.name.lower() in tool_names), None)
     if tool is None:
@@ -335,6 +340,9 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
 
 
 async def run_agent(session_id: str, model_id: str, message_content: Any):
+    if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
+        return await ninja_native.run_native(session_id, model_id, message_content, BASE_URL)
+
     tools = await get_tools()
     if not tools:
         raise HTTPException(status_code=502, detail="MCP server returned no tools")
@@ -415,6 +423,10 @@ async def config():
 
 @app.get("/api/tools")
 async def list_tools():
+    if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
+        import ninja_agent
+        return {"tools": [{"name": t["function"]["name"], "description": t["function"]["description"]}
+                          for t in ninja_agent.TOOLS]}
     tools = await get_tools()
     return {"tools": [{"name": t.name, "description": t.description} for t in tools]}
 
@@ -457,6 +469,7 @@ async def chat_image(
 async def clear_session(session_id: str):
     async with _session_lock:
         _sessions.pop(session_id, None)
+    ninja_native.clear_session(session_id)
     return {"ok": True}
 
 

@@ -23,3 +23,9 @@ Edit `.env` to set the exact Phi model ID and other endpoints.
 - This starter uses request/response chat; tool activity is displayed after each agent turn.
 - Bind the web server to loopback only unless you add authentication and network protections.
 - Validate model tool-call compatibility with both model variants.
+
+## Native mode (no MCP server)
+Set `AGENT_BACKEND=native` in `.env` plus `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`, `NINJA_BASE_URL`
+(your region host). The agent (`ninja_agent.py`, `ninja_native.py`) loads the NinjaOne OpenAPI spec,
+searches endpoints, paginates, counts and resolves names itself, read-only. Default is `mcp` (unchanged).
+For Qwen3 set `NO_THINK=1` for faster answers.
