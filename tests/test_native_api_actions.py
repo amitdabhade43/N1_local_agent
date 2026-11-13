@@ -53,6 +53,24 @@ class NativeApiActionTests(unittest.TestCase):
                         ],
                     }
                 },
+                "/v2/ticketing/trigger/board/{boardId}/run": {
+                    "post": {
+                        "operationId": "getTicketsByBoard",
+                        "summary": "List of tickets for board",
+                        "parameters": [
+                            {"name": "boardId", "in": "path", "required": True,
+                             "schema": {"type": "integer"}}
+                        ],
+                        "requestBody": {
+                            "content": {"application/json": {
+                                "schema": {"type": "object", "properties": {
+                                    "pageSize": {"type": "integer"},
+                                    "searchCriteria": {"type": "string"}
+                                }}
+                            }}
+                        }
+                    }
+                },
             },
         }
         core.SPEC_DATA = self.spec
@@ -112,6 +130,19 @@ class NativeApiActionTests(unittest.TestCase):
                 "path_params": {"id": 7},
             }))
         fetch.assert_called_once()
+        self.assertEqual(result["total"], 1)
+
+    def test_documented_read_only_post_query_executes_without_approval(self):
+        with patch.object(core, "http_request", return_value=[{"id": 5, "subject": "Printer offline"}]) as request:
+            result = json.loads(core.t_call({
+                "operation_id": "getTicketsByBoard",
+                "path_params": {"boardId": 12},
+                "body": {"pageSize": 25, "searchCriteria": "printer"},
+            }))
+        request.assert_called_once_with(
+            "POST", "/v2/ticketing/trigger/board/12/run", {},
+            {"pageSize": 25, "searchCriteria": "printer"}, "application/json", {}
+        )
         self.assertEqual(result["total"], 1)
 
     def test_write_approval_requires_management_scope(self):
