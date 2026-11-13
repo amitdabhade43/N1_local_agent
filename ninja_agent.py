@@ -123,7 +123,7 @@ def token():
     return _tok["v"]
 
 
-def http_request(method, path, query=None, body=None, media_type="application/json"):
+def http_request(method, path, query=None, body=None, media_type="application/json", extra_headers=None):
     """Execute a validated NinjaOne request. GET responses are cached; writes are not."""
     method = method.upper()
     if method == "DELETE":
@@ -138,6 +138,10 @@ def http_request(method, path, query=None, body=None, media_type="application/js
         return hit[1]
 
     headers = {"Authorization": "Bearer " + token(), "Accept": "application/json"}
+    for name, value in (extra_headers or {}).items():
+        if name.lower() in {"authorization", "cookie", "host", "content-length"}:
+            raise ValueError(f"Header '{name}' cannot be overridden.")
+        headers[name] = str(value)
     kwargs = {"params": query, "timeout": 90, "headers": headers}
     if method != "GET" and body is not None:
         if media_type == "application/json":
@@ -328,7 +332,7 @@ def clear_active_session():
     _active_session.value = None
 
 
-def _prepare_mutation(op, path, query, body):
+def _prepare_mutation(op, path, query, body, headers=None):
     session_id = getattr(_active_session, "value", None)
     if not session_id:
         return err("Mutation blocked: no active chat session is associated with this request.")
@@ -348,6 +352,7 @@ def _prepare_mutation(op, path, query, body):
         "path": path,
         "query": query,
         "body": body,
+        "headers": headers or {},
         "media_type": media_type,
         "summary": op.get("summary", ""),
         "expires_at": time.time() + 600,
@@ -391,7 +396,8 @@ def execute_pending_action(action_id, session_id):
         }
     try:
         result = http_request(
-            action["method"], action["path"], action["query"], action["body"], action["media_type"]
+            action["method"], action["path"], action["query"], action["body"],
+            action["media_type"], action.get("headers")
         )
         return {
             "ok": True,
@@ -442,7 +448,7 @@ def t_call(a):
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
         return json.dumps(result, default=str)[:MAX_CHARS]
 
-    return _prepare_mutation(op, path, query, a.get("body"))
+    return _prepare_mutation(op, path, query, a.get("body"), a.get("headers"))
 
 
 DISPATCH = {
