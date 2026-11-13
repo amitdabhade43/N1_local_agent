@@ -16,6 +16,10 @@ class OpenApiCatalogTests(unittest.TestCase):
             "security": [{"oauth2": ["monitoring", "management"]}],
             "components": {
                 "schemas": {
+                    "Person": {
+                        "type": "object",
+                        "properties": {"email": {"type": "string", "format": "email"}},
+                    },
                     "CreateThing": {
                         "type": "object",
                         "required": ["name", "kind"],
@@ -23,6 +27,8 @@ class OpenApiCatalogTests(unittest.TestCase):
                             "name": {"type": "string", "minLength": 2},
                             "kind": {"type": "string", "enum": ["device", "user"]},
                             "enabled": {"type": "boolean", "nullable": True},
+                            "owner": {"$ref": "#/components/schemas/Person"},
+                            "reviewer": {"$ref": "#/components/schemas/Person"},
                         },
                     }
                 }
@@ -91,6 +97,8 @@ class OpenApiCatalogTests(unittest.TestCase):
         operation = build_operations(self.spec)["createThing"]
         schema = operation["request_body"]["schema"]
         self.assertIn("name", schema["properties"])
+        self.assertIn("email", schema["properties"]["owner"]["properties"])
+        self.assertIn("email", schema["properties"]["reviewer"]["properties"])
         errors = validate_payload(schema, {"name": "A", "kind": "invalid"}, self.spec)
         self.assertTrue(any("too short" in error for error in errors))
         self.assertTrue(any("not one of" in error for error in errors))
