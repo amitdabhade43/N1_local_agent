@@ -2,6 +2,9 @@ import json
 import unittest
 from pathlib import Path
 
+from unittest.mock import patch
+
+import ninja_agent
 from ninja_openapi import build_operations
 
 
@@ -12,6 +15,12 @@ class BundledNinjaSpecTests(unittest.TestCase):
         with spec_path.open("r", encoding="utf-8") as handle:
             cls.spec = json.load(handle)
         cls.operations = build_operations(cls.spec)
+
+    def test_load_ops_uses_bundled_spec_without_network_download(self):
+        with patch.object(ninja_agent.requests, "get") as download:
+            operations = ninja_agent.load_ops()
+        download.assert_not_called()
+        self.assertEqual(len(operations), 285)
 
     def test_bundled_spec_catalog_counts_match_expected_api_surface(self):
         counts = {}
