@@ -73,7 +73,7 @@ def _run(session_id, model_id, content, base):
                          {"role": "user", "content": core.text_call_followup(tc[0], out)}]
                 continue
             txt = core.clean(m.content)
-            bad = not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt))
+            bad = not called and bool(\n                core.PLAN.search(txt)\n                or core.BADCALL.search(txt)\n                or re.search(r"\\b(?:i(?:\\s+will|\\x27ll)|going\\s+to)\\s+(?:call|use|invoke)\\b|\\b(?:retrieve|fetch|look\\s+up)\\s+(?:the\\s+)?(?:list|records|data)\\b", txt, re.I)\n            )
             if bad and not nudged:
                 nudged = True
                 msgs += [{"role": "assistant", "content": txt}, {"role": "user", "content": core.NUDGE}]
