@@ -383,7 +383,8 @@ def slim(r):
         elif isinstance(v, list) and k in list_fields:
             o[k + "_count"] = len(v)
             if all(not isinstance(item, (dict, list)) for item in v):
-                o[k] = v[:50]
+                # Keep every scalar ID. Truncating at 50 silently hid valid user access.
+                o[k] = list(v)
             else:
                 o[k] = [slim(item) for item in v[:20]]
     return o
@@ -869,7 +870,8 @@ API workflow:
 - If an endpoint exposes pageSize/cursor parameters but the spec does not define a safe continuation contract, label the result as the current page only and never report it as a complete tenant-wide count.
 - Multipart/file-upload operations are visible in the OpenAPI catalog but are not executable through the current chat transport. Do not fabricate an upload or claim it succeeded; explain the limitation.
 - Monitoring scope is read-only. Write operations require the NinjaOne OAuth Management scope and the user’s approval. If the API returns 401/403, explain the actual permission/scope failure.
-- Access semantics from the published API spec: end-user records expose accessibleDeviceIds and assignedDeviceIds; report accessibleDeviceIds as access and assignedDeviceIds separately. GET /v2/users?includeRoles=true exposes user deviceIds, assignedDeviceIds and role names.
+- Access semantics from the published API spec: resolve end users through GET /v2/user/end-users because it exposes accessibleDeviceIds and assignedDeviceIds. Report accessibleDeviceIds as device access and assignedDeviceIds separately; never treat assignment as equivalent to access. GET /v2/users?includeRoles=true exposes deviceIds, assignedDeviceIds and role names but not accessibleDeviceIds.
+- The documented PATCH /v2/user/end-user/{id}/device-access operation adds or removes up to 100 accessible device IDs for an END USER only. For an explicit add request, first resolve the end user, read their current accessibleDeviceIds, resolve/check every requested device, remove IDs already present from the add list, then inspect patchEndUserDeviceAccess and prepare only the remaining IDs using addDeviceIds. If all requested IDs are already accessible, report that no change is needed. If more than 100 new IDs are requested, split into batches of at most 100 and require separate approval for each batch. Never claim access was added until approval succeeds and the API response confirms it. This operation does not grant access to technicians or change assignedDeviceIds.
 - Technician records expose assignedDeviceIds and role names. GET /v2/user/roles exposes role members, but this published spec has no GET operation to read a role's organizationPermissions (only a PATCH setter). Never infer a technician's organization-access count from role names; state this API limitation clearly.
 - If a person-access question does not distinguish assigned devices from accessible devices, ask one short clarification.
 - If a person name resolves ambiguously, show the matching records and ask one concise clarification.
@@ -1204,33 +1206,44 @@ def recipe_find(q):
 
 
 def recipe_person_device_access(q):
-    """Resolve a named NinjaOne user and report device access/assignment fields."""
-    text = re.sub(r"\s+", " ", q.lower().strip().rstrip("?.! "))
-    if not re.search(r"\b(access|accessible|accessibility|assigned|assignment|device access)\b", text):
+    """Resolve a named end user and report the complete accessible/assigned device lists."""
+    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
+    if not re.search(r"\\b(access|accessible|accessibility|assigned|assignment|device access)\\b", text):
         return None
     match = re.search(
-        r"\b(?:of|for|does|has)\s+(?:the\s+)?(?:user\s+|technician\s+|person\s+)?"
+        r"\\b(?:of|for|does|has)\\s+(?:the\\s+)?(?:user\\s+|technician\\s+|person\\s+)?"
         r"([a-z][a-z .'-]{2,})$",
         text,
     )
     if not match:
         return None
-    name = re.sub(r"\s+", " ", match.group(1)).strip(" .'-")
-    if not name or re.search(r"\b(devices?|access|assigned|accessible|give|show|list)\b", name):
+    name = re.sub(r"\\s+", " ", match.group(1)).strip(" .'-")
+    if not name or re.search(r"\\b(devices?|access|assigned|accessible|give|show|list)\\b", name):
         return None
 
-    resolved = json.loads(t_resolve({"kind": "user", "name": name}))
+    # Only the end-user endpoint exposes accessibleDeviceIds in the published spec.
+    resolved = json.loads(t_resolve({"kind": "end_user", "name": name}))
     matches = resolved.get("matches") or []
     if not matches:
-        return f'No NinjaOne user matched "{name}".'
+        other = json.loads(t_resolve({"kind": "user", "name": name}))
+        other_matches = other.get("matches") or []
+        if other_matches and other_matches[0].get("match", 0) >= 0.65:
+            candidate = other_matches[0]
+            return (
+                f'Matched {row_name(candidate)} as a NinjaOne {candidate.get("userType", "user")} record, '
+                "but no matching end-user record was found. The published API exposes the direct "
+                "accessible-device list and device-access update endpoint for end users only. "
+                "For this record, I can report assignedDeviceIds/deviceIds where present, but cannot "
+                "claim those fields represent end-user access or add direct device access."
+            )
+        return f'No NinjaOne end user matched "{name}".'
     if len(matches) > 1 and matches[1].get("match", 0) >= matches[0].get("match", 0) - 0.08:
         choices = ", ".join(row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
                             for row in matches[:5])
-        return f'Multiple NinjaOne users closely match "{name}": {choices}. Please confirm which user.'
-
+        return f'Multiple NinjaOne end users closely match "{name}": {choices}. Please confirm which user.'
     user = matches[0]
     if user.get("match", 0) < 0.65:
-        return f'No sufficiently close NinjaOne user match for "{name}". Closest result: {row_name(user)}.'
+        return f'No sufficiently close NinjaOne end-user match for "{name}". Closest result: {row_name(user)}.'
 
     def ids_for(*keys):
         for key in keys:
@@ -1244,42 +1257,55 @@ def recipe_person_device_access(q):
     device_ids = ids_for("deviceIds")
     all_ids = list(dict.fromkeys(accessible + assigned + device_ids))
     devices = []
+    device_list_complete = True
+    device_list_note = ""
     if all_ids:
         op = op_by_path("/v2/devices")
         if op:
-            device_rows = fetch(op, "/v2/devices", {})
-            by_id = {str(row.get("id")): row for row in device_rows
+            fetched = fetch(op, "/v2/devices", {})
+            device_list_complete = getattr(fetched, "complete", True)
+            device_list_note = getattr(fetched, "note", "")
+            by_id = {str(row.get("id")): row for row in fetched
                      if isinstance(row, dict) and row.get("id") is not None}
             devices = [by_id.get(str(device_id)) for device_id in all_ids]
 
     def describe_ids(label, values):
         if not values:
-            return f"{label}: no IDs returned in the user record."
+            return f"{label} (0): none returned."
         lines = []
-        for device_id in values:
+        for index, device_id in enumerate(values, 1):
             row = next((item for item in devices if isinstance(item, dict)
                         and str(item.get("id")) == str(device_id)), None)
-            if row:
-                lines.append(f'- {row_name(row)} (ID {device_id})')
-            else:
-                lines.append(f"- Device ID {device_id} (device details not returned)")
-        return f"{label} ({len(values)}):\n" + "\n".join(lines)
+            name_value = row_name(row) if row else "device details unavailable"
+            lines.append(f"{index}. {name_value} (ID {device_id})")
+        sections = []
+        for offset in range(0, len(lines), 20):
+            batch = lines[offset:offset + 20]
+            sections.append(
+                f"{label} — devices {offset + 1}-{offset + len(batch)} of {len(lines)}:\\n"
+                + "\\n".join(batch)
+            )
+        return "\\n\\n".join(sections)
 
     who = row_name(user)
     email = f' <{user["email"]}>' if user.get("email") else ""
     sections = [
         f"NinjaOne device-access details for {who}{email}:",
         describe_ids("Accessible devices", accessible),
-        describe_ids("Assigned devices", assigned),
-        describe_ids("Device IDs on user record", device_ids),
+        describe_ids("Assigned devices (separate from access)", assigned),
     ]
+    if device_ids and set(map(str, device_ids)) != set(map(str, accessible + assigned)):
+        sections.append(describe_ids("Other device IDs on user record", device_ids))
     if not any((accessible, assigned, device_ids)):
         sections.append(
-            "The matched user record contains none of accessibleDeviceIds, assignedDeviceIds, "
-            "or deviceIds. The API response does not establish device-level access for this user."
+            "The matched end-user record contains no accessibleDeviceIds or assignedDeviceIds. "
+            "The API response does not establish device-level access for this user."
         )
-    return "\n\n".join(sections)
-
+    if not device_list_complete:
+        sections.append("Device details may be incomplete: " + (device_list_note or "the device endpoint returned a partial page."))
+    if not device_list_complete or len(devices) < len(all_ids):
+        sections.append("Some IDs could not be matched to the device inventory; those IDs are still shown above.")
+    return "\\n\\n".join(sections)
 
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
