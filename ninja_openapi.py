@@ -49,7 +49,7 @@ def expand_refs(value: Any, spec: dict, seen: frozenset[str] = frozenset(), dept
             current = expanded
 
     if isinstance(current, dict):
-        return {k: expand_refs(v, spec, seen, depth + 1) for k, v in current.items()}
+        return {k: expand_refs(v, spec, set(seen), depth + 1) for k, v in current.items()}
     return current
 
 
