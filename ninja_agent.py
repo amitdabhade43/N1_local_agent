@@ -1324,6 +1324,107 @@ def recipe_person_device_access(q):
         )
     return "\n\n".join(sections)
 
+def recipe_device_details(q):
+    """Resolve a device name/system name to its numeric ID, then fetch its full detail record."""
+    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
+    match = re.search(
+        r"\\b(?:system|device|computer|machine|endpoint)\\s+"
+        r"(?:details?|information|info|specifications?)\\s+"
+        r"(?:of|for|about)\\s+(.+)$",
+        text,
+    )
+    if not match:
+        return None
+
+    identifier = match.group(1).strip().strip("\\\"'")
+    if not identifier:
+        return "Please provide a device name or identifier."
+
+    resolved = json.loads(t_resolve({"kind": "device", "name": identifier}))
+    matches = resolved.get("matches") or []
+    if not matches:
+        return f'No NinjaOne device matched "{identifier}".'
+
+    def norm(value):
+        return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+    exact = []
+    for row in matches:
+        labels = (
+            row.get("systemName"), row.get("displayName"), row.get("dnsName"),
+            row.get("netbiosName"), row.get("serialNumber"), row.get("uid"),
+            row.get("name"),
+        )
+        if any(norm(label) == norm(identifier) for label in labels if label):
+            exact.append(row)
+
+    if len(exact) > 1:
+        choices = ", ".join(
+            f'{row_name(row)} (device ID {row.get("id")})' for row in exact[:8]
+        )
+        return f'Multiple NinjaOne devices exactly match "{identifier}": {choices}. Please confirm which device.'
+
+    if not exact:
+        choices = ", ".join(
+            f'{row_name(row)} (device ID {row.get("id")}, match {row.get("match")})'
+            for row in matches[:5]
+        )
+        return (
+            f'I could not verify an exact device match for "{identifier}". '
+            f'Closest matches: {choices}. Please provide the exact system name or confirm a match.'
+        )
+
+    device = exact[0]
+    device_id = device.get("id")
+    if isinstance(device_id, bool) or not str(device_id).isdigit():
+        return (
+            f'The device "{row_name(device)}" resolved, but NinjaOne did not return a numeric device ID. '
+            'The device-details endpoint requires the numeric ID; no details request was sent.'
+        )
+
+    path = "/v2/device/{id}"
+    op = op_by_path(path)
+    if not op:
+        return f'The bundled NinjaOne API specification does not contain GET {path}. No details request was sent.'
+
+    # Ask the operation schema for its complete top-level response field list.
+    fields = []
+    for response in (op.get("responses") or {}).values():
+        if not isinstance(response, dict):
+            continue
+        schema = ((response.get("content") or {}).get("application/json") or {}).get("schema") or {}
+        properties = schema.get("properties") or {}
+        if properties:
+            fields = list(properties)
+            break
+
+    arguments = {
+        "operation_id": op["id"],
+        "path_params": {"id": int(device_id)},
+    }
+    if fields:
+        arguments["fields"] = fields
+
+    result_text = t_call(arguments)
+    try:
+        result = json.loads(result_text)
+    except (TypeError, ValueError):
+        return "The NinjaOne device-details operation returned an unreadable response."
+
+    if result.get("error"):
+        return "NinjaOne device-details lookup failed: " + json.dumps(result, default=str)
+
+    rows = result.get("rows") or []
+    if not rows:
+        return f'NinjaOne returned no device details for "{identifier}" (device ID {device_id}).'
+
+    return (
+        f'NinjaOne system details for {row_name(device)} (device ID {device_id}) '
+        f'from GET {path.replace("{id}", str(device_id))}:\\n'
+        + json.dumps(rows[0], indent=2, default=str)
+    )
+
+
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
                   r"(?:organization\s+|org\s+|client\s+)?(.+?)\s*[?.!]*$", q.lower())
@@ -1357,7 +1458,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
