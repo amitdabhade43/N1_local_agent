@@ -1,22 +1,14 @@
 # NinjaOne Local Expert Agent
 
-Local browser UI for Microsoft Foundry Local with two selectable NinjaOne backends:
-- **MCP mode** (default): connects to your existing NinjaOne MCP server.
-- **Native mode**: uses the NinjaOne API v2 OpenAPI specification directly; no MCP server is required.
+Local browser UI for Microsoft Foundry Local with two NinjaOne backends:
+- **MCP mode**: connects to the configured streamable HTTP MCP server.
+- **Native mode**: uses the bundled NinjaOne API v2 OpenAPI specification directly; no MCP server is required.
 
 ## Foundry endpoint and model discovery
 
-The app automatically discovers the running Foundry Local endpoint and loaded models.
+The app discovers the running Foundry Local endpoint and loaded models. It runs `foundry server status`, queries the discovered `/v1/models` endpoint, and populates the model selector. Leave `FOUNDRY_BASE_URL` blank for automatic discovery. Use **Refresh Foundry models** after starting/loading models or restarting Foundry.
 
-1. Start Foundry Local and load the model(s) you want to use.
-2. The app runs `foundry server status` to discover the current local endpoint, including its dynamically assigned port.
-3. It queries the discovered `/v1/models` endpoint and populates the browser model selector with the model IDs returned by Foundry.
-4. Both MCP and Native backends receive the same discovered endpoint and selected model ID.
-5. Use **Refresh Foundry models** after starting/loading models or restarting Foundry.
-
-The discovery code also checks the optional `FOUNDRY_BASE_URL` override first, then the CLI-reported endpoint, then legacy ports used by earlier versions of this project. Leave `FOUNDRY_BASE_URL` blank for automatic discovery. The UI only lists models currently returned by Foundry's `/v1/models`; a model must be loaded/available through the local server to be selectable.
-
-The Foundry CLI must be installed and available on the app process `PATH`. Verify discovery manually with:
+Verify discovery in PowerShell:
 
 ```powershell
 foundry server status
@@ -25,37 +17,63 @@ foundry server status
 ## Configuration
 
 Copy `.env.example` to `.env` and configure:
-
-- `FOUNDRY_BASE_URL`: optional explicit override; leave blank for automatic endpoint discovery.
-- `MCP_URL`: your existing MCP streamable HTTP endpoint (default `http://127.0.0.1:8000/mcp`).
+- `FOUNDRY_BASE_URL`: optional explicit override; blank enables automatic discovery.
+- `MCP_URL`: streamable HTTP endpoint for MCP mode.
 - `AGENT_BACKEND`: `mcp` or `native`.
-- `NINJA_BASE_URL`, `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: required for Native mode only.
+- `NINJA_BASE_URL`, `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: required for Native mode.
+- `NINJA_SCOPE`: NinjaOne OAuth scopes. `monitoring` is read-only; approved write actions require `monitoring management`.
 
-The Foundry endpoint/port and NinjaOne MCP endpoint/port are separate services. Foundry discovery does not change `MCP_URL`.
+For write support, enable **Management** in the NinjaOne OAuth application and set:
+
+```dotenv
+NINJA_SCOPE=monitoring management
+```
+
+The OAuth app must actually be granted those scopes. Changing `.env` cannot grant permissions that are not enabled in NinjaOne.
 
 ## Start
 
 1. Start Foundry Local and load a chat model.
-2. In MCP mode, start your existing NinjaOne MCP server.
-3. In the project directory, run:
+2. In MCP mode, start your MCP server.
+3. From the project directory run:
 
-   ```powershell
-   .\\run.ps1
-   ```
+```powershell
+.\run.ps1
+```
 
 4. Open `http://127.0.0.1:8080`.
-5. Confirm the Foundry endpoint and loaded models in the left panel. Select a model or click **Refresh Foundry models**.
+5. Select a loaded model and ask a NinjaOne question.
 
-## Backends
+## Native OpenAPI backend
 
-### MCP mode (default)
+Set `AGENT_BACKEND=native`. The bundled `ninja_spec.json` is the source of truth for endpoint discovery and request validation.
 
-Set `AGENT_BACKEND=mcp`. The app discovers tools from the configured MCP endpoint and uses the selected Foundry model for the LangChain agent. The currently exposed NinjaOne MCP tools are read-only.
+The current specification contains 315 operations across 254 paths:
+- **151 GET** read operations.
+- **91 POST**, **30 PATCH**, and **20 PUT** operations in the source specification.
+- **23 DELETE** operations are blocked.
+- A further **7 POST operations explicitly perform delete actions** and are also blocked.
+- The resulting catalog exposes **285 operations**: 151 GET, 84 POST, 30 PATCH and 20 PUT.
 
-NaN
+Capabilities:
+- Search API operations by endpoint name, description, tags, parameters, and request/response fields.
+- Inspect the exact operation schema, required parameters, enums, and request body before calling it.
+- Execute validated GET requests; filter, count, group, and paginate only where the OpenAPI parameters confirm an integer ID cursor.
+- Prepare POST/PUT/PATCH requests using OpenAPI request schemas. The agent displays the exact method, path, query and body; it does not send the mutation until you click **Approve and execute**.
+- Approval is tied to the originating chat session, expires after 10 minutes, and can be used once. Rejecting or clearing the conversation discards the pending action.
+- Delete operations are excluded from discovery and blocked again at the HTTP execution layer. This includes POST endpoints whose path or operation description explicitly indicates deletion.
 
-- Qwen/VL screenshot uploads are enabled only when the discovered model ID is identified as vision-capable (for example, a model ID containing `-vl-`).
-- Chat session state is held in backend memory and is cleared when the backend restarts.
-- Tool activity is displayed after each agent turn.
-- Bind the web server to loopback only unless you add authentication and network protections.
-- Tool-calling support varies by local model; validate agent tool calls with each model you intend to use.
+Every write requires both the Management OAuth scope and an explicit user approval. NinjaOne's own role permissions remain authoritative. Script execution, reboot, patch actions, decommissioning, policy changes and other state-changing operations are treated as writes and require approval.
+
+**Current transport limitation:** operations requiring multipart or binary file uploads are identified in the spec but cannot yet be submitted through the JSON chat interface. These are not silently converted into JSON.
+
+## MCP backend
+
+Set `AGENT_BACKEND=mcp`. The app discovers tools exposed by the configured MCP server. Its available capabilities are limited to the tools that server actually exposes; the current local MCP server may expose fewer operations than the full NinjaOne API specification.
+
+## Notes
+
+- Qwen/VL screenshot uploads are enabled only when the selected Foundry model is identified as vision-capable.
+- Chat and pending-approval state are held in backend memory and cleared when the backend restarts.
+- Keep the web server bound to loopback unless authentication and network protections are added.
+- Local model tool-calling reliability varies; the Native backend uses deterministic API discovery and schema validation to reduce dependence on model-generated tool syntax.
