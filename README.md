@@ -67,6 +67,8 @@ Capabilities:
 
 Every write requires both the Management OAuth scope and an explicit user approval. NinjaOne's own role permissions remain authoritative. Script execution, reboot, patch actions, decommissioning, policy changes and other state-changing operations are treated as writes and require approval.
 
+Person-access reporting follows the fields actually exposed by the API: end-user records provide `accessibleDeviceIds` and `assignedDeviceIds`; `GET /v2/users?includeRoles=true` provides user device IDs and role names. Technician roles and members are readable, but this specification has no GET endpoint for reading role `organizationPermissions` (only a PATCH setter). The agent must not invent technician organization-access totals.
+
 **Current transport limitation:** five multipart operations are catalogued but not yet executable through the JSON chat interface: `uploadTempAttachments`, `uploadKnowledgeBaseArticles`, `createRelatedItem`, `createComment`, and `updateScanGroup` (CSV upload). They are not silently converted into JSON; a session-bound file attachment workflow is required.
 
 ## MCP backend
