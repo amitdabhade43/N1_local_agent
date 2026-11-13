@@ -404,7 +404,9 @@ def _prepare_mutation(op, path, query, body, headers=None):
         "path": action["path"],
         "summary": action["summary"],
         "query": query,
+        "headers": headers or {},
         "body": body,
+        "media_type": media_type,
         "expires_in_seconds": 600,
         "note": "The request has NOT been executed. The user must approve it in the chat UI."
     }, default=str)
