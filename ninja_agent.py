@@ -14,7 +14,7 @@ import requests
 from openai import OpenAI
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
-BASE = os.getenv("NINJA_BASE_URL", "https://app.ninjarmm.com").rstrip("/")  # use your region host
+BASE = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").rstrip("/")  # use your region host
 CID, CSECRET = os.getenv("NINJA_CLIENT_ID", ""), os.getenv("NINJA_CLIENT_SECRET", "")
 SCOPE = os.getenv("NINJA_SCOPE", "monitoring")
 LLM_URL = os.getenv("LLM_BASE_URL", "http://localhost:11434/v1")
