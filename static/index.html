@@ -213,7 +213,7 @@ model.onchange=()=>{document.getElementById('modelTag').textContent=model.select
 document.getElementById('toolsBtn').onclick=async()=>{
  try{
   const r=await fetch('/api/tools');const d=await r.json();
-  const catalog=d.catalog?(`OpenAPI ${d.catalog.spec_version} · ${d.catalog.path_count} paths · ${d.catalog.available_operation_count}/${d.catalog.source_operation_count} available operations · ${d.catalog.blocked_delete_count} delete operations blocked\nMethods: `+Object.entries(d.catalog.method_counts).map(([method,count])=>method+' '+count).join(', ')+'\n\n'):'';
+  const catalog=d.catalog?(`OpenAPI ${d.catalog.spec_version} · ${d.catalog.path_count} paths · ${d.catalog.catalog_operation_count}/${d.catalog.source_operation_count} catalog operations · ${d.catalog.executable_operation_count} executable · ${d.catalog.multipart_operation_count} multipart pending · ${d.catalog.blocked_delete_count} delete actions blocked\nMethods: `+Object.entries(d.catalog.method_counts).map(([method,count])=>method+' '+count).join(', ')+'\n\n'):'';
   addMessage('assistant',catalog+`Discovered ${d.tools.length} agent tools:\n`+d.tools.map(t=>`• ${t.name} — ${t.description}`).join('\n'));
  }
  catch(e){addMessage('assistant','Could not discover tools: '+e.message)}
