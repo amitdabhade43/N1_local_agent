@@ -22,6 +22,18 @@ class FoundryDiscoveryTests(unittest.TestCase):
             "http://localhost:52072/v1",
         )
 
+    def test_normalizes_uppercase_v1_models_path(self):
+        self.assertEqual(
+            _normalize_base_url("http://127.0.0.1:49934/V1/Models"),
+            "http://127.0.0.1:49934/V1",
+        )
+
+    def test_preserves_uppercase_v1_base_path(self):
+        self.assertEqual(
+            _normalize_base_url("http://127.0.0.1:49934/V1"),
+            "http://127.0.0.1:49934/V1",
+        )
+
     def test_rejects_non_local_endpoint(self):
         self.assertIsNone(_normalize_base_url("https://example.com/v1"))
 
