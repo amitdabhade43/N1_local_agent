@@ -85,6 +85,10 @@ class ChatRequest(BaseModel):
     message: str
 
 
+class ActionApprovalRequest(BaseModel):
+    session_id: str
+
+
 def model_id_for(choice: str, discovery: dict[str, Any]) -> str:
     """Accept an exact discovered model ID; retain old phi/qwen UI aliases."""
     available = {item["id"] for item in discovery.get("models", [])}
@@ -473,6 +477,26 @@ async def list_tools():
                           for t in ninja_agent.TOOLS]}
     tools = await get_tools()
     return {"tools": [{"name": t.name, "description": t.description} for t in tools]}
+
+
+@app.post("/api/actions/{action_id}/approve")
+async def approve_native_action(action_id: str, req: ActionApprovalRequest):
+    if os.getenv("AGENT_BACKEND", "mcp").lower() != "native":
+        raise HTTPException(status_code=400, detail="Action approval is available only in Native backend mode.")
+    result = await asyncio.to_thread(
+        ninja_native.core.execute_pending_action, action_id, req.session_id
+    )
+    return result
+
+
+@app.post("/api/actions/{action_id}/reject")
+async def reject_native_action(action_id: str, req: ActionApprovalRequest):
+    if os.getenv("AGENT_BACKEND", "mcp").lower() != "native":
+        raise HTTPException(status_code=400, detail="Action approval is available only in Native backend mode.")
+    rejected = await asyncio.to_thread(
+        ninja_native.core.reject_pending_action, action_id, req.session_id
+    )
+    return {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
 
 
 @app.post("/api/chat")
