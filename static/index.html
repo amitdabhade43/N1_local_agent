@@ -46,7 +46,7 @@ small{color:var(--muted)}
 </div>
 <div class="status" id="status">Checking local services…</div>
 <button id="toolsBtn">Discover MCP tools</button>
-<div class="sub">Read-only NinjaOne access. Tools execute on your local MCP server.</div>
+<div class="sub">Native API: GET runs directly. POST/PUT/PATCH require your approval. Delete actions are disabled.</div>
 <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px">
 <button id="newBtn">New conversation</button>
 <button id="clearBtn">Clear current conversation</button>
@@ -85,7 +85,7 @@ function addMessage(role,text){
  const empty=chat.querySelector('.welcome'); if(empty) empty.remove();
  const el=document.createElement('div'); el.className='msg '+role;
  const r=document.createElement('div');r.className='role';r.textContent=role==='user'?'You':'Agent';
- const body=document.createElement('div');body.textContent=text;
+ const body=document.createElement('div');body.className='message-body';body.textContent=text;
  el.append(r,body);chat.append(el);chat.scrollTop=chat.scrollHeight;return el;
 }
 function addActivity(parent,activity){
@@ -94,6 +94,43 @@ function addActivity(parent,activity){
  const summary=document.createElement('summary');summary.textContent=`Tool activity (${activity.length} events)`;details.append(summary);
  activity.forEach(item=>{
   const row=document.createElement('div');row.className='toolrow';
+  if(item.kind==='approval_required'){
+   const action=item.action||{};
+   const b=document.createElement('b');b.textContent='APPROVAL REQUIRED · '+(action.method||'WRITE')+' '+(action.path||'');row.append(b);
+   const pre=document.createElement('pre');
+   pre.textContent=JSON.stringify({summary:action.summary,query:action.query,body:action.body},null,2);
+   row.append(pre);
+   const controls=document.createElement('div');controls.style.display='flex';controls.style.gap='8px';controls.style.marginTop='8px';
+   const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
+   const reject=document.createElement('button');reject.textContent='Reject';
+   const status=document.createElement('span');status.style.marginLeft='8px';status.style.color='var(--muted)';
+   const approvalSessionId=sessionId;
+   approve.onclick=async()=>{
+    approve.disabled=true;reject.disabled=true;status.textContent='Executing approved request…';
+    try{
+     const response=await fetch('/api/actions/'+encodeURIComponent(action.action_id)+'/approve',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:approvalSessionId})
+     });
+     const result=await response.json();
+     status.textContent=result.ok?'Completed successfully':('Not completed: '+(result.error||'Unknown error'));
+     const answer=parent.querySelector('.message-body');
+     if(answer)answer.textContent+='\n\nNinjaOne action '+(result.ok?'completed':'failed')+': '+JSON.stringify(result);
+     const resultPre=document.createElement('pre');resultPre.textContent=JSON.stringify(result,null,2);row.append(resultPre);
+    }catch(error){status.textContent='Approval request failed: '+error.message;approve.disabled=false;reject.disabled=false}
+   };
+   reject.onclick=async()=>{
+    approve.disabled=true;reject.disabled=true;
+    try{
+     const response=await fetch('/api/actions/'+encodeURIComponent(action.action_id)+'/reject',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({session_id:approvalSessionId})
+     });
+     const result=await response.json();status.textContent=result.ok?'Rejected':'Could not reject: '+(result.message||'not found');
+    }catch(error){status.textContent='Reject failed: '+error.message;approve.disabled=false;reject.disabled=false}
+   };
+   controls.append(approve,reject,status);row.append(controls);details.append(row);return;
+  }
   const b=document.createElement('b');b.textContent=item.kind==='call'?'CALL ':'RESULT ';b.textContent+=item.tool||'tool';row.append(b);
   const pre=document.createElement('pre');pre.textContent=item.kind==='call'?JSON.stringify(item.arguments||{},null,2):(item.result||'');
   row.append(pre);details.append(row);
