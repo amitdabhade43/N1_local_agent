@@ -516,14 +516,14 @@ def recipe_list_entity_fields(q):
 
 def recipe_list_organizations(q):
     """List organization names for natural-language organization inventory requests."""
-    text = re.sub(r"\\s+", " ", q.lower().strip())
-    asks_for_names = bool(re.search(r"\\b(name|names)\\b", text))
+    text = re.sub(r"\s+", " ", q.lower().strip())
+    asks_for_names = bool(re.search(r"\b(name|names)\\b", text))
     asks_list = bool(re.search(
-        r"\\b(list|show|display|get|fetch|give|provide|what are|which are|can i get|could i get)\\b",
+        r"\b(list|show|display|get|fetch|give|provide|what are|which are|can i get|could i get)\\b",
         text,
     ))
-    asks_count = bool(re.search(r"\\b(how many|count|number of|total)\\b", text))
-    has_organization = bool(re.search(r"\\b(organizations?|orgs?|clients?|customers?)\\b", text))
+    asks_count = bool(re.search(r"\b(how many|count|number of|total)\\b", text))
+    has_organization = bool(re.search(r"\b(organizations?|orgs?|clients?|customers?)\\b", text))
     if not (has_organization and (asks_list or asks_for_names) and not asks_count):
         return None
 
@@ -539,7 +539,7 @@ def recipe_list_organizations(q):
     ]
     if not names:
         return f"NinjaOne returned {len(rows)} organization record(s), but no organization names were present."
-    return f"{len(names)} organization(s):\\n" + "\\n".join(
+    return f"{len(names)} organization(s):\\n" + "\n".join(
         f"{index}. {name}" for index, name in enumerate(names, 1)
     )
 
