@@ -314,7 +314,7 @@ def err(msg):
 
 
 def t_search(a):
-    hits = IDX.search(a.get("query", ""), int(a.get("limit", 8)))
+    hits = IDX.search(a.get("query", ""), max(1, min(12, int(a.get("limit", 8))))
     return "\n".join(describe(o) for o in hits) or err("no match; try different keywords")
 
 
