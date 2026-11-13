@@ -109,6 +109,7 @@ def _run_inner(session_id, model_id, content, base, progress=None):
         called = True
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
+            emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
             try:
                 args = json.loads(tc.function.arguments or "{}")
                 fn = core.DISPATCH.get(tc.function.name)
@@ -117,7 +118,6 @@ def _run_inner(session_id, model_id, content, base, progress=None):
                 args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
             except Exception as e:
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
-            emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
             activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
             emit(f"Received a response from {tc.function.name}.", "result")
             activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
