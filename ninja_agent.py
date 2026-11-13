@@ -695,6 +695,13 @@ def t_call(a):
         return err(f"Unknown operation_id. Likely matches: {sug or 'none'}. Use search_api.")
     if is_delete_operation(op["method"], op["path"], op["id"], op.get("summary", "")):
         return err("Delete operations are disabled by policy and cannot be prepared or executed.")
+    if not op.get("read_only"):
+        media_type = (op.get("request_body") or {}).get("media_type")
+        if media_type and media_type not in {"application/json", "application/x-www-form-urlencoded"}:
+            return err(
+                f"This operation requires {media_type}; file/multipart transport is not yet enabled. "
+                "No request was sent."
+            )
 
     errors = _argument_errors(op, a)
     if errors:
