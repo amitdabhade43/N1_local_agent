@@ -141,3 +141,4 @@ async def run_native(session_id, model_id, content, base_url):
 
 def clear_session(session_id):
     _sessions.pop(session_id, None)
+    core.clear_pending_session(session_id)
