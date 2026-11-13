@@ -9,7 +9,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
@@ -365,11 +365,13 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     return answer, activity
 
 
-async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str):
+async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
-        return await ninja_native.run_native(session_id, model_id, message_content, base_url)
+        return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback)
 
+    if progress_callback:
+        progress_callback({'stage': 'discovery', 'message': 'Connecting to the MCP tool catalog.'})
     tools = await get_tools()
     if not tools:
         raise HTTPException(status_code=502, detail="MCP server returned no tools")
@@ -378,15 +380,24 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
-        return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+        if progress_callback:
+            progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}'})
+        direct_answer, direct_activity = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+        if progress_callback:
+            progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
+        return direct_answer, direct_activity
 
     agent = await get_agent(model_id, base_url, tools)
+    if progress_callback:
+        progress_callback({'stage': 'model', 'message': 'Analyzing the request and selecting relevant tools.'})
     async with _session_lock:
         history = list(_sessions.get(session_id, []))[-MAX_HISTORY_MESSAGES:]
         history.append(HumanMessage(content=message_content))
 
     started = time.perf_counter()
     try:
+        if progress_callback:
+            progress_callback({'stage': 'model', 'message': 'The agent is working through the request.'})
         result = await agent.ainvoke(
             {"messages": history},
             config={"recursion_limit": AGENT_RECURSION_LIMIT},
@@ -532,6 +543,56 @@ async def reject_native_action(action_id: str, req: ActionApprovalRequest):
     ninja_native.record_action_result(req.session_id, result)
     return result
 
+
+@app.post("/api/chat/stream")
+async def chat_stream(req: ChatRequest):
+    """Stream truthful execution status and the final answer as Server-Sent Events."""
+    session_id = req.session_id or str(uuid.uuid4())
+
+    async def event_stream():
+        queue: asyncio.Queue = asyncio.Queue()
+        loop = asyncio.get_running_loop()
+
+        def publish(event: dict):
+            # Native execution runs in a worker thread; marshal events onto this loop.
+            loop.call_soon_threadsafe(queue.put_nowait, event)
+
+        async def execute():
+            try:
+                publish({"type": "progress", "stage": "setup", "message": "Checking the selected local model."})
+                discovery = await asyncio.to_thread(discover_foundry)
+                model_id = model_id_for(req.model, discovery)
+                publish({"type": "progress", "stage": "ready", "message": "Model is ready. Starting the agent."})
+                answer, activity = await run_agent(
+                    session_id, model_id, req.message, discovery["base_url"],
+                    progress_callback=lambda item: publish({"type": "progress", **item}),
+                )
+                publish({"type": "complete", "session_id": session_id, "model": req.model,
+                         "answer": answer, "activity": activity})
+            except HTTPException as exc:
+                publish({"type": "error", "message": str(exc.detail)})
+            except Exception as exc:
+                publish({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+            finally:
+                publish({"type": "done"})
+
+        task = asyncio.create_task(execute())
+        try:
+            while True:
+                event = await queue.get()
+                if event.get("type") == "done":
+                    break
+                yield "data: " + json.dumps(event, ensure_ascii=False, default=str) + "\n\n"
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
