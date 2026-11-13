@@ -196,7 +196,7 @@ def unwrap(data):
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        for k in ("results", "data", "items", "content", "records"):
+        for k in ("results", "data", "items", "content", "records", "tickets"):
             if isinstance(data.get(k), list):
                 return data[k]
         return [data]
@@ -502,8 +502,13 @@ def t_call(a):
         path = path.replace("{" + name + "}", quote(str(path_params[name]), safe=""))
 
     query = a.get("query") or {}
-    if op["method"] == "GET":
-        rows = fetch(op, path, query, headers)
+    if op.get("read_only"):
+        if op["method"] == "GET":
+            rows = fetch(op, path, query, headers)
+        else:
+            media_type = (op.get("request_body") or {}).get("media_type") or "application/json"
+            raw_result = http_request(op["method"], path, query, a.get("body"), media_type, headers)
+            rows = unwrap(raw_result)
         result = shape(rows, a.get("where"), a.get("contains"), a.get("group_by"),
                        a.get("fields"), bool(a.get("count_only")), a.get("limit"))
         encoded = json.dumps(result, default=str)
@@ -569,7 +574,7 @@ TOOLS = [
         }, "required": ["operation_id"]}}},
     {"type": "function", "function": {
         "name": "call_api",
-        "description": "Execute a validated GET request immediately. For POST, PUT or PATCH this ONLY prepares a request for explicit user approval in the chat UI; it never executes the mutation. DELETE and explicit delete actions are blocked. Use inspect_api first for write schemas.",
+        "description": "Execute validated GET and explicitly read-only POST queries immediately. For state-changing POST, PUT or PATCH this ONLY prepares a request for explicit user approval in the chat UI; it never executes the mutation. DELETE and explicit delete actions are blocked. Use inspect_api first for write schemas.",
         "parameters": {"type": "object", "properties": {
             "operation_id": {"type": "string"},
             "path_params": {"type": "object", "additionalProperties": True},
@@ -593,7 +598,7 @@ For NinjaOne data questions, call tools; never invent records, totals, fields, p
 API workflow:
 - search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
 - inspect_api retrieves the exact request schema, required parameters, enums and body fields. Use it whenever a write body or parameter is unclear.
-- call_api executes GET operations. It prepares POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
+- call_api executes GET operations and POST operations that the OpenAPI catalog explicitly identifies as read-only queries. It prepares state-changing POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
 - Never claim a mutation succeeded until the UI approval action returns a successful NinjaOne response.
 - DELETE operations and any operation explicitly named/described as delete are unavailable. Never attempt to bypass this restriction using POST, PATCH or another method.
 - Never call a write operation merely to explore its schema. Use inspect_api first.
