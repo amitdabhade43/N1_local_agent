@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
-"""NinjaOne fuzzy-question agent.
+"""NinjaOne API agent driven by the bundled OpenAPI specification.
 
-Read-only, driven at runtime by the NinjaOne OpenAPI spec, tuned for local
-~14B models (Qwen) served through an OpenAI-compatible API (Ollama, LM Studio, vLLM).
-
-Design: 3 tools only (search_api, call_api, resolve_entity), a no-LLM fast path for
-trivial questions, server-side pagination/filtering/counting, compact tool output.
+GET requests execute directly. POST/PUT/PATCH requests are schema-validated and
+prepared for explicit UI approval. DELETE and explicit delete actions are blocked.
+The local model selects operations; the OpenAPI catalog validates their contracts.
 """
 import ast, difflib, json, math, os, re, sys, time, threading, secrets
 from collections import Counter
@@ -59,11 +57,20 @@ def load_ops():
     return build_operations(spec)
 
 
-SYN = {"count": "list", "many": "list", "total": "list", "number": "list", "machine": "device",
-       "computer": "device", "endpoint": "device", "laptop": "device", "server": "device",
-       "workstation": "device", "client": "organization", "customer": "organization",
-       "org": "organization", "company": "organization", "tech": "technician",
-       "admin": "technician", "enduser": "end user", "staff": "user", "person": "user"}
+SYN = {
+    "count": "list", "many": "list", "total": "list", "number": "list",
+    "machine": "device", "computer": "device", "endpoint": "device", "laptop": "device",
+    "server": "device", "workstation": "device", "asset": "device",
+    "client": "organization", "customer": "organization", "org": "organization",
+    "company": "organization", "tenant": "organization",
+    "tech": "technician", "admin": "technician", "employee": "user",
+    "enduser": "end user", "staff": "user", "person": "user",
+    "restart": "reboot", "reboot": "restart", "shutdown": "reboot",
+    "patching": "patch", "updates": "patch software", "update": "patch",
+    "virus": "antivirus", "malware": "antivirus", "threats": "antivirus",
+    "case": "ticket", "tickets": "ticket", "invoice": "billing",
+    "automation": "script", "run": "execute script",
+}
 
 
 def toks(s):
