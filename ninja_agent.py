@@ -423,8 +423,13 @@ def text_call_followup(name, out):
             "in 1-2 plain sentences, number first.")
 
 
-NOUN_WORDS = {"device", "machine", "computer", "endpoint", "organization", "org", "client", "customer",
-              "company", "technician", "tech", "enduser", "user", "staff", "people", "account", "person"}
+NOUN_WORDS = {
+    "device", "machine", "computer", "endpoint", "organization", "org", "client", "customer",
+    "company", "technician", "tech", "enduser", "user", "staff", "people", "account", "person",
+    "role", "alert", "policy", "policies", "patch", "software", "application", "activity",
+    "group", "location", "vulnerability", "service", "disk", "volume", "processor",
+    "threat", "antivirus", "report", "job", "script",
+}
 BADCALL = re.compile(r"^\s*(call[\s_]|<tool_call|\{\s*\")", re.I)  # model printed a pseudo tool call
 FALLBACK = ("I couldn't turn that into a NinjaOne lookup with the current model. Try a simpler wording, e.g. "
             '"search technician rene", "devices per organization", "how many devices in <organization>", '
