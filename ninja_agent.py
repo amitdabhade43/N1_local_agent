@@ -1303,8 +1303,12 @@ def recipe_person_device_access(q):
         )
     if not device_list_complete:
         sections.append("Device details may be incomplete: " + (device_list_note or "the device endpoint returned a partial page."))
-    if not device_list_complete or len(devices) < len(all_ids):
-        sections.append("Some IDs could not be matched to the device inventory; those IDs are still shown above.")
+    matched_device_count = sum(1 for row in devices if isinstance(row, dict))
+    if matched_device_count < len(all_ids):
+        sections.append(
+            f"{len(all_ids) - matched_device_count} device ID(s) could not be matched to the device inventory; "
+            "those IDs are still shown above."
+        )
     return "\n\n".join(sections)
 
 def recipe_devices_in(q):
