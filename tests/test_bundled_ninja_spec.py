@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from pathlib import Path
 
@@ -17,7 +18,9 @@ class BundledNinjaSpecTests(unittest.TestCase):
         cls.operations = build_operations(cls.spec)
 
     def test_load_ops_uses_bundled_spec_without_network_download(self):
-        with patch.object(ninja_agent.requests, "get") as download:
+        with patch.dict(os.environ, {"NINJA_SPEC_REFRESH": "0"}), patch.object(
+            ninja_agent.requests, "get"
+        ) as download:
             operations = ninja_agent.load_ops()
         download.assert_not_called()
         self.assertEqual(len(operations), 285)
