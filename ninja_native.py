@@ -118,6 +118,14 @@ def _run_inner(session_id, model_id, content, base):
             except (ValueError, AttributeError):
                 pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+    approval_events = [item for item in activity if item.get("kind") == "approval_required"]
+    if approval_events:
+        action = approval_events[-1].get("action", {})
+        answer = (
+            f"Prepared {action.get('method', 'write')} {action.get('path', '')}. "
+            "It has NOT been executed. Review the exact request in the approval panel and "
+            "choose Approve and execute or Reject."
+        )
     _sessions[session_id] = (hist + [{"role": "user", "content": q},
                                      {"role": "assistant", "content": answer}])[-12:]
     return answer, activity
