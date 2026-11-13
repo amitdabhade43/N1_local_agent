@@ -66,8 +66,8 @@ SYN = {
     "tech": "technician", "admin": "technician", "employee": "user",
     "enduser": "end user", "staff": "user", "person": "user",
     "restart": "reboot", "reboot": "restart", "shutdown": "reboot",
-    "patching": "patch", "updates": "patch software", "update": "patch",
-    "virus": "antivirus", "malware": "antivirus", "threats": "antivirus",
+    "patching": "patch", "virus": "antivirus", "malware": "antivirus",
+    "threat": "antivirus",
     "case": "ticket", "tickets": "ticket", "invoice": "billing",
     "automation": "script", "run": "execute script",
 }
@@ -221,6 +221,8 @@ def fetch(op, path, query, extra_headers=None):
         if nxt is None or nxt == last:
             break
         last, q["after"] = nxt, nxt
+    else:
+        raise RuntimeError("NinjaOne pagination exceeded 200 pages; refusing to report a possibly incomplete total.")
     return rows
 
 
@@ -307,6 +309,9 @@ def t_inspect(a):
     encoded = json.dumps(details, default=str)
     if len(encoded) > MAX_CHARS:
         details["request_body_schema"] = _compact_schema(details.get("request_body_schema") or {})
+        for response in (details.get("responses") or {}).values():
+            if isinstance(response, dict) and response.get("schema"):
+                response["schema"] = _compact_schema(response["schema"])
         details["schema_truncated"] = True
         encoded = json.dumps(details, default=str)
     return encoded
