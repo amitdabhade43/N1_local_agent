@@ -7,7 +7,7 @@ Read-only, driven at runtime by the NinjaOne OpenAPI spec, tuned for local
 Design: 3 tools only (search_api, call_api, resolve_entity), a no-LLM fast path for
 trivial questions, server-side pagination/filtering/counting, compact tool output.
 """
-import difflib, json, math, os, re, sys, time
+import ast, difflib, json, math, os, re, sys, time
 from collections import Counter
 
 import requests
@@ -262,8 +262,13 @@ def t_resolve(a):
                     for l in labels if l), default=0)
         scored.append((best, r))
     scored.sort(key=lambda x: -x[0])
-    top = [dict(slim(r), match=round(s, 2)) for s, r in scored[:5] if s > 0.45]
-    return json.dumps({"matches": top, "note": "if several close matches or none, ask the user"}, default=str)
+    matched = [(score, row) for score, row in scored if score > 0.45]
+    top = [dict(slim(row), match=round(score, 2)) for score, row in matched[:10]]
+    return json.dumps({
+        "matches": top,
+        "total_matches": len(matched),
+        "note": "total_matches counts all matching records; matches contains at most 10 examples"
+    }, default=str)
 
 
 DISPATCH = {"search_api": t_search, "call_api": t_call, "resolve_entity": t_resolve}
@@ -339,16 +344,67 @@ _TAG_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 
 
 def text_call(txt):
-    """Some small models print the tool call as text instead of a structured call; recover it."""
+    """Recover structured, JSON-style, or Python-style tool calls printed as plain text."""
+    allowed = set(DISPATCH)
     try:
-        m = _TXT_CALL.search(txt or "")
+        text = (txt or "").strip()
+        # Preferred: Python-call syntax, e.g. resolve_entity(kind="user", name="rene").
+        # Parse as an AST and accept literals only; never eval model-generated code.
+        for match in re.finditer(r"\\b(search_api|call_api|resolve_entity)\\s*\\(", text):
+            start = match.start()
+            depth, quote, escaped, end = 0, None, False, None
+            for index in range(match.end() - 1, len(text)):
+                char = text[index]
+                if quote:
+                    if escaped:
+                        escaped = False
+                    elif char == "\\\\":
+                        escaped = True
+                    elif char == quote:
+                        quote = None
+                    continue
+                if char in ("'", '"'):
+                    quote = char
+                elif char == "(":
+                    depth += 1
+                elif char == ")":
+                    depth -= 1
+                    if depth == 0:
+                        end = index + 1
+                        break
+            if end is None:
+                continue
+            expression = ast.parse(text[start:end], mode="eval").body
+            if not isinstance(expression, ast.Call) or not isinstance(expression.func, ast.Name):
+                continue
+            name = expression.func.id
+            if name not in allowed:
+                continue
+            if len(expression.args) == 1 and isinstance(expression.args[0], ast.Dict) and not expression.keywords:
+                args = ast.literal_eval(expression.args[0])
+            elif not expression.args:
+                args = {item.arg: ast.literal_eval(item.value) for item in expression.keywords}
+            else:
+                continue
+            if isinstance(args, dict):
+                return name, args
+
+        # JSON wrapped in <tool_call>...</tool_call>.
+        m = _TAG_CALL.search(text)
         if m:
-            return m.group(1), json.loads(m.group(2))
-        m = _TAG_CALL.search(txt or "")
+            data = json.loads(m.group(1))
+            name = data.get("name")
+            args = data.get("arguments", {})
+            if name in allowed and isinstance(args, dict):
+                return name, args
+
+        # Legacy JSON-in-parentheses format.
+        m = _TXT_CALL.search(text)
         if m:
-            d = json.loads(m.group(1))
-            return d["name"], d.get("arguments", {})
-    except Exception:
+            args = json.loads(m.group(2))
+            if isinstance(args, dict):
+                return m.group(1), args
+    except (SyntaxError, ValueError, TypeError, json.JSONDecodeError):
         pass
     return None
 
@@ -401,6 +457,33 @@ KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["tec
             "organization": ["organization"], "org": ["organization"], "client": ["organization"],
             "customer": ["organization"], "device": ["device"], "machine": ["device"],
             "computer": ["device"], "endpoint": ["device"]}
+
+
+def recipe_count_named(q):
+    """Count matching user records for natural questions such as 'how many users with name Rene?'."""
+    text = q.lower().strip().rstrip("?.! ")
+    match = re.search(
+        r"\\b(?:users?|people|accounts?)\\b.*?\\b(?:with|having)\\s+(?:the\\s+)?name\\s+(.+)$",
+        text
+    )
+    if not match:
+        return None
+    name = match.group(1).strip().strip("\\\"'")
+    if not name or len(name) < 2:
+        return None
+    result = json.loads(t_resolve({"kind": "user", "name": name}))
+    count = result.get("total_matches")
+    if count is None:
+        count = len(result.get("matches", []))
+    examples = result.get("matches", [])
+    if count == 0:
+        return f'No NinjaOne users matched the name "{name}".'
+    details = ", ".join(
+        row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
+        for row in examples[:5]
+    )
+    suffix = f" Examples: {details}." if details else ""
+    return f'{count} NinjaOne user record(s) matched the name "{name}".{suffix}'
 
 
 def recipe_find(q):
@@ -459,7 +542,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_per_org, recipe_find, recipe_devices_in):
+        for rec in (recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
