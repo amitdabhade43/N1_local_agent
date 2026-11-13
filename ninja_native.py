@@ -51,6 +51,35 @@ def _run_inner(session_id, model_id, content, base, progress=None):
     _ensure()
     q = _text(content)
     emit("Checking whether this question can be answered directly.", "understanding")
+    # Device-access grants are routed deterministically so the model cannot stall
+    # while narrating a plan. The recipe only prepares a UI approval request.
+    write_result = core.recipe_add_device_access(q)
+    if write_result:
+        try:
+            prepared = json.loads(write_result)
+        except (TypeError, ValueError):
+            prepared = {}
+        if prepared.get("approval_required"):
+            emit("Resolved the end user and device; preparing the approval request.", "tool")
+            activity = [
+                {"kind": "call", "tool": "call_api", "arguments": {
+                    "operation_id": prepared.get("operation_id"),
+                    "method": prepared.get("method"), "path": prepared.get("path"),
+                    "body": prepared.get("body"),
+                }},
+                {"kind": "result", "tool": "call_api", "result": write_result[:2500]},
+                {"kind": "approval_required", "action": prepared},
+            ]
+            emit("The PATCH is prepared and waiting for your approval; it has not been executed.", "approval")
+            return (
+                f'Approval required: {prepared.get("summary", "Add the requested device access")}. '
+                "Review the exact PATCH in the approval panel and choose Approve and execute. "
+                "No change has been made yet.",
+                activity,
+            )
+        return write_result, [{"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
+                             {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
+
     fp = core.fast_path(q)  # no-LLM answer for plain "how many devices" style questions
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
