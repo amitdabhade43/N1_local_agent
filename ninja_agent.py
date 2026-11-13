@@ -375,9 +375,15 @@ def _argument_errors(op, args):
     if unknown_query:
         errors.append("Unknown query parameters: " + ", ".join(unknown_query))
 
-    for name in headers:
-        if name.lower() not in header_defs:
+    for name, value in headers.items():
+        definition = header_defs.get(name.lower())
+        if not definition:
             errors.append(f"Header '{name}' is not declared by the OpenAPI operation.")
+        else:
+            errors.extend(
+                f"headers.{name}: {e}"
+                for e in validate_payload(definition.get("schema") or {}, value, SPEC_DATA)
+            )
         if name.lower() in {"authorization", "cookie", "host", "content-length"}:
             errors.append(f"Header '{name}' cannot be overridden by the agent.")
 
