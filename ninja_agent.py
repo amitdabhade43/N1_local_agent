@@ -1207,18 +1207,18 @@ def recipe_find(q):
 
 def recipe_person_device_access(q):
     """Resolve a named end user and report the complete accessible/assigned device lists."""
-    text = re.sub(r"\\s+", " ", q.lower().strip().rstrip("?.! "))
-    if not re.search(r"\\b(access|accessible|accessibility|assigned|assignment|device access)\\b", text):
+    text = re.sub(r"\s+", " ", q.lower().strip().rstrip("?.! "))
+    if not re.search(r"\b(access|accessible|accessibility|assigned|assignment|device access)\b", text):
         return None
     match = re.search(
-        r"\\b(?:of|for|does|has)\\s+(?:the\\s+)?(?:user\\s+|technician\\s+|person\\s+)?"
+        r"\b(?:of|for|does|has)\s+(?:the\s+)?(?:user\s+|technician\s+|person\s+)?"
         r"([a-z][a-z .'-]{2,})$",
         text,
     )
     if not match:
         return None
-    name = re.sub(r"\\s+", " ", match.group(1)).strip(" .'-")
-    if not name or re.search(r"\\b(devices?|access|assigned|accessible|give|show|list)\\b", name):
+    name = re.sub(r"\s+", " ", match.group(1)).strip(" .'-")
+    if not name or re.search(r"\b(devices?|access|assigned|accessible|give|show|list)\b", name):
         return None
 
     # Only the end-user endpoint exposes accessibleDeviceIds in the published spec.
@@ -1282,10 +1282,10 @@ def recipe_person_device_access(q):
         for offset in range(0, len(lines), 20):
             batch = lines[offset:offset + 20]
             sections.append(
-                f"{label} — devices {offset + 1}-{offset + len(batch)} of {len(lines)}:\\n"
-                + "\\n".join(batch)
+                f"{label} ({len(lines)}) — devices {offset + 1}-{offset + len(batch)} of {len(lines)}:\n"
+                + "\n".join(batch)
             )
-        return "\\n\\n".join(sections)
+        return "\n\n".join(sections)
 
     who = row_name(user)
     email = f' <{user["email"]}>' if user.get("email") else ""
@@ -1305,7 +1305,7 @@ def recipe_person_device_access(q):
         sections.append("Device details may be incomplete: " + (device_list_note or "the device endpoint returned a partial page."))
     if not device_list_complete or len(devices) < len(all_ids):
         sections.append("Some IDs could not be matched to the device inventory; those IDs are still shown above.")
-    return "\\n\\n".join(sections)
+    return "\n\n".join(sections)
 
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
