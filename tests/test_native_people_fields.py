@@ -44,6 +44,66 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         self.assertIn("rene@example.com", answer)
         self.assertNotIn("Rene", answer)
 
+    def test_add_device_access_prepares_approval_for_exact_user_and_device(self):
+        import json
+        user = {
+            "id": 42, "firstName": "Rene", "lastName": "Piuk",
+            "email": "ing.rene.piuk@gmail.com", "accessibleDeviceIds": [24],
+        }
+        device = {"id": 680, "systemName": "VM-680461"}
+        user_result = json.dumps({"matches": [user]})
+        device_result = json.dumps({"matches": [device]})
+        operation = {
+            "id": "patchEndUserDeviceAccess", "method": "PATCH",
+            "path": "/v2/user/end-user/{id}/device-access",
+            "params": [], "request_body": {"media_type": "application/json",
+                "schema": {"type": "object", "properties": {
+                    "addDeviceIds": {"type": "array", "items": {"type": "integer"}}
+                }, "required": ["addDeviceIds"]}},
+            "summary": "Update end-user device access", "read_only": False,
+        }
+        prepared = {"approval_required": True, "action_id": "pending-123",
+                    "operation_id": "patchEndUserDeviceAccess", "method": "PATCH",
+                    "path": "/v2/user/end-user/42/device-access",
+                    "body": {"addDeviceIds": [680]}, "expires_in_seconds": 600}
+        with patch.object(ninja_agent, "t_resolve", side_effect=[user_result, device_result]), \
+             patch.object(ninja_agent, "OPS", {"patchEndUserDeviceAccess": operation}), \
+             patch.object(ninja_agent, "t_call", return_value=json.dumps(prepared)) as call:
+            result = json.loads(ninja_agent.recipe_add_device_access(
+                "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
+            ))
+        self.assertTrue(result["approval_required"])
+        self.assertEqual(result["body"], {"addDeviceIds": [680]})
+        call.assert_called_once()
+
+    def test_add_device_access_does_not_prepare_duplicate_access(self):
+        import json
+        user = {"id": 42, "firstName": "Rene", "lastName": "Piuk",
+                "email": "ing.rene.piuk@gmail.com", "accessibleDeviceIds": [680]}
+        device = {"id": 680, "systemName": "VM-680461"}
+        with patch.object(ninja_agent, "t_resolve", side_effect=[
+            json.dumps({"matches": [user]}), json.dumps({"matches": [device]})
+        ]), patch.object(ninja_agent, "t_call") as call:
+            answer = ninja_agent.recipe_add_device_access(
+                "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
+            )
+        self.assertIn("already has access", answer)
+        call.assert_not_called()
+
+    def test_add_device_access_refuses_approximate_device_match(self):
+        import json
+        user = {"id": 42, "firstName": "Rene", "lastName": "Piuk",
+                "email": "ing.rene.piuk@gmail.com", "accessibleDeviceIds": [24]}
+        device = {"id": 680, "systemName": "VM-680461-OLD"}
+        with patch.object(ninja_agent, "t_resolve", side_effect=[
+            json.dumps({"matches": [user]}), json.dumps({"matches": [device]})
+        ]), patch.object(ninja_agent, "t_call") as call:
+            answer = ninja_agent.recipe_add_device_access(
+                "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
+            )
+        self.assertIn("No exact device match", answer)
+        call.assert_not_called()
+
     def test_named_user_device_access_is_resolved_without_llm(self):
         user = {
             "id": 42, "firstName": "Richard", "lastName": "Otrebski",
