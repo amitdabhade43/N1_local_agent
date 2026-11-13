@@ -221,7 +221,8 @@ def t_search(a):
 def t_call(a):
     op = OPS.get(a.get("operation_id", ""))
     if not op:
-        return err("unknown operation_id; call search_api first")
+        sug = "; ".join(o["id"] for o in IDX.search(a.get("operation_id", ""), 3))
+        return err(f"unknown operation_id. Valid examples: {sug or 'none'}. Use search_api to find the right one.")
     if op["method"] != "GET":
         return err("read-only agent: only GET operations are allowed")
     path = op["path"]
@@ -287,7 +288,7 @@ TOOLS = [
 ]
 
 SYSTEM = """You answer questions about a NinjaOne tenant by CALLING TOOLS. Read-only.
-Your first reply must be a tool call (or, if the question is not about NinjaOne data, a short answer). Never write plans, steps or numbered lists. Never guess numbers.
+If the question is about NinjaOne data, your first reply must be a tool call. For greetings or anything else, answer in one short sentence with no tools. Never write plans, steps or numbered lists. Never guess numbers.
 
 How to work:
 - The 'Likely endpoints' list (if shown) holds operation_ids; pass one to call_api exactly as written. If none fits, call search_api with 2-3 keywords.
@@ -329,7 +330,47 @@ def row_name(r):
     return str(r.get("name") or r.get("systemName") or full or r.get("email") or r.get("id"))
 
 
+GREET = re.compile(r"^\s*(hi+|hello+|hey+|yo|good (morning|afternoon|evening)|thanks?|thank you|ok(ay)?|help|what can you do)\W*$", re.I)
+HELP = ('Hi! I can answer read-only questions about your NinjaOne tenant, for example: "how many devices do we have?", '
+        '"list organizations", "how many technicians?", "devices per organization", or "how many devices does Richard have access to?"')
+
+_TXT_CALL = re.compile(r"\b(search_api|call_api|resolve_entity)\s*\(\s*(\{.*\})\s*\)", re.S)
+_TAG_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
+
+
+def text_call(txt):
+    """Some small models print the tool call as text instead of a structured call; recover it."""
+    try:
+        m = _TXT_CALL.search(txt or "")
+        if m:
+            return m.group(1), json.loads(m.group(2))
+        m = _TAG_CALL.search(txt or "")
+        if m:
+            d = json.loads(m.group(1))
+            return d["name"], d.get("arguments", {})
+    except Exception:
+        pass
+    return None
+
+
+def exec_tool(name, args):
+    try:
+        fn = DISPATCH.get(name)
+        return fn(args) if fn else err("unknown tool")
+    except requests.HTTPError as e:
+        return err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        return err(f"{type(e).__name__}: {e}")
+
+
+def text_call_followup(name, out):
+    return (f"Result of {name}: {out}\nNow call another tool if needed, otherwise give the final answer "
+            "in 1-2 plain sentences, number first.")
+
+
 def fast_path(q):
+    if GREET.match(q):
+        return HELP
     q = re.sub(r"end[\s-]?users?", "enduser", q.lower())
     words = re.findall(r"[a-z]+", q)
     cw = {(w[:-1] if len(w) > 3 and w.endswith("s") else w) for w in words if w not in FILLER}
@@ -361,9 +402,17 @@ def ask(q, history):
     msgs = [{"role": "system", "content": SYSTEM + candidates(q) + ("\n/no_think" if NO_THINK else "")}] + history[-6:]
     msgs.append({"role": "user", "content": q})
     called = nudged = False
+    steps_text = 0
     for _ in range(MAX_STEPS):
         m = llm.chat.completions.create(model=LLM_MODEL, messages=msgs, tools=TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
+            tc = text_call(m.content)
+            if tc and steps_text < 3:
+                steps_text += 1
+                called = True
+                msgs += [{"role": "assistant", "content": m.content},
+                         {"role": "user", "content": text_call_followup(tc[0], exec_tool(*tc))}]
+                continue
             txt = clean(m.content)
             if not called and not nudged and PLAN.search(txt):
                 nudged = True

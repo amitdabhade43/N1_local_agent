@@ -53,10 +53,21 @@ def _run(session_id, model_id, content, base):
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
     called = nudged = False
+    steps_text = 0
     for _ in range(MAX_STEPS):
         m = _client(base).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
+            tc = core.text_call(m.content)
+            if tc and steps_text < 3:
+                steps_text += 1
+                called = True
+                out = core.exec_tool(*tc)
+                activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
+                activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
+                msgs += [{"role": "assistant", "content": m.content},
+                         {"role": "user", "content": core.text_call_followup(tc[0], out)}]
+                continue
             txt = core.clean(m.content)
             if not called and not nudged and core.PLAN.search(txt):
                 nudged = True
