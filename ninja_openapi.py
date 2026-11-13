@@ -173,11 +173,15 @@ def _schema_terms(schema: Any, limit: int = 250) -> list[str]:
             if isinstance(node.get("items"), dict):
                 walk(node["items"], depth + 1)
             for key in ("allOf", "oneOf", "anyOf"):
-                for child in node.get(key, []) if isinstance(node.get(key), list) else []:
-                    walk(child, depth + 1)
+                children = node.get(key)
+                if isinstance(children, dict):
+                    walk(children, depth + 1)
+                elif isinstance(children, list):
+                    for child in children:
+                        walk(child, depth + 1)
             enum = node.get("enum")
             if isinstance(enum, list):
-                terms.extend(str(x) for x in enum[:20])
+                terms.extend(str(x) for x in enum[:30])
     walk(schema)
     return terms
 
