@@ -20,7 +20,9 @@ Copy `.env.example` to `.env` and configure:
 - `FOUNDRY_BASE_URL`: optional explicit override; blank enables automatic discovery.
 - `MCP_URL`: streamable HTTP endpoint for MCP mode.
 - `AGENT_BACKEND`: `mcp` or `native`.
-- `NINJA_BASE_URL`, `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: required for Native mode.
+- `NINJA_BASE_URL`: your NinjaOne regional API host.
+- `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: required for Native mode.
+- `NINJA_TOKEN_URL`: optional token endpoint override; the default is `/oauth/token` on your regional host, with a fallback to the legacy `/ws/oauth/token` endpoint when the default returns 404/405.
 - `NINJA_SCOPE`: NinjaOne OAuth scopes. `monitoring` is read-only; approved write actions require `monitoring management`.
 
 For write support, enable **Management** in the NinjaOne OAuth application and set:
