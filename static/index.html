@@ -19,7 +19,7 @@ header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;justif
 #chat{flex:1;overflow:auto;padding:22px;display:flex;flex-direction:column;gap:16px}
 .msg{max-width:950px;width:fit-content;border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:14px 16px;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg.user{align-self:flex-end;background:#173354}.msg.assistant{align-self:flex-start}
-.msg .role{font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em}
+.msg .role{font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.08em}\n.progress{margin-top:10px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;color:var(--muted);font-size:12px;background:#0e1727}.progress-item{display:flex;gap:8px;align-items:flex-start;padding:3px 0}.progress-dot{color:var(--accent);font-weight:700}
 .composer{border-top:1px solid var(--line);padding:16px 22px;background:#0e1727}
 .controls{display:flex;gap:10px;align-items:center}.controls textarea{flex:1;resize:vertical;min-height:56px;max-height:180px}
 .tools{margin-top:12px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
@@ -176,22 +176,43 @@ async function send(){
  if(selectedImage&&model.selectedOptions[0]?.dataset.vision!=='true'){alert('Select a discovered vision-capable model to send an image.');return}
  busy=true;document.getElementById('sendBtn').disabled=true;
  addMessage('user',(text||'Analyze this screenshot')+(selectedImage?' [image attached]':''));
- const pending=addMessage('assistant','Working…');
+ const pending=addMessage('assistant','');
+ const body=pending.querySelector('.message-body');
+ const progress=document.createElement('div');progress.className='progress';body.append(progress);
+ function showProgress(message,stage){
+  const item=document.createElement('div');item.className='progress-item';
+  const dot=document.createElement('span');dot.className='progress-dot';dot.textContent=stage==='complete'?'✓':'›';
+  const label=document.createElement('span');label.textContent=message;item.append(dot,label);progress.append(item);chat.scrollTop=chat.scrollHeight;
+ }
  message.value='';
  try{
-  let response;
   if(selectedImage){
+   showProgress('Sending the image to the selected local vision model.','setup');
    const fd=new FormData();fd.append('model',model.value);fd.append('message',text);if(sessionId)fd.append('session_id',sessionId);fd.append('image',selectedImage);
-   response=await fetch('/api/chat/image',{method:'POST',body:fd});
+   const response=await fetch('/api/chat/image',{method:'POST',body:fd});const data=await response.json();
+   if(!response.ok)throw new Error(data.detail||'Request failed');
+   sessionId=data.session_id;progress.remove();body.textContent=data.answer;addActivity(pending,data.activity);
   }else{
-   response=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,model:model.value,message:text})});
+   const response=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,model:model.value,message:text})});
+   if(!response.ok){let detail='Request failed';try{const err=await response.json();detail=err.detail||detail}catch{}throw new Error(detail)}
+   if(!response.body)throw new Error('Streaming response is not supported by this browser.');
+   const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=false;
+   while(true){
+    const part=await reader.read();if(part.done)break;buffer+=decoder.decode(part.value,{stream:true});
+    const frames=buffer.split(/\r?\n\r?\n/);buffer=frames.pop()||'';
+    for(const frame of frames){
+     const line=frame.split(/\r?\n/).find(x=>x.startsWith('data: '));if(!line)continue;
+     const event=JSON.parse(line.slice(6));
+     if(event.type==='progress')showProgress(event.message,event.stage);
+     else if(event.type==='error')throw new Error(event.message);
+     else if(event.type==='complete'){
+      completed=true;sessionId=event.session_id;progress.remove();body.textContent=event.answer;addActivity(pending,event.activity);
+     }
+    }
+   }
+   if(!completed)throw new Error('The stream ended before the agent returned a final answer.');
   }
-  const data=await response.json();
-  if(!response.ok)throw new Error(data.detail||'Request failed');
-  sessionId=data.session_id;
-  pending.querySelector('div:last-child').textContent=data.answer;
-  addActivity(pending,data.activity);
- }catch(e){pending.querySelector('div:last-child').textContent='Error: '+e.message}
+ }catch(e){progress.remove();body.textContent='Error: '+e.message}
  selectedImage=null;imageInput.value='';preview.style.display='none';preview.src='';
  busy=false;document.getElementById('sendBtn').disabled=false;chat.scrollTop=chat.scrollHeight;
 }
