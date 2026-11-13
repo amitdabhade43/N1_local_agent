@@ -104,7 +104,8 @@ class NativeApiActionTests(unittest.TestCase):
                 result = core.execute_pending_action(prepared["action_id"], "session-a")
                 self.assertTrue(result["ok"])
                 approved_request.assert_called_once_with(
-                    "POST", "/v2/things", {}, {"name": "Laptop"}, "application/json", {}
+                    "POST", "/v2/things", {}, {"name": "Laptop"}, "application/json", {},
+                    approved=True
                 )
 
             replay = core.execute_pending_action(prepared["action_id"], "session-a")
@@ -141,7 +142,8 @@ class NativeApiActionTests(unittest.TestCase):
             }))
         request.assert_called_once_with(
             "POST", "/v2/ticketing/trigger/board/12/run", {},
-            {"pageSize": 25, "searchCriteria": "printer"}, "application/json", {}
+            {"pageSize": 25, "searchCriteria": "printer"}, "application/json", {},
+            read_only=True
         )
         self.assertEqual(result["total"], 1)
 
