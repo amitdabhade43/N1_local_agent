@@ -267,12 +267,41 @@ def t_search(a):
     return "\n".join(describe(o) for o in hits) or err("no match; try different keywords")
 
 
+def _compact_schema(schema, depth=0):
+    if not isinstance(schema, dict):
+        return schema
+    allowed = ("type", "format", "description", "title", "required", "enum",
+               "minimum", "maximum", "minLength", "maxLength", "minItems",
+               "maxItems", "nullable", "additionalProperties")
+    compact = {key: schema[key] for key in allowed if key in schema}
+    if depth >= 4:
+        if schema.get("properties") or schema.get("items"):
+            compact["nested_schema_truncated"] = True
+        return compact
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        compact["properties"] = {
+            name: _compact_schema(value, depth + 1)
+            for name, value in list(properties.items())[:35]
+        }
+        if len(properties) > 35:
+            compact["properties_truncated"] = len(properties) - 35
+    if isinstance(schema.get("items"), dict):
+        compact["items"] = _compact_schema(schema["items"], depth + 1)
+    return compact
+
+
 def t_inspect(a):
     operation = OPS.get(a.get("operation_id", ""))
     if not operation:
         return err("Unknown operation_id. Use search_api first.")
     details = describe_operation(operation, include_schema=True)
-    return json.dumps(details, default=str)[:MAX_CHARS]
+    encoded = json.dumps(details, default=str)
+    if len(encoded) > MAX_CHARS:
+        details["request_body_schema"] = _compact_schema(details.get("request_body_schema") or {})
+        details["schema_truncated"] = True
+        encoded = json.dumps(details, default=str)
+    return encoded
 
 
 def _argument_errors(op, args):
@@ -295,6 +324,9 @@ def _argument_errors(op, args):
     missing_query = [name for name, p in query_defs.items() if p.get("required") and name not in query]
     if missing_query:
         errors.append("Missing required query parameters: " + ", ".join(missing_query))
+    missing_headers = [name for name, p in header_defs.items() if p.get("required") and name.lower() not in {h.lower() for h in headers}]
+    if missing_headers:
+        errors.append("Missing required headers: " + ", ".join(missing_headers))
     unknown_query = sorted(set(query) - set(query_defs))
     if unknown_query:
         errors.append("Unknown query parameters: " + ", ".join(unknown_query))
@@ -358,6 +390,11 @@ def _prepare_mutation(op, path, query, body, headers=None):
         "expires_at": time.time() + 600,
     }
     with _pending_lock:
+        expired = [key for key, value in _pending_actions.items() if time.time() > value.get("expires_at", 0)]
+        for key in expired:
+            _pending_actions.pop(key, None)
+        if len(_pending_actions) >= 50:
+            return err("Too many pending approval requests. Approve, reject or clear an existing request first.")
         _pending_actions[action_id] = action
     return json.dumps({
         "approval_required": True,
@@ -373,6 +410,16 @@ def _prepare_mutation(op, path, query, body, headers=None):
 
 
 def execute_pending_action(action_id, session_id):
+    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
+    if "management" not in scopes:
+        return {
+            "ok": False,
+            "error": (
+                "The configured NINJA_SCOPE does not include 'management'. "
+                "Enable the Management scope for this NinjaOne OAuth app and set "
+                "NINJA_SCOPE=monitoring management in .env before approving write operations."
+            ),
+        }
     with _pending_lock:
         action = _pending_actions.get(action_id)
         if not action:
@@ -384,16 +431,6 @@ def execute_pending_action(action_id, session_id):
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
         _pending_actions.pop(action_id, None)
 
-    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
-    if "management" not in scopes:
-        return {
-            "ok": False,
-            "error": (
-                "The configured NINJA_SCOPE does not include 'management'. "
-                "Enable the Management scope for this NinjaOne OAuth app and set "
-                "NINJA_SCOPE=monitoring management in .env before approving write operations."
-            ),
-        }
     try:
         result = http_request(
             action["method"], action["path"], action["query"], action["body"],
