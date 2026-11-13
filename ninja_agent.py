@@ -224,7 +224,7 @@ def unwrap(data):
     if isinstance(data, list):
         return data
     if isinstance(data, dict):
-        for k in ("results", "data", "items", "content", "records", "tickets"):
+        for k in ("results", "data", "items", "content", "records", "tickets", "activities"):
             if isinstance(data.get(k), list):
                 return data[k]
         return [data]
@@ -236,6 +236,32 @@ class FetchRows(list):
         super().__init__(values)
         self.complete = complete
         self.note = note
+
+
+def _response_list_field(op):
+    preferred = ("results", "data", "items", "records", "activities", "tickets")
+    for response in (op.get("responses") or {}).values():
+        if not isinstance(response, dict):
+            continue
+        schema = ((response.get("content") or {}).get("application/json") or {}).get("schema") or {}
+        properties = schema.get("properties") or {}
+        arrays = [name for name, prop in properties.items()
+                  if isinstance(prop, dict) and prop.get("type") == "array"]
+        for name in preferred:
+            if name in arrays:
+                return name
+        if len(arrays) == 1:
+            return arrays[0]
+    return None
+
+
+def _extract_rows(op, response):
+    if isinstance(response, list):
+        return response
+    field = _response_list_field(op)
+    if field and isinstance(response, dict) and isinstance(response.get(field), list):
+        return response[field]
+    return unwrap(response)
 
 
 def _opaque_cursor_spec(op):
@@ -278,7 +304,7 @@ def fetch(op, path, query, extra_headers=None):
         q, rows, last = dict(query), [], None
         q.setdefault("pageSize", 1000)
         for _ in range(200):
-            page = unwrap(http_get(path, q, extra_headers))
+            page = _extract_rows(op, http_get(path, q, extra_headers))
             if not page:
                 break
             rows += page
@@ -324,7 +350,7 @@ def fetch(op, path, query, extra_headers=None):
             raise RuntimeError("NinjaOne cursor pagination exceeded 200 pages; refusing an incomplete total.")
         return FetchRows(rows)
 
-    rows = unwrap(http_get(path, query, extra_headers))
+    rows = _extract_rows(op, http_get(path, query, extra_headers))
     if _has_unhandled_pagination(op):
         return FetchRows(
             rows,
