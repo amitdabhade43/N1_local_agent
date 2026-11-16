@@ -40,13 +40,13 @@ def _client(base, api_key=None):
 
 def _is_mutation_request(content):
     """Conservatively identify user requests that ask the agent to change NinjaOne state."""
-    text = re.sub(r"\\s+", " ", str(content or "").strip().lower())
+    text = re.sub(r"\s+", " ", str(content or "").strip().lower())
     if not text:
         return False
     return bool(re.search(
-        r"\\b(?:add|assign|grant|give|remove|revoke|update|change|modify|edit|"
+        r"\b(?:add|assign|grant|give|remove|revoke|update|change|modify|edit|"
         r"enable|disable|create|delete|reset|rename|move|invite|suspend|unsuspend|"
-        r"activate|deactivate|unlink|link)\\b",
+        r"activate|deactivate|unlink|link)\b",
         text,
     ))
 
@@ -85,7 +85,7 @@ def _recover_unprepared_mutation(question, history):
         if item.get("role") != "user":
             continue
         previous = _text(item.get("content", ""))
-        if core._is_mutation_request(previous):
+        if _is_mutation_request(previous):
             return previous
     return None
 
