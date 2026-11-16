@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import app
+import ninja_native
 
 
 class FakeTool:
@@ -201,3 +202,22 @@ def test_affirmative_reply_without_previous_mutation_does_not_invent_write():
             recovered, pending = app._recover_unprepared_mcp_mutation("approval-empty-test", "yes")
     assert recovered is None
     assert pending is False
+
+
+
+def test_native_affirmative_reply_recovers_previous_unprepared_mutation():
+    history = [
+        {"role": "user", "content": "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"},
+        {"role": "assistant", "content": "Please confirm to proceed."},
+    ]
+    assert ninja_native._recover_unprepared_mutation("yes", history) == history[0]["content"]
+
+
+def test_native_affirmative_reply_does_not_recover_non_mutation():
+    history = [{"role": "user", "content": "How many devices are there?"}]
+    assert ninja_native._recover_unprepared_mutation("yes", history) is None
+
+
+def test_native_affirmative_reply_does_not_match_arbitrary_text():
+    history = [{"role": "user", "content": "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"}]
+    assert ninja_native._recover_unprepared_mutation("yes, please do this", history) is None
