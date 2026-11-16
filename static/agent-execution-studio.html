@@ -116,6 +116,17 @@ function renderSteps(){
   el.innerHTML='<div class="step-main" role="button" tabindex="0"><span class="num">'+(s.index+1)+'</span><div><div class="step-title">'+esc(s.title)+'</div><div class="step-meta">'+esc(meta)+'</div></div><span class="status '+statusClass(s.status)+'">'+esc(s.status.toUpperCase())+'</span><span>⌄</span></div><div class="step-detail"><div class="detail-label">Request / arguments</div><pre class="code">'+esc(pretty(s.request??"No request payload reported."))+'</pre><div class="detail-label">Response / result</div><pre class="code">'+esc(pretty(s.response??"No response payload reported."))+'</pre></div>';
   const main=el.querySelector(".step-main");main.addEventListener("click",()=>{state.selected=s.index;renderAll()});main.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();state.selected=s.index;renderAll()}});
   list.append(el);
+  if(s.kind==="approval"){
+   const detail=el.querySelector(".step-detail"),controls=document.createElement("div");
+   controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px";
+   const approve=document.createElement("button");approve.className="btn primary";approve.textContent="Approve and execute";
+   const reject=document.createElement("button");reject.className="btn danger";reject.textContent="Reject";
+   const note=document.createElement("small");note.textContent="Pending approval · no change made";note.style.color="var(--amber)";
+   controls.append(approve,reject,note);detail.append(controls);
+   const action=s.raw||{},sid=state.sessionId;
+   approve.onclick=async()=>{approve.disabled=reject.disabled=true;note.textContent="Executing approved action…";try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Execution confirmed":"Not completed: "+(d.error||d.message||"Unknown error");note.style.color=d.ok?"var(--green)":"var(--red)";state.steps[s.index].status=d.ok?"success":"error";state.steps[s.index].response=d;renderAll()}catch(e){note.textContent="Approval failed: "+e.message;approve.disabled=reject.disabled=false}};
+   reject.onclick=async()=>{approve.disabled=reject.disabled=true;try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/reject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Rejected":(d.message||"Could not reject");state.steps[s.index].status=d.ok?"warning":"error";state.steps[s.index].response=d;renderAll()}catch(e){note.textContent="Reject failed: "+e.message;approve.disabled=reject.disabled=false}};
+  }
  });
 }
 function renderFlow(){
@@ -162,19 +173,7 @@ function showActivity(activity){
  approvals.forEach(a=>renderApproval(a.action||{}));
 }
 function renderApproval(action){
- const item={kind:"approval",title:"Approval required · "+(action.method||"WRITE")+" "+(action.path||""),status:"pending",tool:"Human approval",endpoint:action.path||"",duration:"Awaiting decision",request:{method:action.method,path:action.path,query:action.query,body:action.body,summary:action.summary},response:"No write has been executed. Review the exact request and choose Approve and execute or Reject.",raw:action};
- const idx=state.steps.length;addStep(item);
- const target=$("stepList").querySelectorAll(".step")[state.selected];
- if(!target)return;
- const detail=target.querySelector(".step-detail");
- const controls=document.createElement("div");controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px";
- const approve=document.createElement("button");approve.className="btn primary";approve.textContent="Approve and execute";
- const reject=document.createElement("button");reject.className="btn danger";reject.textContent="Reject";
- const note=document.createElement("small");note.textContent="Pending approval · no change made";note.style.color="var(--amber)";
- controls.append(approve,reject,note);detail.append(controls);
- const sid=state.sessionId;
- approve.onclick=async()=>{approve.disabled=reject.disabled=true;note.textContent="Executing approved action…";try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Execution confirmed":"Not completed: "+(d.error||d.message||"Unknown error");note.style.color=d.ok?"var(--green)":"var(--red)";state.steps[idx].status=d.ok?"success":"error";state.steps[idx].response=d;renderAll()}catch(e){note.textContent="Approval failed: "+e.message;approve.disabled=reject.disabled=false}};
- reject.onclick=async()=>{approve.disabled=reject.disabled=true;try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/reject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Rejected":(d.message||"Could not reject");state.steps[idx].status=d.ok?"warning":"error";state.steps[idx].response=d;renderAll()}catch(e){note.textContent="Reject failed: "+e.message;approve.disabled=reject.disabled=false}};
+ addStep({kind:"approval",title:"Approval required · "+(action.method||"WRITE")+" "+(action.path||""),status:"pending",tool:"Human approval",endpoint:action.path||"",duration:"Awaiting decision",request:{method:action.method,path:action.path,query:action.query,body:action.body,summary:action.summary},response:"No write has been executed. Review the exact request and choose Approve and execute or Reject.",raw:action});
 }
 async function loadConfig(force=false){
  try{
