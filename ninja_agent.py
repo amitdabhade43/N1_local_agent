@@ -1092,16 +1092,17 @@ def recipe_list_entity_fields(q):
 
 
 def recipe_list_organizations(q):
-    """List organization names for natural-language organization inventory requests."""
+    """List organizations, including IDs when explicitly requested."""
     text = re.sub(r"\s+", " ", q.lower().strip())
     asks_for_names = bool(re.search(r"\b(name|names)\b", text))
+    asks_for_ids = bool(re.search(r"\b(ids?|identifiers?)\b", text))
     asks_list = bool(re.search(
         r"\b(list|show|display|get|fetch|give|provide|what are|which are|can i get|could i get)\b",
         text,
     ))
     asks_count = bool(re.search(r"\b(how many|count|number of|total)\b", text))
     has_organization = bool(re.search(r"\b(organizations?|orgs?|clients?|customers?)\b", text))
-    if not (has_organization and (asks_list or asks_for_names) and not asks_count):
+    if not (has_organization and (asks_list or asks_for_names or asks_for_ids) and not asks_count):
         return None
 
     path = "/v2/organizations"
@@ -1109,16 +1110,24 @@ def recipe_list_organizations(q):
     if not op:
         return "The NinjaOne organization-list endpoint was not found in the loaded API specification."
     rows = fetch(op, path, {})
-    names = [
-        str(row.get("name")).strip()
-        for row in rows
+    records = [
+        row for row in rows
         if isinstance(row, dict) and row.get("name") not in (None, "")
     ]
-    if not names:
+    if not records:
         return f"NinjaOne returned {len(rows)} organization record(s), but no organization names were present."
-    return f"{len(names)} organization(s):\n" + "\n".join(
-        f"{index}. {name}" for index, name in enumerate(names, 1)
-    )
+
+    if asks_for_ids:
+        lines = [
+            f"{index}. {str(row.get('name')).strip()} — ID: {row.get('id') if row.get('id') is not None else 'not returned'}"
+            for index, row in enumerate(records, 1)
+        ]
+    else:
+        lines = [
+            f"{index}. {str(row.get('name')).strip()}"
+            for index, row in enumerate(records, 1)
+        ]
+    return f"{len(records)} organization(s):\n" + "\n".join(lines)
 
 
 def recipe_list_technician_names(q):
