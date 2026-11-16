@@ -43,7 +43,7 @@ async def test_generic_mcp_count_uses_discovery_schema_and_get_result():
     tools = toolset()
     answer, activity = await app.run_generic_mcp_read(tools, "How many devices?")
 
-    assert answer == "2 devices in NinjaOne."
+    assert answer == "NinjaOne returned 2 records for devices."
     assert [item["tool"] for item in activity if item["kind"] == "call"] == [
         "discover_endpoints", "inspect_endpoint", "execute_endpoint"
     ]
@@ -62,7 +62,7 @@ async def test_generic_mcp_preflight_runs_before_provider_resolution():
             with patch.object(app, "detect_direct_tool_request", return_value=None):
                 result = await app.try_direct_backend_request("session-1", "How many devices?")
 
-    assert result[0] == "2 devices in NinjaOne."
+    assert result[0] == "NinjaOne returned 2 records for devices."
 
 
 @pytest.mark.asyncio
@@ -73,7 +73,7 @@ async def test_generic_mcp_count_discloses_incomplete_result():
     })
     answer, _ = await app.run_generic_mcp_read(tools, "How many devices?")
 
-    assert "At least 1 devices" in answer
+    assert "at least 1 record for devices" in answer
     assert "complete total is unknown" in answer
 
 
@@ -136,7 +136,7 @@ async def test_generic_mcp_uses_declared_page_parameters():
     })
     answer, activity = await app.run_generic_mcp_read(tools, "How many devices?")
 
-    assert answer == "3 devices in NinjaOne."
+    assert answer == "NinjaOne returned 3 records for devices."
     tools[3].ainvoke.assert_awaited_once_with({
         "endpoint": "GET /v2/devices", "page_parameter": "page",
         "page_size_parameter": "pageSize", "page_size": 200,
