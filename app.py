@@ -973,6 +973,26 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
         return None
 
 
+_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)[.!\\s]*$", re.I)
+
+
+def _recover_unprepared_mcp_mutation(session_id: str, question: str):
+    """Recover the previous write request for preparation only; never approve it."""
+    if not _AFFIRMATIVE_REPLY_RE.fullmatch((question or "").strip()):
+        return None, False
+    with _mcp_pending_lock:
+        pending = any(item.get("session_id") == session_id for item in _mcp_pending_actions.values())
+    if pending:
+        return None, True
+    for message in reversed(_sessions.get(session_id, [])):
+        if getattr(message, "type", "") != "human":
+            continue
+        previous = _text_from_content(getattr(message, "content", ""))
+        if _is_mutation_request(previous):
+            return previous, False
+    return None, False
+
+
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
@@ -985,6 +1005,20 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         raise HTTPException(status_code=502, detail="MCP server returned no tools")
 
     message_text = _text_from_content(message_content)
+    recovered_request, approval_already_pending = _recover_unprepared_mcp_mutation(session_id, message_text)
+    if approval_already_pending:
+        return (
+            "A NinjaOne approval request is already pending in this conversation. "
+            "Use its Approve and execute or Reject button; a chat reply cannot approve it.",
+            [],
+        )
+    if recovered_request:
+        # The prior turn produced prose instead of an approval event. Re-submit
+        # the original intent to the tool agent so it can prepare the real action.
+        message_text = recovered_request
+        message_content = recovered_request
+        if progress_callback:
+            progress_callback({"stage": "understanding", "message": "Resuming the previous change request to prepare its approval card."})
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
