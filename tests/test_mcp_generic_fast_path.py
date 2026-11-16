@@ -166,3 +166,38 @@ async def test_generic_mcp_uses_declared_page_parameters():
         "page_size_parameter": "pageSize", "page_size": 200,
         "start_page": 1, "max_pages": 20,
     })
+
+
+
+def test_affirmative_reply_recovers_previous_mcp_mutation_only_for_preparation():
+    class PreviousUserMessage:
+        type = "human"
+        content = "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"
+
+    with patch.dict(app._sessions, {"approval-recovery-test": [PreviousUserMessage()]}):
+        with patch.dict(app._mcp_pending_actions, {}, clear=True):
+            recovered, pending = app._recover_unprepared_mcp_mutation("approval-recovery-test", "yes")
+    assert recovered == "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"
+    assert pending is False
+
+
+def test_affirmative_reply_never_replaces_existing_mcp_approval_button():
+    class PreviousUserMessage:
+        type = "human"
+        content = "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"
+
+    with patch.dict(app._sessions, {"approval-pending-test": [PreviousUserMessage()]}):
+        with patch.dict(app._mcp_pending_actions, {
+            "pending-action": {"session_id": "approval-pending-test"}
+        }, clear=True):
+            recovered, pending = app._recover_unprepared_mcp_mutation("approval-pending-test", "approved")
+    assert recovered is None
+    assert pending is True
+
+
+def test_affirmative_reply_without_previous_mutation_does_not_invent_write():
+    with patch.dict(app._sessions, {"approval-empty-test": []}):
+        with patch.dict(app._mcp_pending_actions, {}, clear=True):
+            recovered, pending = app._recover_unprepared_mcp_mutation("approval-empty-test", "yes")
+    assert recovered is None
+    assert pending is False
