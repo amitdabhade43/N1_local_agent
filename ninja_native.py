@@ -132,18 +132,24 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
     steps_text = 0
     for step in range(MAX_STEPS):
         emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
+        inference_started = time.perf_counter()
         m = _client(base, api_key).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
+        activity.append({"kind": "metric", "stage": "llm_inference",
+                         "elapsed_ms": round((time.perf_counter() - inference_started) * 1000, 1)})
         if not m.tool_calls:
             tc = core.text_call(m.content)
             if tc and steps_text < 3:
                 steps_text += 1
                 called = True
                 emit(f'Calling NinjaOne operation: {tc[0]}', 'tool')
+                tool_started = time.perf_counter()
                 out = core.exec_tool(*tc)
                 emit(f'Received a response from {tc[0]}.', 'result')
                 activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
+                activity.append({"kind": "metric", "stage": "ninjaone_tool",
+                                 "tool": tc[0], "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
                 try:
                     prepared = json.loads(out)
                     if prepared.get("approval_required"):
@@ -177,6 +183,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
             emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
+            tool_started = time.perf_counter()
             try:
                 args = json.loads(tc.function.arguments or "{}")
                 fn = core.DISPATCH.get(tc.function.name)
@@ -188,6 +195,8 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
             activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
             emit(f"Received a response from {tc.function.name}.", "result")
             activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
+            activity.append({"kind": "metric", "stage": "ninjaone_tool",
+                             "tool": tc.function.name, "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
             try:
                 prepared = json.loads(out)
                 if prepared.get("approval_required"):
