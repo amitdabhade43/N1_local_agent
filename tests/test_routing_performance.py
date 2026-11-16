@@ -133,6 +133,15 @@ class DirectRoutingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0], "4 devices")
         fast.assert_called_once_with("How many devices?")
 
+    async def test_native_fast_path_timeout_falls_through_to_model_route(self):
+        import requests
+        with patch.object(ninja_native, "_ensure"):
+            with patch.object(ninja_native.core, "set_active_session"):
+                with patch.object(ninja_native.core, "clear_active_session"):
+                    with patch.object(ninja_native.core, "fast_path", side_effect=requests.Timeout()):
+                        result = await ninja_native.try_fast_path("session-5", "How many devices?")
+        self.assertIsNone(result)
+
 
 if __name__ == "__main__":
     unittest.main()
