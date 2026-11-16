@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import app
 import ninja_native
+import foundry_discovery
 
 
 class ProviderDiscoveryCacheTests(unittest.TestCase):
@@ -43,6 +44,31 @@ class ProviderDiscoveryCacheTests(unittest.TestCase):
         self.assertEqual(discover.call_count, 1)
 
 
+class FoundryDiscoveryCacheTests(unittest.TestCase):
+    def setUp(self):
+        self.original_cache = dict(foundry_discovery._CACHE)
+
+    def tearDown(self):
+        foundry_discovery._CACHE.update(self.original_cache)
+
+    def test_successful_foundry_discovery_is_cached(self):
+        value = {"connected": True, "base_url": "http://127.0.0.1:50000/v1",
+                 "models": [{"id": "model-a"}], "error": None}
+        foundry_discovery._CACHE.update(at=time.monotonic(), value=value)
+        with patch.object(foundry_discovery, "_status_output",
+                          side_effect=AssertionError("cache should avoid CLI discovery")):
+            self.assertEqual(foundry_discovery.discover_foundry(), value)
+
+    def test_foundry_force_refresh_bypasses_cache(self):
+        value = {"connected": True, "base_url": "http://127.0.0.1:50000/v1",
+                 "models": [{"id": "model-a"}], "error": None}
+        foundry_discovery._CACHE.update(at=time.monotonic(), value=value)
+        with patch.object(foundry_discovery, "_status_output", return_value="") as status:
+            with patch.object(foundry_discovery, "_fetch_models", return_value=None):
+                foundry_discovery.discover_foundry(force=True)
+        status.assert_called_once()
+
+
 class DirectRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_fast_path_runs_without_provider_discovery(self):
         expected = ("42 devices in NinjaOne.", [])
@@ -70,6 +96,15 @@ class DirectRoutingTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(app, "detect_direct_tool_request", return_value=None):
                     result = await app.try_direct_backend_request("session-3", "Investigate why this device is unhealthy.")
         self.assertIsNone(result)
+
+    async def test_native_preflight_calls_fast_path_without_model_client(self):
+        with patch.object(ninja_native, "_ensure"):
+            with patch.object(ninja_native.core, "set_active_session"):
+                with patch.object(ninja_native.core, "clear_active_session"):
+                    with patch.object(ninja_native.core, "fast_path", return_value="4 devices") as fast:
+                        result = await ninja_native.try_fast_path("session-4", "How many devices?")
+        self.assertEqual(result[0], "4 devices")
+        fast.assert_called_once_with("How many devices?")
 
 
 if __name__ == "__main__":
