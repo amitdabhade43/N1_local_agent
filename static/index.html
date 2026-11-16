@@ -241,7 +241,6 @@ imageInput.onchange=()=>{
  selectedImage=imageInput.files[0]||null;
  if(selectedImage){preview.src=URL.createObjectURL(selectedImage);preview.style.display='block'}
 };
-model.onchange=()=>{selectedModels[provider.value]=model.value;document.getElementById('modelTag').textContent=(provider.value==='gateway'?'LLM Gateway':'Foundry Local')+' · '+(model.selectedOptions[0]?.textContent||'No model selected')};
 document.getElementById('newBtn').onclick=async()=>{if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});sessionId=null;chat.innerHTML='<div class="welcome"><h2>New conversation</h2><p>Ask a NinjaOne question or start an investigation.</p></div>'};
 document.getElementById('clearBtn').onclick=async()=>{
  if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});
