@@ -631,6 +631,13 @@ async def run_generic_mcp_read(tools, message: str):
     query_parameters = {str(item.get("name")): item for item in parameters if item.get("in") == "query"}
     page_name = next((name for name in query_parameters if name.casefold() == "page"), None)
     size_name = next((name for name in query_parameters if name.casefold() in {"pagesize", "page_size"}), None)
+    response_schema = details.get("responses") or {}
+    response_text = json.dumps(response_schema, ensure_ascii=False).casefold()
+    has_cursor = any(name.casefold() in {"after", "cursor", "nextcursor"} for name in query_parameters)
+    has_page_parameter = any(name.casefold() in {"page", "pagesize", "page_size"} for name in query_parameters)
+    if has_cursor or "nextcursor" in response_text:
+        return None
+
     if page_name and size_name:
         pagination_tool = find_tool("execute_paginated_endpoint")
         if pagination_tool is None:
@@ -644,11 +651,7 @@ async def run_generic_mcp_read(tools, message: str):
     else:
         # Do not claim a complete total when the endpoint advertises pagination
         # that this direct route cannot safely drive.
-        response_schema = details.get("responses") or {}
-        response_text = json.dumps(response_schema, ensure_ascii=False).casefold()
-        has_cursor = any(name.casefold() in {"after", "cursor", "nextcursor"} for name in query_parameters)
-        has_page_parameter = any(name.casefold() in {"page", "pagesize", "page_size"} for name in query_parameters)
-        if has_cursor or has_page_parameter and (page_name or size_name) or "nextcursor" in response_text:
+        if has_page_parameter:
             return None
         response_raw = await execute.ainvoke({"endpoint": endpoint})
         execution_tool_name = "execute_endpoint"
