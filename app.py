@@ -452,7 +452,9 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
         return None
 
     plural, tool_names = selected
-    tool = next((t for t in tools if t.name.lower() in tool_names), None)
+    tool = next((t for t in tools
+                  if t.name.lower() in tool_names
+                  or t.name.lower().rsplit("__", 1)[-1] in tool_names), None)
     if tool is None:
         return None
 
@@ -584,10 +586,14 @@ async def run_generic_mcp_read(tools, message: str):
     """Use the MCP server's OpenAPI discovery and schemas for safe, simple GET requests."""
     if not is_simple_generic_read(message):
         return None
-    by_name = {tool.name: tool for tool in tools}
-    discover = by_name.get("discover_endpoints")
-    inspect = by_name.get("inspect_endpoint")
-    execute = by_name.get("execute_endpoint")
+    def find_tool(name: str):
+        return next((tool for tool in tools
+                     if tool.name.casefold() == name
+                     or tool.name.casefold().endswith("__" + name)), None)
+
+    discover = find_tool("discover_endpoints")
+    inspect = find_tool("inspect_endpoint")
+    execute = find_tool("execute_endpoint")
     if not (discover and inspect and execute):
         return None
 
@@ -626,7 +632,7 @@ async def run_generic_mcp_read(tools, message: str):
     page_name = next((name for name in query_parameters if name.casefold() == "page"), None)
     size_name = next((name for name in query_parameters if name.casefold() in {"pagesize", "page_size"}), None)
     if page_name and size_name:
-        pagination_tool = by_name.get("execute_paginated_endpoint")
+        pagination_tool = find_tool("execute_paginated_endpoint")
         if pagination_tool is None:
             return None
         response_raw = await pagination_tool.ainvoke({
