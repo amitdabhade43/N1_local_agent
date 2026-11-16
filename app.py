@@ -4,6 +4,7 @@ import json
 import os
 import re
 import time
+import requests
 import uuid
 from typing import Any
 
@@ -81,6 +82,7 @@ _session_lock = asyncio.Lock()
 
 class ChatRequest(BaseModel):
     session_id: str | None = None
+    provider: str = "foundry"
     model: str
     message: str
 
@@ -111,6 +113,97 @@ def model_id_for(choice: str, discovery: dict[str, Any]) -> str:
         detail=f"Model '{choice}' is not currently loaded in Foundry. Refresh the model list and select an available model.",
     )
 
+def normalize_gateway_base_url(value: str) -> str:
+    """Normalize a configured OpenAI-compatible URL to its API base (/v1)."""
+    value = (value or "").strip().rstrip("/")
+    value = re.sub(r"/chat/completions$", "", value, flags=re.I)
+    value = re.sub(r"/models$", "", value, flags=re.I)
+    if not value:
+        return ""
+    if not re.match(r"^https?://", value, flags=re.I):
+        raise HTTPException(status_code=500, detail="LLM_GATEWAY_BASE_URL must start with https:// or http://.")
+    return value
+
+
+def discover_gateway() -> dict[str, Any]:
+    """Discover gateway models without ever returning or logging its API token."""
+    base_url = normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", ""))
+    token = os.getenv("LLM_GATEWAY_API_KEY", "").strip()
+    configured_model = os.getenv("LLM_GATEWAY_MODEL", "").strip()
+    result = {"connected": False, "base_url": base_url or None, "models": [], "error": None,
+              "configured": bool(base_url and token)}
+    if not base_url:
+        result["error"] = "LLM_GATEWAY_BASE_URL is not configured."
+        return result
+    if not token:
+        result["error"] = "LLM_GATEWAY_API_KEY is not configured."
+        if configured_model:
+            result["models"] = [{"id": configured_model, "label": configured_model, "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))}]
+        return result
+    try:
+        response = requests.get(base_url + "/models", headers={"Authorization": f"Bearer {token}"}, timeout=8)
+        response.raise_for_status()
+        payload = response.json()
+        items = payload.get("data", []) if isinstance(payload, dict) else payload
+        models, seen = [], set()
+        for item in items if isinstance(items, list) else []:
+            model_id = (item if isinstance(item, str) else item.get("id") if isinstance(item, dict) else "")
+            model_id = str(model_id or "").strip()
+            if not model_id or model_id in seen:
+                continue
+            seen.add(model_id)
+            models.append({"id": model_id, "label": model_id,
+                           "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", model_id, re.I))})
+        if configured_model and configured_model not in seen:
+            models.insert(0, {"id": configured_model, "label": configured_model + " (configured)", 
+                              "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))})
+        result.update(connected=True, models=models)
+        if not models:
+            result["error"] = "Gateway responded successfully but /models returned no model IDs; set LLM_GATEWAY_MODEL."
+    except requests.RequestException as exc:
+        result["error"] = f"Gateway model discovery failed: {type(exc).__name__}: {exc}"
+        if configured_model:
+            result["models"] = [{"id": configured_model, "label": configured_model + " (configured; discovery unavailable)",
+                                 "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))}]
+    except (ValueError, TypeError, AttributeError) as exc:
+        result["error"] = f"Gateway returned an invalid /models response: {type(exc).__name__}."
+    return result
+
+
+def resolve_model_provider(provider: str, choice: str) -> tuple[str, str, str]:
+    """Return model ID, OpenAI-compatible base URL, and API key for the chosen provider."""
+    provider = (provider or "foundry").strip().lower()
+    if provider == "foundry":
+        discovery = discover_foundry()
+        return model_id_for(choice, discovery), discovery["base_url"], os.getenv("FOUNDRY_API_KEY", "local")
+    if provider == "gateway":
+        discovery = discover_gateway()
+        if not discovery.get("base_url") or not os.getenv("LLM_GATEWAY_API_KEY", "").strip():
+            raise HTTPException(status_code=503, detail="Configure LLM_GATEWAY_BASE_URL and LLM_GATEWAY_API_KEY in .env.")
+        available = {item["id"] for item in discovery.get("models", [])}
+        if choice not in available:
+            if not discovery.get("connected") and choice == os.getenv("LLM_GATEWAY_MODEL", "").strip():
+                pass
+            else:
+                raise HTTPException(status_code=400, detail=discovery.get("error") or f"Model '{choice}' is not available from the LLM Gateway.")
+        return choice, discovery["base_url"], os.getenv("LLM_GATEWAY_API_KEY", "").strip()
+    raise HTTPException(status_code=400, detail="Provider must be 'foundry' or 'gateway'.")
+
+
+def provider_catalog() -> dict[str, Any]:
+    foundry = discover_foundry()
+    gateway = discover_gateway()
+    return {
+        "default_provider": os.getenv("LLM_PROVIDER", "foundry").strip().lower(),
+        "providers": {
+            "foundry": {**foundry, "base_url": foundry.get("base_url")},
+            "gateway": gateway,
+        },
+        # Backward-compatible fields used by older UI clients.
+        **foundry,
+        "foundry_base_url": foundry.get("base_url"),
+    }
+
 
 async def get_tools():
     global _tools
@@ -126,23 +219,23 @@ async def get_tools():
         return _tools
 
 
-def get_model(model_id: str, base_url: str):
+def get_model(model_id: str, base_url: str, api_key: str | None = None):
     return ChatOpenAI(
         model=model_id,
         base_url=base_url,
-        api_key=os.getenv("FOUNDRY_API_KEY", "local"),
+        api_key=api_key or os.getenv("FOUNDRY_API_KEY", "local"),
         temperature=0,
         timeout=120,
         max_retries=0,
     )
 
 
-async def get_agent(model_id: str, base_url: str, tools):
+async def get_agent(model_id: str, base_url: str, tools, api_key: str | None = None):
     cache_key = f"{base_url}|{model_id}"
     async with _agents_lock:
         if cache_key not in _agents:
             _agents[cache_key] = create_agent(
-                model=get_model(model_id, base_url),
+                model=get_model(model_id, base_url, api_key),
                 tools=tools,
                 system_prompt=SYSTEM_PROMPT,
             )
@@ -365,10 +458,10 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     return answer, activity
 
 
-async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None):
+async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
-        return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback)
+        return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback, api_key)
 
     if progress_callback:
         progress_callback({'stage': 'discovery', 'message': 'Connecting to the MCP tool catalog.'})
@@ -387,7 +480,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
         return direct_answer, direct_activity
 
-    agent = await get_agent(model_id, base_url, tools)
+    agent = await get_agent(model_id, base_url, tools, api_key)
     if progress_callback:
         progress_callback({'stage': 'model', 'message': 'Analyzing the request and selecting relevant tools.'})
     async with _session_lock:
@@ -462,10 +555,9 @@ async def index():
 
 @app.get("/api/config")
 async def config():
-    discovery = await asyncio.to_thread(discover_foundry)
+    catalog = await asyncio.to_thread(provider_catalog)
     return {
-        **discovery,
-        "foundry_base_url": discovery.get("base_url"),
+        **catalog,
         "mcp_url": MCP_URL,
         "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
         "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
@@ -474,14 +566,20 @@ async def config():
 
 @app.post("/api/foundry/refresh")
 async def refresh_foundry():
-    discovery = await asyncio.to_thread(discover_foundry, True)
+    await asyncio.to_thread(discover_foundry, True)
+    catalog = await asyncio.to_thread(provider_catalog)
     return {
-        **discovery,
-        "foundry_base_url": discovery.get("base_url"),
+        **catalog,
         "mcp_url": MCP_URL,
         "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
         "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
     }
+
+
+@app.post("/api/gateway/refresh")
+async def refresh_gateway():
+    gateway = await asyncio.to_thread(discover_gateway)
+    return {"gateway": gateway}
 
 
 @app.get("/api/tools")
@@ -559,15 +657,16 @@ async def chat_stream(req: ChatRequest):
 
         async def execute():
             try:
-                publish({"type": "progress", "stage": "setup", "message": "Checking the selected local model."})
-                discovery = await asyncio.to_thread(discover_foundry)
-                model_id = model_id_for(req.model, discovery)
-                publish({"type": "progress", "stage": "ready", "message": "Model is ready. Starting the agent."})
+                provider = (req.provider or "foundry").lower()
+                publish({"type": "progress", "stage": "setup", "message": f"Checking the selected {provider} model."})
+                model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, req.model)
+                publish({"type": "progress", "stage": "ready", "message": f"{provider.title()} model is ready. Starting the agent."})
                 answer, activity = await run_agent(
-                    session_id, model_id, req.message, discovery["base_url"],
+                    session_id, model_id, req.message, base_url,
                     progress_callback=lambda item: publish({"type": "progress", **item}),
+                    api_key=api_key,
                 )
-                publish({"type": "complete", "session_id": session_id, "model": req.model,
+                publish({"type": "complete", "session_id": session_id, "provider": provider, "model": req.model,
                          "answer": answer, "activity": activity})
             except HTTPException as exc:
                 publish({"type": "error", "message": str(exc.detail)})
@@ -597,10 +696,10 @@ async def chat_stream(req: ChatRequest):
 @app.post("/api/chat")
 async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
-    discovery = await asyncio.to_thread(discover_foundry)
-    model_id = model_id_for(req.model, discovery)
-    answer, activity = await run_agent(session_id, model_id, req.message, discovery["base_url"])
-    return {"session_id": session_id, "model": req.model, "answer": answer, "activity": activity}
+    provider = (req.provider or "foundry").lower()
+    model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, req.model)
+    answer, activity = await run_agent(session_id, model_id, req.message, base_url, api_key=api_key)
+    return {"session_id": session_id, "provider": provider, "model": req.model, "answer": answer, "activity": activity}
 
 
 @app.post("/api/chat/image")
@@ -609,11 +708,15 @@ async def chat_image(
     message: str = Form(...),
     session_id: str | None = Form(None),
     image: UploadFile = File(...),
+    provider: str = Form("foundry"),
 ):
-    discovery = await asyncio.to_thread(discover_foundry)
-    model_id = model_id_for(model, discovery)
-    if not is_vision_model(model_id, discovery):
-        raise HTTPException(status_code=400, detail="The selected Foundry model is not identified as a vision-capable model.")
+    provider = (provider or "foundry").lower()
+    model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, model)
+    catalog = await asyncio.to_thread(provider_catalog)
+    provider_info = catalog.get("providers", {}).get(provider, {})
+    vision = next((item.get("vision", False) for item in provider_info.get("models", []) if item.get("id") == model_id), False)
+    if not vision:
+        raise HTTPException(status_code=400, detail=f"The selected {provider.title()} model is not identified as vision-capable.")
     content_type = image.content_type or ""
     if not content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="Upload an image file.")
@@ -627,8 +730,8 @@ async def chat_image(
         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
     ]
     sid = session_id or str(uuid.uuid4())
-    answer, activity = await run_agent(sid, model_id, content, discovery["base_url"])
-    return {"session_id": sid, "model": model, "answer": answer, "activity": activity}
+    answer, activity = await run_agent(sid, model_id, content, base_url, api_key=api_key)
+    return {"session_id": sid, "provider": provider, "model": model, "answer": answer, "activity": activity}
 
 
 @app.delete("/api/session/{session_id}")
