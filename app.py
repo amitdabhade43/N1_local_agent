@@ -539,6 +539,147 @@ def is_contextual_followup(message: str) -> bool:
     return bool(_CONTEXTUAL_FOLLOWUP_RE.search(message or ""))
 
 
+_SIMPLE_GENERIC_READ_RE = re.compile(
+    r"\\b(?:how many|count|number of|total|list|show|display|get|fetch|what are|which are)\\b",
+    re.I,
+)
+_COMPLEX_GENERIC_READ_RE = re.compile(
+    r"\\b(?:with|where|whose|per|each|by|assigned|accessible|access|offline|online|named|called|"
+    r"starting|beginning|before|after|since|between|compare|versus|vs|and|under|inside|"
+    r"belong\\w*|owned|owner|status|details?)\\b|\\bin\\s+(?!total\\b|ninjaone\\b|ninjarmm\\b|ninja\\b)",
+    re.I,
+)
+
+
+def is_simple_generic_read(message: str) -> bool:
+    text = re.sub(r"\\s+", " ", (message or "").strip())
+    return bool(text and _SIMPLE_GENERIC_READ_RE.search(text)
+                and not _COMPLEX_GENERIC_READ_RE.search(text)
+                and not is_contextual_followup(text))
+
+
+def _generic_result_records(value: Any) -> list[dict[str, Any]]:
+    parsed = parse_mcp_result(value)
+    if isinstance(parsed, dict):
+        for key in ("data", "items", "results", "records"):
+            if isinstance(parsed.get(key), list):
+                return [item for item in parsed[key] if isinstance(item, dict)]
+    return _flatten_records(parsed)
+
+
+def _generic_record_label(record: dict[str, Any]) -> str:
+    first = next((str(record.get(key)).strip() for key in
+                  ("systemName", "name", "displayName", "hostname", "fullName")
+                  if record.get(key) not in (None, "")), "")
+    if not first and (record.get("firstName") or record.get("lastName")):
+        first = " ".join(str(record.get(key)).strip() for key in ("firstName", "lastName")
+                         if record.get(key) not in (None, ""))
+    if not first:
+        first = str(record.get("email") or record.get("id") or "Unnamed record")
+    identifier = record.get("id")
+    return f"{first} (ID: {identifier})" if identifier not in (None, "") and str(identifier) not in first else first
+
+
+async def run_generic_mcp_read(tools, message: str):
+    """Use the MCP server's OpenAPI discovery and schemas for safe, simple GET requests."""
+    if not is_simple_generic_read(message):
+        return None
+    by_name = {tool.name: tool for tool in tools}
+    discover = by_name.get("discover_endpoints")
+    inspect = by_name.get("inspect_endpoint")
+    execute = by_name.get("execute_endpoint")
+    if not (discover and inspect and execute):
+        return None
+
+    activity = []
+    discovery_started = time.perf_counter()
+    discovery_raw = await discover.ainvoke({
+        "intent": message, "method": "GET", "candidate_limit": 8,
+    })
+    discovery = parse_mcp_result(discovery_raw)
+    activity.append({"kind": "call", "tool": "discover_endpoints",
+                     "arguments": {"intent": message, "method": "GET", "candidate_limit": 8}})
+    activity.append({"kind": "result", "tool": "discover_endpoints",
+                     "result": str(discovery)[:2500]})
+    if not isinstance(discovery, dict):
+        return None
+    semantic = discovery.get("semantic") or {}
+    selected = semantic.get("selected") if isinstance(semantic, dict) else None
+    if semantic.get("mode") != "fuzzy_fast_path" or not isinstance(selected, list) or not selected:
+        return None
+    first = selected[0]
+    endpoint = first.get("endpoint") if isinstance(first, dict) else first
+    if not isinstance(endpoint, str) or not endpoint.upper().startswith("GET "):
+        return None
+
+    inspect_raw = await inspect.ainvoke({"endpoint": endpoint})
+    details = parse_mcp_result(inspect_raw)
+    activity.append({"kind": "call", "tool": "inspect_endpoint", "arguments": {"endpoint": endpoint}})
+    activity.append({"kind": "result", "tool": "inspect_endpoint", "result": str(details)[:2500]})
+    if not isinstance(details, dict) or details.get("error"):
+        return None
+    parameters = [item for item in details.get("parameters", []) if isinstance(item, dict)]
+    if any(item.get("required") for item in parameters):
+        return None
+
+    query_parameters = {str(item.get("name")): item for item in parameters if item.get("in") == "query"}
+    page_name = next((name for name in query_parameters if name.casefold() == "page"), None)
+    size_name = next((name for name in query_parameters if name.casefold() in {"pagesize", "page_size"}), None)
+    response_started = time.perf_counter()
+    if page_name and size_name and "execute_paginated_endpoint" in by_name:
+        pagination_tool = by_name["execute_paginated_endpoint"]
+        response_raw = await pagination_tool.ainvoke({
+            "endpoint": endpoint, "page_parameter": page_name,
+            "page_size_parameter": size_name, "page_size": 200,
+            "start_page": 1, "max_pages": 20,
+        })
+        execution_tool_name = "execute_paginated_endpoint"
+    else:
+        # Cursor pagination cannot be safely guessed by this simple route.
+        response_schema = details.get("responses") or {}
+        response_text = json.dumps(response_schema, ensure_ascii=False).casefold()
+        if any(name.casefold() == "after" for name in query_parameters) and "nextcursor" in response_text:
+            return None
+        response_raw = await execute.ainvoke({"endpoint": endpoint})
+        execution_tool_name = "execute_endpoint"
+
+    result = parse_mcp_result(response_raw)
+    activity.append({"kind": "call", "tool": execution_tool_name,
+                     "arguments": {"endpoint": endpoint}})
+    activity.append({"kind": "result", "tool": execution_tool_name,
+                     "result": str(result)[:3500]})
+    if not isinstance(result, dict) or result.get("error"):
+        return None
+
+    data = result.get("data", result)
+    records = _generic_result_records(data)
+    complete = bool(result.get("complete", False))
+    total = find_total_field(data)
+    count_intent = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", message, re.I))
+    if count_intent:
+        if total is not None:
+            answer = f"{total} records returned by NinjaOne for that request."
+        elif complete:
+            answer = f"{len(records)} records returned by NinjaOne for that request."
+        else:
+            answer = (f"At least {len(records)} records were returned by NinjaOne; "
+                      "the complete total is unknown because the result is incomplete.")
+    else:
+        labels = [_generic_record_label(record) for record in records[:50]]
+        if labels:
+            answer = f"{len(records)} records in the returned result: " + ", ".join(labels)
+        else:
+            answer = "NinjaOne returned no records for that request."
+        if not complete:
+            answer += " The result may be incomplete; use a more specific query or pagination."
+        if len(records) > 50:
+            answer += f" Showing 50 of {len(records)} returned records."
+    activity.append({"kind": "metric", "stage": "mcp_openapi_read",
+                     "elapsed_ms": round((time.perf_counter() - discovery_started) * 1000, 1),
+                     "api_elapsed_ms": result.get("elapsed_ms")})
+    return answer, activity
+
+
 async def try_direct_backend_request(session_id: str, message_content: Any):
     """Try a safe no-LLM route before model discovery/inference."""
     message_text = _text_from_content(message_content)
@@ -553,7 +694,7 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
         return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
-    return None
+    return await run_generic_mcp_read(tools, message_text)
 
 
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
