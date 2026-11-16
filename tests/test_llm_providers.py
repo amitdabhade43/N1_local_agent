@@ -33,6 +33,7 @@ class GatewayProviderTests(unittest.TestCase):
             "https://llm-gateway.example.com/v1/models",
             headers={"Authorization": "Bearer secret-test-token"},
             timeout=8,
+            verify=True,
         )
 
     @patch.dict(os.environ, {
@@ -77,6 +78,35 @@ class GatewayProviderTests(unittest.TestCase):
         self.assertEqual(model, "qwen3-14b")
         self.assertEqual(base_url, "https://llm-gateway.example.com/v1")
         self.assertEqual(api_key, "secret-test-token")
+
+
+    @patch.dict(os.environ, {
+        "LLM_GATEWAY_BASE_URL": "https://llm-gateway.example.com/v1",
+        "LLM_GATEWAY_API_KEY": "secret-test-token",
+        "LLM_GATEWAY_CA_BUNDLE": r"C:\certificates\company-root-ca.pem",
+        "LLM_GATEWAY_MODEL": "",
+    }, clear=False)
+    @patch("app.requests.get")
+    def test_gateway_discovery_uses_configured_company_ca(self, get):
+        response = Mock()
+        response.json.return_value = {"data": [{"id": "internal-model"}]}
+        response.raise_for_status.return_value = None
+        get.return_value = response
+
+        result = app.discover_gateway()
+
+        self.assertTrue(result["connected"])
+        self.assertEqual(app.gateway_ca_bundle(), r"C:\certificates\company-root-ca.pem")
+        get.assert_called_once_with(
+            "https://llm-gateway.example.com/v1/models",
+            headers={"Authorization": "Bearer secret-test-token"},
+            timeout=8,
+            verify=r"C:\certificates\company-root-ca.pem",
+        )
+
+    def test_gateway_ca_setting_defaults_to_system_trust(self):
+        with patch.dict(os.environ, {"LLM_GATEWAY_CA_BUNDLE": ""}, clear=False):
+            self.assertIs(app.gateway_verify_setting(), True)
 
     def test_chat_request_defaults_to_foundry_for_older_clients(self):
         request = app.ChatRequest(model="local-model", message="hello")
