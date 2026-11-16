@@ -194,9 +194,15 @@ async def try_fast_path(session_id, content):
         raise HTTPException(status_code=502, detail=f"Native NinjaOne fast path failed: {exc}")
 
 def _run_inner(session_id, model_id, content, base, progress=None, api_key=None, fast_path_checked=False):
-    def emit(message, stage='working'):
+    def emit(message, stage='working', activity_event=None):
         if progress:
-            progress({'stage': stage, 'message': message})
+            event = {'stage': stage, 'message': message}
+            if activity_event is not None:
+                event['activity_event'] = activity_event
+            progress(event)
+    def record_live(item, message, stage):
+        activity.append(item)
+        emit(message, stage, item)
     _ensure()
     q = _text(content)
     hist = _sessions.get(session_id, [])[-6:]
@@ -257,25 +263,27 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     called = nudged = False
     steps_text = 0
     for step in range(MAX_STEPS):
-        emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
+        emit(f'LLM is analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
         inference_started = time.perf_counter()
         m = _client(base, api_key).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
-        activity.append({"kind": "metric", "stage": "llm_inference",
-                         "elapsed_ms": round((time.perf_counter() - inference_started) * 1000, 1)})
+        inference_ms = round((time.perf_counter() - inference_started) * 1000, 1)
+        record_live({"kind": "metric", "stage": "llm_inference", "elapsed_ms": inference_ms},
+                    f"LLM response received in {inference_ms:.1f} ms.", "model")
         if not m.tool_calls:
             tc = core.text_call(m.content)
             if tc and steps_text < 3:
                 steps_text += 1
                 called = True
-                emit(f'Calling NinjaOne operation: {tc[0]}', 'tool')
+                call_event = {"kind": "call", "tool": tc[0], "arguments": tc[1]}
+                record_live(call_event, f"Calling NinjaOne tool: {tc[0]}", "tool")
                 tool_started = time.perf_counter()
                 out = core.exec_tool(*tc)
-                emit(f'Received a response from {tc[0]}.', 'result')
-                activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
-                activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
-                activity.append({"kind": "metric", "stage": "ninjaone_tool",
-                                 "tool": tc[0], "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
+                result_event = {"kind": "result", "tool": tc[0], "result": out[:2500]}
+                record_live(result_event, f"Received result from {tc[0]}.", "result")
+                tool_ms = round((time.perf_counter() - tool_started) * 1000, 1)
+                record_live({"kind": "metric", "stage": "ninjaone_tool", "tool": tc[0], "elapsed_ms": tool_ms},
+                            f"{tc[0]} completed in {tool_ms:.1f} ms.", "result")
                 try:
                     prepared = json.loads(out)
                     if prepared.get("approval_required"):
@@ -313,21 +321,25 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         called = True
         msgs.append(m.model_dump(exclude_none=True))
         for tc in m.tool_calls:
-            emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
-            tool_started = time.perf_counter()
             try:
                 args = json.loads(tc.function.arguments or "{}")
+            except Exception:
+                args = {}
+            call_event = {"kind": "call", "tool": tc.function.name, "arguments": args}
+            record_live(call_event, f"Calling NinjaOne tool: {tc.function.name}", "tool")
+            tool_started = time.perf_counter()
+            try:
                 fn = core.DISPATCH.get(tc.function.name)
                 out = fn(args) if fn else core.err("unknown tool")
             except requests.HTTPError as e:
                 args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
             except Exception as e:
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
-            activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
-            emit(f"Received a response from {tc.function.name}.", "result")
-            activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
-            activity.append({"kind": "metric", "stage": "ninjaone_tool",
-                             "tool": tc.function.name, "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
+            record_live({"kind": "result", "tool": tc.function.name, "result": out[:2500]},
+                        f"Received result from {tc.function.name}.", "result")
+            tool_ms = round((time.perf_counter() - tool_started) * 1000, 1)
+            record_live({"kind": "metric", "stage": "ninjaone_tool", "tool": tc.function.name, "elapsed_ms": tool_ms},
+                        f"{tc.function.name} completed in {tool_ms:.1f} ms.", "result")
             try:
                 prepared = json.loads(out)
                 if prepared.get("approval_required"):
