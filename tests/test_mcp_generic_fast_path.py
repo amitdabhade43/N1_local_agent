@@ -90,6 +90,18 @@ async def test_generic_mcp_count_discloses_incomplete_result():
 
 
 @pytest.mark.asyncio
+async def test_generic_mcp_does_not_call_nonempty_result_empty_when_preview_missing():
+    tools = toolset({
+        "endpoint": "GET /v2/devices", "executed": True, "complete": False,
+        "data": [], "items_fetched": 17,
+    })
+    answer, _ = await app.run_generic_mcp_read(tools, "List devices")
+
+    assert "returned 17 records for devices" in answer
+    assert "preview was unavailable" in answer
+
+
+@pytest.mark.asyncio
 async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_total():
     tools = toolset()
     tools[1] = FakeTool("inspect_endpoint", {
