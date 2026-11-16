@@ -40,9 +40,16 @@ small{color:var(--muted)}
 <div class="sub">Local Foundry + NinjaOne API / MCP</div>
 </div>
 <div>
-<label for="model">Local model</label>
-<select id="model"><option value="">Discovering local models…</option></select>
-<button id="refreshFoundryBtn" type="button">Refresh Foundry models</button>
+<label for="provider">Model provider</label>
+<select id="provider">
+<option value="foundry">Foundry Local</option>
+<option value="gateway">LLM Gateway</option>
+</select>
+</div>
+<div>
+<label for="model">Model</label>
+<select id="model"><option value="">Discovering models…</option></select>
+<button id="refreshFoundryBtn" type="button">Refresh provider models</button>
 </div>
 <div class="status" id="status">Checking local services…</div>
 <button id="toolsBtn">Discover agent tools</button>
@@ -72,15 +79,15 @@ small{color:var(--muted)}
 <button class="primary" id="sendBtn">Send</button>
 </div>
 <img id="preview" alt="Image preview">
-<div class="sub" style="margin-top:8px">Qwen3-VL supports screenshot analysis. Images are sent to your local Foundry endpoint.</div>
+<div class="sub" style="margin-top:8px">Vision-capable models can analyze screenshots. Images are sent to the selected provider.</div>
 </div>
 </main>
 </div>
 <script>
 const chat=document.getElementById('chat'), message=document.getElementById('message');
-const model=document.getElementById('model'), imageInput=document.getElementById('image');
+const model=document.getElementById('model'), provider=document.getElementById('provider'), imageInput=document.getElementById('image');
 const preview=document.getElementById('preview'), statusEl=document.getElementById('status');
-let sessionId=null, selectedImage=null, busy=false;
+let sessionId=null, selectedImage=null, busy=false, providerCatalog=null, selectedModels={};
 function addMessage(role,text){
  const empty=chat.querySelector('.welcome'); if(empty) empty.remove();
  const el=document.createElement('div'); el.className='msg '+role;
@@ -137,42 +144,53 @@ function addActivity(parent,activity){
  });
  parent.append(details);
 }
-async function loadFoundry(force=false){
+async function loadProviders(force=false){
  try{
-  const r=await fetch(force?'/api/foundry/refresh':'/api/config',{method:force?'POST':'GET'});
+  const chosen=provider.value||'foundry';
+  if(force){
+   const endpoint=chosen==='gateway'?'/api/gateway/refresh':'/api/foundry/refresh';
+   const refreshed=await fetch(endpoint,{method:'POST'});
+   if(!refreshed.ok){const err=await refreshed.json();throw new Error(err.detail||'Provider refresh failed')}
+  }
+  const r=await fetch('/api/config');
   const d=await r.json();
-  if(!r.ok)throw new Error(d.detail||'Foundry discovery failed');
-  const previous=model.value;
+  if(!r.ok)throw new Error(d.detail||'Provider discovery failed');
+  providerCatalog=d.providers||{};
+  if(!provider.value)provider.value=d.default_provider||'foundry';
+  const active=provider.value;
+  const info=providerCatalog[active]||{models:[],connected:false,error:'Provider is not configured.'};
+  const previous=selectedModels[active]||model.value;
   model.innerHTML='';
-  (d.models||[]).forEach(item=>{
+  (info.models||[]).forEach(item=>{
    const option=document.createElement('option');
    option.value=item.id;
    option.textContent=item.label+(item.vision?' (Vision)':'');
    option.dataset.vision=item.vision?'true':'false';
    model.append(option);
   });
-  if(!d.connected||!d.models?.length){
-   const option=document.createElement('option');
-   option.value='';
-   option.textContent='No loaded Foundry models';
+  if(!info.models?.length){
+   const option=document.createElement('option');option.value='';
+   option.textContent=active==='gateway'?'No gateway models discovered':'No loaded Foundry models';
    model.append(option);
-   statusEl.textContent='Foundry unavailable or no models loaded. Start/load a model, then Refresh.';
-  }else{
-   if((d.models||[]).some(item=>item.id===previous))model.value=previous;
-   document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'Select a model';
-   statusEl.textContent=`Foundry connected · ${d.foundry_base_url} · ${d.models.length} loaded model(s) · Backend ${d.backend||"mcp"}${d.backend==="mcp"?" · MCP "+d.mcp_url:" · Ninja scope "+(d.ninja_scope||"monitoring")}`;
-   const policy=document.getElementById('backendPolicy');
-   if(policy)policy.textContent=d.backend==='native'
-    ?'Native API: OpenAPI-driven reads and approved writes. Delete actions are disabled.'
-    :'MCP mode: available capabilities depend on the tools exposed by your MCP server.';
-  }
- }catch(e){statusEl.textContent='Foundry discovery failed: '+e.message}
+  }else if((info.models||[]).some(item=>item.id===previous)){model.value=previous}
+  selectedModels[active]=model.value;
+  const providerName=active==='gateway'?'LLM Gateway':'Foundry Local';
+  const connection=info.connected?'connected':'not verified';
+  statusEl.textContent=active==='gateway'
+   ?`${providerName} ${connection} · ${info.base_url||'URL not configured'} · ${(info.models||[]).length} model(s) · Backend ${d.backend||'mcp'}${info.error?' · '+info.error:''}`
+   :`${providerName} ${connection} · ${info.base_url||'endpoint unavailable'} · ${(info.models||[]).length} model(s) · Backend ${d.backend||'mcp'}${info.error?' · '+info.error:''}`;
+  document.getElementById('modelTag').textContent=providerName+' · '+(model.selectedOptions[0]?.textContent||'Select a model');
+  const policy=document.getElementById('backendPolicy');
+  if(policy)policy.textContent=d.backend==='native'
+   ?'Native API: OpenAPI-driven reads and approved writes. Delete actions are disabled.'
+   :'MCP mode: available capabilities depend on the tools exposed by your MCP server.';
+ }catch(e){statusEl.textContent='Provider discovery failed: '+e.message}
 }
 
 async function send(){
  if(busy)return;
  const text=message.value.trim();if(!text&&!selectedImage)return;
- if(!model.value){alert('No Foundry model is selected. Start/load a model and refresh discovery.');return}
+ if(!model.value){alert('No model is selected for this provider. Configure the provider, then refresh its models.');return}
  if(selectedImage&&model.selectedOptions[0]?.dataset.vision!=='true'){alert('Select a discovered vision-capable model to send an image.');return}
  busy=true;document.getElementById('sendBtn').disabled=true;
  addMessage('user',(text||'Analyze this screenshot')+(selectedImage?' [image attached]':''));
@@ -188,12 +206,12 @@ async function send(){
  try{
   if(selectedImage){
    showProgress('Sending the image to the selected local vision model.','setup');
-   const fd=new FormData();fd.append('model',model.value);fd.append('message',text);if(sessionId)fd.append('session_id',sessionId);fd.append('image',selectedImage);
+   const fd=new FormData();fd.append('model',model.value);fd.append('provider',provider.value);fd.append('message',text);if(sessionId)fd.append('session_id',sessionId);fd.append('image',selectedImage);
    const response=await fetch('/api/chat/image',{method:'POST',body:fd});const data=await response.json();
    if(!response.ok)throw new Error(data.detail||'Request failed');
    sessionId=data.session_id;progress.remove();body.textContent=data.answer;addActivity(pending,data.activity);
   }else{
-   const response=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,model:model.value,message:text})});
+   const response=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({session_id:sessionId,provider:provider.value,model:model.value,message:text})});
    if(!response.ok){let detail='Request failed';try{const err=await response.json();detail=err.detail||detail}catch{}throw new Error(detail)}
    if(!response.body)throw new Error('Streaming response is not supported by this browser.');
    const reader=response.body.getReader(),decoder=new TextDecoder();let buffer='',completed=false;
@@ -223,14 +241,15 @@ imageInput.onchange=()=>{
  selectedImage=imageInput.files[0]||null;
  if(selectedImage){preview.src=URL.createObjectURL(selectedImage);preview.style.display='block'}
 };
-model.onchange=()=>{document.getElementById('modelTag').textContent=model.options[model.selectedIndex].text};
+model.onchange=()=>{selectedModels[provider.value]=model.value;document.getElementById('modelTag').textContent=(provider.value==='gateway'?'LLM Gateway':'Foundry Local')+' · '+(model.selectedOptions[0]?.textContent||'No model selected')};
 document.getElementById('newBtn').onclick=async()=>{if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});sessionId=null;chat.innerHTML='<div class="welcome"><h2>New conversation</h2><p>Ask a NinjaOne question or start an investigation.</p></div>'};
 document.getElementById('clearBtn').onclick=async()=>{
  if(sessionId)await fetch('/api/session/'+sessionId,{method:'DELETE'});
  sessionId=null;chat.innerHTML='<div class="welcome"><h2>Conversation cleared</h2><p>Start a new NinjaOne investigation.</p></div>';
 };
-document.getElementById('refreshFoundryBtn').onclick=()=>loadFoundry(true);
-model.onchange=()=>{document.getElementById('modelTag').textContent=model.selectedOptions[0]?.textContent||'No model selected'};
+document.getElementById('refreshFoundryBtn').onclick=()=>loadProviders(true);
+provider.onchange=()=>loadProviders(false);
+model.onchange=()=>{selectedModels[provider.value]=model.value;document.getElementById('modelTag').textContent=(provider.value==='gateway'?'LLM Gateway':'Foundry Local')+' · '+(model.selectedOptions[0]?.textContent||'No model selected')};
 document.getElementById('toolsBtn').onclick=async()=>{
  try{
   const r=await fetch('/api/tools');const d=await r.json();
@@ -239,7 +258,7 @@ document.getElementById('toolsBtn').onclick=async()=>{
  }
  catch(e){addMessage('assistant','Could not discover tools: '+e.message)}
 };
-loadFoundry();
+loadProviders();
 </script>
 </body>
 </html>
