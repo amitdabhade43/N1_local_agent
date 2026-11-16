@@ -988,7 +988,7 @@ def _recover_unprepared_mcp_mutation(session_id: str, question: str):
         if getattr(message, "type", "") != "human":
             continue
         previous = _text_from_content(getattr(message, "content", ""))
-        if _is_mutation_request(previous):
+        if ninja_native._is_mutation_request(previous):
             return previous, False
     return None, False
 
