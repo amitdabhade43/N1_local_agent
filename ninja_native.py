@@ -69,7 +69,7 @@ def _ensure():
 
 
 
-_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\\s*[.!]?$", re.I)
+_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\s*[.!]?$", re.I)
 
 
 def _pending_for_session(session_id):
