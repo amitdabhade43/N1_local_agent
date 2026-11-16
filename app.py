@@ -973,7 +973,7 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
         return None
 
 
-_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)[.!\\s]*$", re.I)
+_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\\s*[.!]?$", re.I)
 
 
 def _recover_unprepared_mcp_mutation(session_id: str, question: str):
