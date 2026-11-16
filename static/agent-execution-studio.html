@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#f5f7fb">
+<title>NinjaOne · Execution Studio</title>
+<style>
+:root{color-scheme:light;--bg:#f4f6fa;--surface:#fff;--surface2:#f8f9fc;--ink:#182235;--muted:#718096;--line:#e3e8f0;--nav:#111b2d;--nav2:#1b2940;--blue:#4263eb;--blue2:#eef2ff;--green:#16845b;--greenbg:#e8f7ef;--amber:#b96a0b;--amberbg:#fff5e5;--red:#c33e45;--redbg:#fff0f0;--purple:#6750c8;--purplebg:#f1edff;--shadow:0 8px 28px rgba(22,34,53,.06)}
+*{box-sizing:border-box}html,body{margin:0;width:100%;min-height:100%;font:14px/1.45 Inter,Segoe UI,Arial,sans-serif;color:var(--ink);background:var(--bg)}button,input,select,textarea{font:inherit}button{cursor:pointer}button:disabled{opacity:.5;cursor:not-allowed}
+.shell{min-height:100vh;display:grid;grid-template-columns:238px minmax(0,1fr)}.sidebar{background:var(--nav);color:#e9eef8;padding:20px 14px;display:flex;flex-direction:column;gap:22px;min-height:100vh}.brand{display:flex;align-items:center;gap:10px;padding:2px 8px}.brand-mark{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,#6485ff,#4055cf);display:grid;place-items:center;font-weight:800;color:white;box-shadow:0 5px 18px #344ca866}.brand strong{font-size:15px;letter-spacing:.01em}.brand small{display:block;color:#9cabc2;font-size:10px;letter-spacing:.1em;text-transform:uppercase}.nav-label{font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#8191aa;padding:0 10px;margin-bottom:6px}.nav{display:grid;gap:5px}.nav button{border:0;color:#b9c5d8;background:transparent;text-align:left;padding:10px 11px;border-radius:9px;display:flex;align-items:center;gap:10px}.nav button:hover,.nav button.active{background:var(--nav2);color:white}.nav .ico{width:18px;text-align:center;font-size:15px}.side-bottom{margin-top:auto;display:grid;gap:10px}.runtime{border:1px solid #31415a;background:#17243a;border-radius:12px;padding:12px}.runtime .cap{color:#9aabc3;font-size:10px;text-transform:uppercase;letter-spacing:.1em}.runtime strong{display:block;margin-top:4px;font-size:13px}.runtime small{color:#9aabc3}.dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#27bd7b;margin-right:6px}.side-link{color:#b9c5d8;background:transparent;border:1px solid #35445d;border-radius:9px;padding:9px;text-align:left}
+main{min-width:0;padding:22px 24px 28px}.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-bottom:18px}.crumb{color:var(--muted);font-size:12px}.topbar h1{font-size:22px;margin:3px 0 0;letter-spacing:-.03em}.top-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.btn{border:1px solid var(--line);background:white;color:#344156;padding:8px 11px;border-radius:9px;font-weight:600;font-size:12px;box-shadow:0 1px 2px #17243a08}.btn:hover{border-color:#b8c5d9;background:#fbfcff}.btn.primary{background:var(--blue);border-color:var(--blue);color:white}.btn.ghost{background:transparent}.btn.danger{color:var(--red)}
+.configbar{display:flex;align-items:center;gap:9px;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:14px;box-shadow:var(--shadow);flex-wrap:wrap}.configbar label{font-size:11px;color:var(--muted);font-weight:700}.configbar select{border:1px solid var(--line);border-radius:8px;padding:7px 9px;background:#fff;color:var(--ink);min-width:155px}.configbar .spacer{flex:1}.conn{font-size:11px;color:var(--muted);padding:5px 8px;border-radius:20px;background:#f3f5f9}.conn.ok{background:var(--greenbg);color:var(--green)}.conn.bad{background:var(--amberbg);color:var(--amber)}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));background:white;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);margin-bottom:14px}.metric{padding:15px 18px;position:relative}.metric+.metric:before{content:"";position:absolute;left:0;top:17px;bottom:17px;width:1px;background:var(--line)}.metric label{display:block;font-size:10px;color:var(--muted);letter-spacing:.09em;text-transform:uppercase}.metric strong{display:block;font-size:22px;letter-spacing:-.03em;margin-top:4px}.metric small{color:var(--muted);font-size:11px}
+.workspace{display:grid;grid-template-columns:minmax(290px,370px) minmax(0,1fr);gap:14px;align-items:stretch}.panel{background:var(--surface);border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);min-width:0;overflow:hidden}.panel-head{padding:13px 15px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;gap:10px}.panel-head h2{font-size:13px;margin:0}.panel-head small{color:var(--muted);font-size:11px}.step-tools{display:flex;gap:7px;padding:11px 12px;border-bottom:1px solid var(--line)}.step-tools input{min-width:0;flex:1;border:1px solid var(--line);border-radius:8px;padding:8px 10px;outline:none}.step-tools input:focus,textarea:focus{border-color:#9aaeff;box-shadow:0 0 0 3px #4263eb14}.filter{display:flex;gap:5px;padding:8px 12px;border-bottom:1px solid var(--line);overflow:auto}.filter button{border:1px solid transparent;background:transparent;border-radius:7px;padding:5px 9px;color:var(--muted);font-size:11px;white-space:nowrap}.filter button.active{background:var(--blue2);color:var(--blue);border-color:#dce4ff;font-weight:700}.step-list{padding:10px;display:grid;gap:8px;max-height:640px;overflow:auto}.step{border:1px solid var(--line);border-radius:10px;overflow:hidden;background:white}.step.selected{border-color:#a9baff;box-shadow:0 0 0 2px #4263eb12}.step-main{display:grid;grid-template-columns:27px minmax(0,1fr) auto 16px;gap:9px;align-items:center;padding:10px;cursor:pointer}.num{width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:#eef1f6;color:#596579;font-weight:700;font-size:11px}.step-title{font-weight:650;font-size:12px;overflow-wrap:anywhere}.step-meta{font-size:10px;color:var(--muted);margin-top:2px}.status{font-size:10px;padding:3px 7px;border-radius:20px;font-weight:700;white-space:nowrap}.status.success{background:var(--greenbg);color:var(--green)}.status.error{background:var(--redbg);color:var(--red)}.status.warning,.status.pending{background:var(--amberbg);color:var(--amber)}.status.running{background:var(--blue2);color:var(--blue)}.status.info{background:var(--purplebg);color:var(--purple)}.step-detail{border-top:1px solid var(--line);padding:10px;background:#fbfcfe;display:none}.step.open .step-detail{display:block}.detail-label{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:700;margin:8px 0 5px}.detail-label:first-child{margin-top:0}.code{background:#f2f4f8;border:1px solid #e8ebf1;border-radius:8px;padding:9px;font:10px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:210px;overflow:auto;color:#334155}.empty{padding:24px;text-align:center;color:var(--muted);font-size:12px}
+.right-stack{display:grid;grid-template-rows:minmax(300px,1fr) minmax(230px,.8fr);gap:14px;min-width:0}.flow-panel{min-height:330px}.flow-toolbar{display:flex;align-items:center;gap:6px}.flow-toolbar button{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 8px;color:#58677e}.flow-canvas{position:relative;min-height:280px;height:calc(100% - 47px);overflow:auto;background-color:#fcfdff;background-image:radial-gradient(#dfe5ef 1px,transparent 1px);background-size:17px 17px;padding:22px}.flow-grid{position:relative;display:grid;grid-template-columns:repeat(3,minmax(130px,1fr));grid-auto-rows:85px;gap:30px 28px;min-width:480px;z-index:1}.flow-node{position:relative;border:1px solid #cfd8e6;border-radius:9px;background:white;min-width:0;box-shadow:0 3px 10px #24344c0a;cursor:pointer;overflow:hidden}.flow-node:before{content:"";display:block;height:3px;background:#94a3b8}.flow-node.success{border-color:#8bcba9}.flow-node.success:before{background:#25a56e}.flow-node.error{border-color:#e5a0a0}.flow-node.error:before{background:#d44c53}.flow-node.warning,.flow-node.pending{border-color:#e9bd7b}.flow-node.warning:before,.flow-node.pending:before{background:#dc922c}.flow-node.running:before{background:var(--blue)}.flow-node.selected{outline:2px solid #8da4ff;outline-offset:2px}.node-top{padding:6px 9px 3px;font-size:9px;color:var(--muted);display:flex;justify-content:space-between}.node-name{padding:3px 9px;font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node-time{padding:1px 9px 7px;color:var(--muted);font-size:9px}.flow-connectors{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}.flow-connectors path{fill:none;stroke:#b6c3d5;stroke-width:1.5;stroke-dasharray:4 4}.flow-connectors path.ok{stroke:#38a879}.flow-connectors path.warn{stroke:#db963d}.flow-connectors path.err{stroke:#d45b62}.flow-legend{display:flex;gap:13px;padding:0 15px 11px;color:var(--muted);font-size:10px}.legend-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:4px}
+.output-panel{min-height:230px}.tabs{display:flex;gap:4px}.tabs button{border:0;background:transparent;color:var(--muted);padding:6px 9px;border-radius:7px;font-size:11px}.tabs button.active{background:#eef2ff;color:var(--blue);font-weight:700}.output-actions{display:flex;gap:6px}.output-body{padding:12px 14px}.output-pre{margin:0;background:#111b2d;color:#dce6f6;border-radius:9px;padding:13px;min-height:145px;max-height:230px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+.composer-panel{margin-top:14px;background:white;border:1px solid var(--line);border-radius:13px;box-shadow:var(--shadow);padding:12px}.composer-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}.composer-top small{color:var(--muted);font-size:11px}.composer{display:flex;gap:9px;align-items:flex-end}.composer textarea{flex:1;resize:vertical;min-height:48px;max-height:140px;border:1px solid var(--line);border-radius:9px;padding:11px;outline:none;color:var(--ink)}.composer .btn{height:42px}.helper{font-size:10px;color:var(--muted);margin-top:7px}.toast{position:fixed;right:20px;bottom:20px;background:#182235;color:white;padding:10px 14px;border-radius:9px;box-shadow:var(--shadow);opacity:0;transform:translateY(8px);transition:.2s;pointer-events:none;z-index:20}.toast.show{opacity:1;transform:translateY(0)}
+@media(max-width:1100px){.shell{grid-template-columns:205px minmax(0,1fr)}main{padding:17px}.workspace{grid-template-columns:minmax(260px,330px) minmax(0,1fr)}.flow-grid{grid-template-columns:repeat(2,minmax(130px,1fr))}}
+@media(max-width:800px){.shell{grid-template-columns:1fr}.sidebar{min-height:0;height:auto;padding:10px 14px;display:flex;flex-direction:row;align-items:center;gap:12px}.sidebar .nav,.sidebar .side-bottom,.sidebar .nav-label{display:none}.brand{padding:0}.runtime{margin-left:auto;padding:7px 9px}.runtime small{display:none}.runtime strong{font-size:11px}.workspace{grid-template-columns:1fr}.right-stack{grid-template-rows:330px 250px}.step-list{max-height:380px}.metrics{grid-template-columns:repeat(2,1fr)}.metric:nth-child(3):before{display:none}main{padding:13px}.topbar h1{font-size:19px}}
+@media(max-width:480px){.topbar{align-items:flex-start}.top-actions .btn:not(.primary){display:none}.configbar select{min-width:120px;max-width:150px}.metric{padding:11px}.metric strong{font-size:19px}.flow-grid{grid-template-columns:repeat(2,minmax(120px,1fr));gap:18px}.flow-canvas{padding:13px}.composer{flex-wrap:wrap}.composer textarea{flex-basis:100%}.composer .btn{flex:1}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside class="sidebar">
+ <div class="brand"><div class="brand-mark">N</div><div><strong>NinjaOne AI</strong><small>Execution Studio · Preview</small></div></div>
+ <div><div class="nav-label">Workspace</div><nav class="nav"><button class="active" type="button"><span class="ico">◈</span>Execution viewer</button><button id="newRunNav" type="button"><span class="ico">＋</span>New investigation</button><button id="toolsNav" type="button"><span class="ico">⌘</span>API catalog</button></nav></div>
+ <div><div class="nav-label">Views</div><nav class="nav"><button id="filterAllNav" type="button"><span class="ico">☷</span>All activity</button><button id="filterErrorsNav" type="button"><span class="ico">⚠</span>Errors & warnings</button><button id="exportNav" type="button"><span class="ico">⇩</span>Export run</button></nav></div>
+ <div class="side-bottom"><div class="runtime"><div class="cap">Runtime status</div><strong><span class="dot" id="runtimeDot"></span><span id="runtimeLabel">Checking services…</span></strong><small id="runtimeMeta">Native / MCP · provider discovery</small></div><button class="side-link" id="refreshBtn">↻ Refresh model discovery</button><button class="side-link" id="homeBtn">↗ Open standard chat</button></div>
+</aside>
+<main>
+ <div class="topbar"><div><div class="crumb">Workspace / Agent runs / <b>Live execution</b></div><h1>Agent Execution Viewer</h1></div><div class="top-actions"><button class="btn" id="restartBtn">↻ Restart run</button><button class="btn" id="exportBtn">⇩ Export logs</button><button class="btn" id="shareBtn">↗ Copy link</button></div></div>
+ <div class="configbar"><label for="provider">PROVIDER</label><select id="provider"><option value="foundry">Foundry Local</option><option value="gateway">LLM Gateway</option></select><label for="model">MODEL</label><select id="model"><option value="">Discovering…</option></select><span class="spacer"></span><span class="conn" id="providerState">Discovering provider</span><span class="conn" id="backendState">Backend —</span></div>
+ <section class="metrics"><div class="metric"><label>Total steps</label><strong id="mSteps">0</strong><small id="mStepHint">Waiting for a request</small></div><div class="metric"><label>Errors</label><strong id="mErrors">0</strong><small id="mWarnings">0 warnings</small></div><div class="metric"><label>Duration</label><strong id="mDuration">0.00s</strong><small id="mDurationHint">Wall-clock execution</small></div><div class="metric"><label>Status</label><strong id="mStatus">Ready</strong><small id="mStatusHint">Waiting for your instruction</small></div></section>
+ <section class="workspace">
+  <section class="panel"><div class="panel-head"><div><h2>Execution activity</h2><small id="stepCount">0 events</small></div><button class="btn" id="clearFilterBtn">Clear</button></div><div class="step-tools"><input id="searchSteps" placeholder="⌕ Search tools, endpoints, events…"><button class="btn" id="filterBtn">⚑ Filter</button></div><div class="filter" id="filters"><button class="active" data-filter="all">All</button><button data-filter="error">Errors</button><button data-filter="warning">Warnings</button><button data-filter="api">API calls</button></div><div class="step-list" id="stepList"><div class="empty">Your execution timeline will appear here when you send a request.</div></div></section>
+  <div class="right-stack">
+   <section class="panel flow-panel"><div class="panel-head"><div><h2>Execution flow</h2><small id="flowCaption">Live tool and API sequence</small></div><div class="flow-toolbar"><button id="zoomOut">−</button><button id="zoomReset">100%</button><button id="zoomIn">＋</button></div></div><div class="flow-canvas" id="flowCanvas"><svg class="flow-connectors" id="flowSvg" aria-hidden="true"></svg><div class="flow-grid" id="flowGrid"><div class="empty">Run a NinjaOne request to visualize its execution path.</div></div></div><div class="flow-legend"><span><i class="legend-dot" style="background:#25a56e"></i>Success</span><span><i class="legend-dot" style="background:#dc922c"></i>Pending / warning</span><span><i class="legend-dot" style="background:#d44c53"></i>Error</span><span><i class="legend-dot" style="background:#4263eb"></i>Running</span></div></section>
+   <section class="panel output-panel"><div class="panel-head"><div><h2>Execution output</h2><small id="outputCaption">Selected event details</small></div><div class="output-actions"><button class="btn" id="copyOutput">▢ Copy</button><button class="btn" id="downloadOutput">⇩ Download</button></div></div><div class="output-body"><div class="tabs" id="outputTabs"><button class="active" data-tab="raw">Raw output</button><button data-tab="json">JSON</button><button data-tab="logs">Logs</button></div><pre class="output-pre" id="outputText">No execution output yet. Send a request to begin.</pre></div></section>
+  </div>
+ </section>
+ <section class="composer-panel"><div class="composer-top"><b>Ask NinjaOne AI</b><small id="sessionLabel">New session · Backend requests use your existing agent configuration</small></div><div class="composer"><textarea id="prompt" placeholder="Ask about devices, users, organizations, access, alerts, or request an investigation…"></textarea><button class="btn" id="newSessionBtn">New session</button><button class="btn primary" id="sendBtn">Run request&nbsp; ↗</button></div><div class="helper">Execution stages and tool activity are displayed as they are reported by the existing API. Private model reasoning is never shown. Writes remain subject to the existing approval workflow.</div></section>
+</main>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+(()=> {
+"use strict";
+const $=id=>document.getElementById(id);
+const state={sessionId:null,provider:"foundry",model:"",backend:"unknown",steps:[],selected:-1,filter:"all",tab:"raw",busy:false,lastPrompt:"",startedAt:0,elapsed:0,timer:null,zoom:1,logs:[],lastAnswer:"",providerCatalog:null};
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const pretty=v=>{try{return typeof v==="string"?v:JSON.stringify(v,null,2)}catch{return String(v)}};
+const statusClass=s=>({success:"success",error:"error",warning:"warning",pending:"pending",running:"running",info:"info"}[s]||"info");
+function toast(s){const t=$("toast");t.textContent=s;t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2400)}
+function stamp(){return new Date().toLocaleTimeString([], {hour12:false})}
+function setRunStatus(label,hint){$("mStatus").textContent=label;$("mStatusHint").textContent=hint||""}
+function elapsed(){return state.startedAt?((performance.now()-state.startedAt)/1000):state.elapsed}
+function updateMetrics(){
+ const errors=state.steps.filter(x=>x.status==="error").length,warnings=state.steps.filter(x=>x.status==="warning"||x.status==="pending").length;
+ $("mSteps").textContent=state.steps.length;$("mErrors").textContent=errors;$("mWarnings").textContent=warnings+" warnings";
+ $("mDuration").textContent=elapsed().toFixed(2)+"s";$("stepCount").textContent=state.steps.length+" events";
+ $("mStepHint").textContent=state.busy?"Execution in progress":state.steps.length?"Execution events recorded":"Waiting for a request";
+ if(state.busy){setRunStatus("Running","Receiving execution events")}else if(errors){setRunStatus("Failed",errors+" error(s) reported")}else if(warnings){setRunStatus("Completed with warnings",warnings+" item(s) need attention")}else if(state.steps.length){setRunStatus("Completed","Execution finished")}else{setRunStatus("Ready","Waiting for your instruction")}
+}
+function addStep(step){
+ step.id=state.steps.length+1;step.time=step.time||stamp();step.status=step.status||"info";step.duration=step.duration||"";
+ state.steps.push(step);state.logs.push({at:step.time,title:step.title,status:step.status,kind:step.kind,tool:step.tool,endpoint:step.endpoint});
+ state.selected=state.steps.length-1;renderAll();
+}
+function classifyActivity(item){
+ if(item.kind==="approval_required")return "pending";
+ if(item.kind==="metric")return "success";
+ if(item.kind==="result"){
+  const s=String(item.result||"").toLowerCase();
+  if(/\b(error|exception|failed|traceback)\b/.test(s))return "error";
+  if(/approval_required|pending approval/.test(s))return "pending";
+  return "success";
+ }
+ return "running";
+}
+function endpointOf(item){
+ const a=item.arguments||{};
+ return a.endpoint||a.path||a.url||(a.operation_id?"operation: "+a.operation_id:"");
+}
+function titleOf(item){
+ if(item.kind==="approval_required"){const a=item.action||{};return "Approval required · "+(a.method||"WRITE")+" "+(a.path||"");}
+ if(item.kind==="metric")return "Execution metric · "+(item.stage||"stage");
+ const name=item.tool||"Agent event";
+ return (item.kind==="call"?"Tool call: ":item.kind==="result"?"Tool result: ":"")+name;
+}
+function activityToSteps(activity){
+ let lastCall=null;
+ (activity||[]).forEach(item=>{
+  const status=classifyActivity(item),endpoint=endpointOf(item);
+  if(item.kind==="call"){lastCall={tool:item.tool,at:performance.now()};}
+  const duration=item.elapsed_ms!=null?Number(item.elapsed_ms).toFixed(1)+" ms":(item.kind==="result"&&lastCall&&lastCall.tool===item.tool?Math.max(0,performance.now()-lastCall.at).toFixed(0)+" ms":"");
+  const request=item.kind==="call"?item.arguments:(item.action||null);
+  const response=item.kind==="result"?item.result:(item.kind==="metric"?item:null);
+  addStep({kind:item.kind,title:titleOf(item),tool:item.tool||"",endpoint,status,duration,request,response,raw:item,category:item.kind==="call"?"api":status==="error"?"error":status==="warning"?"warning":"all"});
+ });
+}
+function filteredSteps(){
+ const q=$("searchSteps").value.trim().toLowerCase();
+ return state.steps.map((s,i)=>({...s,index:i})).filter(s=>{
+  const text=[s.title,s.tool,s.endpoint,pretty(s.request),pretty(s.response)].join(" ").toLowerCase();
+  const filter=state.filter==="all"||(state.filter==="error"&&s.status==="error")||(state.filter==="warning"&&(s.status==="warning"||s.status==="pending"))||(state.filter==="api"&&(s.kind==="call"||s.kind==="result"));
+  return filter&&(!q||text.includes(q));
+ });
+}
+function renderSteps(){
+ const list=$("stepList"),items=filteredSteps();list.innerHTML="";
+ if(!items.length){list.innerHTML='<div class="empty">No events match this filter.</div>';return}
+ items.forEach(s=>{
+  const el=document.createElement("article");el.className="step"+(s.index===state.selected?" selected":"")+(s.index===state.selected?" open":"");
+  const meta=[s.time,s.duration,s.endpoint].filter(Boolean).join(" · ");
+  el.innerHTML='<div class="step-main" role="button" tabindex="0"><span class="num">'+(s.index+1)+'</span><div><div class="step-title">'+esc(s.title)+'</div><div class="step-meta">'+esc(meta)+'</div></div><span class="status '+statusClass(s.status)+'">'+esc(s.status.toUpperCase())+'</span><span>⌄</span></div><div class="step-detail"><div class="detail-label">Request / arguments</div><pre class="code">'+esc(pretty(s.request??"No request payload reported."))+'</pre><div class="detail-label">Response / result</div><pre class="code">'+esc(pretty(s.response??"No response payload reported."))+'</pre></div>';
+  const main=el.querySelector(".step-main");main.addEventListener("click",()=>{state.selected=s.index;renderAll()});main.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();state.selected=s.index;renderAll()}});
+  list.append(el);
+ });
+}
+function renderFlow(){
+ const grid=$("flowGrid"),svg=$("flowSvg");grid.innerHTML="";svg.innerHTML="";
+ const items=state.steps;
+ if(!items.length){grid.innerHTML='<div class="empty">Run a NinjaOne request to visualize its execution path.</div>';return}
+ grid.style.transform="scale("+state.zoom+")";grid.style.transformOrigin="top left";
+ items.forEach((s,i)=>{
+  const n=document.createElement("div");n.className="flow-node "+statusClass(s.status)+(i===state.selected?" selected":"");n.style.gridColumn=((i%3)+1);n.style.gridRow=(Math.floor(i/3)+1);
+  n.innerHTML='<div class="node-top"><span>'+String(i+1).padStart(2,"0")+' · STEP</span><span>'+esc(s.status.toUpperCase())+'</span></div><div class="node-name" title="'+esc(s.title)+'">'+esc(s.tool||s.title)+'</div><div class="node-time">'+esc(s.duration||s.endpoint||s.time)+'</div>';
+  n.addEventListener("click",()=>{state.selected=i;renderAll()});grid.append(n);
+ });
+ // SVG connector paths are decorative sequence links; actual event order comes from the backend activity stream.
+ requestAnimationFrame(()=>{
+  const nodes=[...grid.children];if(nodes.length<2)return;
+  const base=grid.getBoundingClientRect(),w=grid.scrollWidth,h=grid.scrollHeight;
+  svg.setAttribute("viewBox","0 0 "+w+" "+h);svg.style.width=w+"px";svg.style.height=h+"px";
+  for(let i=0;i<nodes.length-1;i++){
+   const a=nodes[i].getBoundingClientRect(),b=nodes[i+1].getBoundingClientRect();
+   const x1=a.left-base.left+a.width/2,y1=a.top-base.top+a.height/2,x2=b.left-base.left+b.width/2,y2=b.top-base.top+b.height/2;
+   const mid=(y1+y2)/2;const path=document.createElementNS("http://www.w3.org/2000/svg","path");
+   path.setAttribute("d","M "+x1+" "+y1+" C "+x1+" "+mid+", "+x2+" "+mid+", "+x2+" "+y2);
+   path.setAttribute("class",nodes[i].classList.contains("error")?"err":nodes[i].classList.contains("warning")?"warn":"ok");svg.append(path);
+  }
+ });
+}
+function selectedOutput(){
+ const s=state.steps[state.selected];
+ if(state.tab==="logs")return state.logs.map(x=>x.at+"  "+x.status.toUpperCase()+"  "+x.title+(x.endpoint?"  "+x.endpoint:"")).join("\n")||"No logs yet.";
+ if(state.tab==="json")return pretty(s?s.raw:state.steps.map(x=>x.raw));
+ if(!s)return state.lastAnswer||"No execution output yet. Send a request to begin.";
+ return [s.title,s.endpoint?"Endpoint: "+s.endpoint:"",s.duration?"Duration: "+s.duration:"","",s.response!=null?pretty(s.response):s.request!=null?pretty(s.request):"No detail reported."].filter(x=>x!==null).join("\n");
+}
+function renderOutput(){$("outputText").textContent=selectedOutput();$("outputCaption").textContent=state.selected>=0?"Event "+(state.selected+1)+" of "+state.steps.length:"Run output"}
+function renderAll(){renderSteps();renderFlow();renderOutput();updateMetrics()}
+function pushProgress(ev){
+ const stage=ev.stage||"progress";const status=stage==="complete"?"success":"running";
+ addStep({kind:"progress",title:ev.message||"Execution update",tool:"Agent runtime",status,duration:"",request:{stage},response:null,category:"all"});
+ $("flowCaption").textContent=ev.message||"Live execution";
+}
+function showActivity(activity){
+ activityToSteps(activity||[]);
+ const approvals=(activity||[]).filter(x=>x.kind==="approval_required");
+ approvals.forEach(a=>renderApproval(a.action||{}));
+}
+function renderApproval(action){
+ const item={kind:"approval",title:"Approval required · "+(action.method||"WRITE")+" "+(action.path||""),status:"pending",tool:"Human approval",endpoint:action.path||"",duration:"Awaiting decision",request:{method:action.method,path:action.path,query:action.query,body:action.body,summary:action.summary},response:"No write has been executed. Review the exact request and choose Approve and execute or Reject.",raw:action};
+ const idx=state.steps.length;addStep(item);
+ const target=$("stepList").querySelectorAll(".step")[state.selected];
+ if(!target)return;
+ const detail=target.querySelector(".step-detail");
+ const controls=document.createElement("div");controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px";
+ const approve=document.createElement("button");approve.className="btn primary";approve.textContent="Approve and execute";
+ const reject=document.createElement("button");reject.className="btn danger";reject.textContent="Reject";
+ const note=document.createElement("small");note.textContent="Pending approval · no change made";note.style.color="var(--amber)";
+ controls.append(approve,reject,note);detail.append(controls);
+ const sid=state.sessionId;
+ approve.onclick=async()=>{approve.disabled=reject.disabled=true;note.textContent="Executing approved action…";try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Execution confirmed":"Not completed: "+(d.error||d.message||"Unknown error");note.style.color=d.ok?"var(--green)":"var(--red)";state.steps[idx].status=d.ok?"success":"error";state.steps[idx].response=d;renderAll()}catch(e){note.textContent="Approval failed: "+e.message;approve.disabled=reject.disabled=false}};
+ reject.onclick=async()=>{approve.disabled=reject.disabled=true;try{const r=await fetch("/api/actions/"+encodeURIComponent(action.action_id)+"/reject",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:sid})});const d=await r.json();note.textContent=d.ok?"Rejected":(d.message||"Could not reject");state.steps[idx].status=d.ok?"warning":"error";state.steps[idx].response=d;renderAll()}catch(e){note.textContent="Reject failed: "+e.message;approve.disabled=reject.disabled=false}};
+}
+async function loadConfig(force=false){
+ try{
+  if(force){const ep=state.provider==="gateway"?"/api/gateway/refresh":"/api/foundry/refresh";const rr=await fetch(ep,{method:"POST"});if(!rr.ok)throw new Error("Provider refresh failed")}
+  const r=await fetch("/api/config");const d=await r.json();if(!r.ok)throw new Error(d.detail||"Config unavailable");
+  state.providerCatalog=d.providers||{};state.backend=d.backend||"unknown";
+  if(!state.provider)state.provider=d.default_provider||"foundry";
+  $("provider").value=state.provider;
+  const info=state.providerCatalog[state.provider]||{models:[],connected:false,error:"Provider not configured"};
+  const previous=state.model;$("model").innerHTML="";
+  (info.models||[]).forEach(m=>{const o=document.createElement("option");o.value=m.id;o.textContent=m.label+(m.vision?" · Vision":"");$("model").append(o)});
+  if(!info.models?.length){const o=document.createElement("option");o.value="";o.textContent=info.error||"No models discovered";$("model").append(o)}
+  if((info.models||[]).some(m=>m.id===previous))$("model").value=previous;state.model=$("model").value;
+  $("providerState").textContent=info.connected?"● "+(state.provider==="gateway"?"Gateway":"Foundry")+" connected":"● Provider not verified";$("providerState").className="conn "+(info.connected?"ok":"bad");
+  $("backendState").textContent="Backend · "+state.backend.toUpperCase();
+  $("runtimeLabel").textContent=info.connected?"Services available":"Provider unavailable";$("runtimeMeta").textContent=state.backend.toUpperCase()+" · "+(info.models||[]).length+" model(s)";
+  $("runtimeDot").style.background=info.connected?"#27bd7b":"#d99a32";
+  $("model").disabled=!(info.models||[]).length;
+ }catch(e){$("providerState").textContent="Discovery error";$("providerState").className="conn bad";$("runtimeLabel").textContent="Service check failed";toast(e.message)}
+}
+function resetRun(){
+ if(state.busy){toast("Wait for the active request to finish.");return}
+ state.steps=[];state.logs=[];state.selected=-1;state.elapsed=0;state.lastAnswer="";state.lastPrompt="";$("prompt").value="";$("flowCaption").textContent="Live tool and API sequence";$("sessionLabel").textContent="New session · Existing backend";renderAll();toast("Viewer cleared. Ready for a new run.");
+}
+async function send(){
+ if(state.busy)return;const prompt=$("prompt").value.trim();if(!prompt)return;if(!$("model").value){toast("No model available. Refresh provider discovery.");return}
+ state.busy=true;state.startedAt=performance.now();state.lastPrompt=prompt;state.lastAnswer="";$("sendBtn").disabled=true;$("restartBtn").disabled=true;$("prompt").value="";
+ addStep({kind:"request",title:"User request submitted",tool:"Chat request",status:"success",request:{message:prompt,provider:state.provider,model:$("model").value},response:"Request accepted by the local agent API."});
+ const timer=setInterval(()=>{if(state.busy){$("mDuration").textContent=elapsed().toFixed(2)+"s"}},100);
+ setRunStatus("Running","Routing request");$("flowCaption").textContent="Checking direct route and preparing execution";
+ try{
+  const response=await fetch("/api/chat/stream",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({session_id:state.sessionId,provider:state.provider,model:$("model").value,message:prompt})});
+  if(!response.ok){let msg="Request failed";try{const d=await response.json();msg=d.detail||msg}catch{}throw new Error(msg)}
+  const reader=response.body.getReader(),decoder=new TextDecoder();let buffer="",complete=false;
+  while(true){const {value,done}=await reader.read();if(done)break;buffer+=decoder.decode(value,{stream:true});const frames=buffer.split(/\r?\n\r?\n/);buffer=frames.pop()||"";
+   for(const frame of frames){const line=frame.split(/\r?\n/).find(x=>x.startsWith("data: "));if(!line)continue;const ev=JSON.parse(line.slice(6));
+    if(ev.type==="progress"){pushProgress(ev);$("mStatus").textContent="Running"}
+    else if(ev.type==="error"){addStep({kind:"error",title:"Execution error",tool:"Agent runtime",status:"error",response:ev.message});throw new Error(ev.message)}
+    else if(ev.type==="complete"){complete=true;state.sessionId=ev.session_id;state.lastAnswer=ev.answer||"";showActivity(ev.activity||[]);addStep({kind:"answer",title:"Agent response",tool:"Final answer",status:"success",response:state.lastAnswer,request:{provider:ev.provider,model:ev.model}});$("sessionLabel").textContent="Session "+state.sessionId+" · "+state.backend.toUpperCase();$("flowCaption").textContent="Execution finished · "+(ev.activity||[]).length+" reported activity events"}
+   }
+  }
+  if(!complete)throw new Error("The execution stream ended before a final response was received.");
+ }catch(e){addStep({kind:"error",title:"Request failed",tool:"Agent runtime",status:"error",response:e.message});toast(e.message)}
+ finally{clearInterval(timer);state.busy=false;state.elapsed=elapsed();state.startedAt=0;$("sendBtn").disabled=false;$("restartBtn").disabled=false;renderAll()}
+}
+async function loadTools(){
+ try{const r=await fetch("/api/tools");const d=await r.json();if(!r.ok)throw new Error(d.detail||"Tools unavailable");
+  const payload=JSON.stringify(d,null,2);state.selected=-1;addStep({kind:"catalog",title:"API catalog discovered",tool:"/api/tools",status:"success",endpoint:"GET /api/tools",response:payload});$("tab-json")?.click();toast("Loaded "+(d.tools||[]).length+" tool definitions.");
+ }catch(e){toast("Could not load tools: "+e.message)}
+}
+function exportLogs(){const payload={session_id:state.sessionId,provider:state.provider,backend:state.backend,started:state.startedAt?new Date().toISOString():null,summary:{steps:state.steps.length,errors:state.steps.filter(s=>s.status==="error").length,duration_seconds:Number(elapsed().toFixed(3))},answer:state.lastAnswer,events:state.steps};const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="ninjaone-execution-"+new Date().toISOString().replace(/[:.]/g,"-")+".json";a.click();URL.revokeObjectURL(a.href);toast("Execution log exported.")}
+$("sendBtn").onclick=send;$("prompt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
+$("provider").onchange=()=>{state.provider=$("provider").value;state.model="";loadConfig()};
+$("model").onchange=()=>state.model=$("model").value;
+$("refreshBtn").onclick=()=>loadConfig(true);$("restartBtn").onclick=()=>{if(state.lastPrompt){$("prompt").value=state.lastPrompt;resetRun();$("prompt").value=state.lastPrompt}else resetRun()};
+$("newSessionBtn").onclick=async()=>{if(state.sessionId){try{await fetch("/api/session/"+encodeURIComponent(state.sessionId),{method:"DELETE"})}catch{}}state.sessionId=null;resetRun();$("sessionLabel").textContent="New session · Existing backend"};
+$("newRunNav").onclick=()=>$("prompt").focus();$("toolsNav").onclick=loadTools;$("homeBtn").onclick=()=>location.href="/";$("exportBtn").onclick=exportLogs;$("exportNav").onclick=exportLogs;
+$("shareBtn").onclick=async()=>{try{await navigator.clipboard.writeText(location.href);toast("Template URL copied.")}catch{toast("Copy the page URL from your browser.")}};
+$("copyOutput").onclick=async()=>{try{await navigator.clipboard.writeText($("outputText").textContent);toast("Output copied.")}catch{toast("Clipboard permission unavailable.")}};
+$("downloadOutput").onclick=()=>{const blob=new Blob([$("outputText").textContent],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="ninjaone-execution-output.txt";a.click();URL.revokeObjectURL(a.href)};
+$("filters").addEventListener("click",e=>{const b=e.target.closest("button[data-filter]");if(!b)return;state.filter=b.dataset.filter;document.querySelectorAll("#filters button").forEach(x=>x.classList.toggle("active",x===b));renderSteps()});
+$("filterErrorsNav").onclick=()=>{state.filter="error";document.querySelectorAll("#filters button").forEach(x=>x.classList.toggle("active",x.dataset.filter==="error"));renderSteps()};
+$("filterAllNav").onclick=()=>{state.filter="all";document.querySelectorAll("#filters button").forEach(x=>x.classList.toggle("active",x.dataset.filter==="all"));renderSteps()};
+$("searchSteps").oninput=renderSteps;$("filterBtn").onclick=()=>{state.filter=state.filter==="api"?"all":"api";document.querySelectorAll("#filters button").forEach(x=>x.classList.toggle("active",x.dataset.filter===state.filter));renderSteps()};
+$("clearFilterBtn").onclick=()=>{$("searchSteps").value="";state.filter="all";document.querySelectorAll("#filters button").forEach(x=>x.classList.toggle("active",x.dataset.filter==="all"));renderSteps()};
+$("outputTabs").addEventListener("click",e=>{const b=e.target.closest("button[data-tab]");if(!b)return;state.tab=b.dataset.tab;document.querySelectorAll("#outputTabs button").forEach(x=>x.classList.toggle("active",x===b));renderOutput()});
+$("zoomIn").onclick=()=>{state.zoom=Math.min(1.35,state.zoom+.1);$("zoomReset").textContent=Math.round(state.zoom*100)+"%";renderFlow()};
+$("zoomOut").onclick=()=>{state.zoom=Math.max(.7,state.zoom-.1);$("zoomReset").textContent=Math.round(state.zoom*100)+"%";renderFlow()};
+$("zoomReset").onclick=()=>{state.zoom=1;$("zoomReset").textContent="100%";renderFlow()};
+loadConfig();
+})();
+</script>
+</body>
+</html>
