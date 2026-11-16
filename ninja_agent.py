@@ -1210,16 +1210,16 @@ def recipe_list_technician_names(q):
 
 def recipe_search_people(q):
     """Search people inventories using the name only, excluding tenant/context words."""
-    text = re.sub(r"\\s+", " ", str(q).strip())
+    text = re.sub(r"\s+", " ", str(q).strip())
     match = re.search(
-        r"\\b(?:users?|people|accounts?|persons?)\\b.*?"
-        r"(?:\\bwith\\s+(?:the\\s+)?name\\s+|\\bnamed\\s+|\\bcalled\\s+)(.+?)\\s*$",
+        r"\b(?:users?|people|accounts?|persons?)\b.*?"
+        r"(?:\bwith\s+(?:the\s+)?name\s+|\bnamed\s+|\bcalled\s+)(.+?)\s*$",
         text, re.I,
     )
     if not match:
         return None
-    name = re.sub(r"\\s+(?:in|at)\\s+(?:ninjaone|the\\s+ninjaone\\s+tenant)\\s*$", "", match.group(1), flags=re.I)
-    name = name.strip(" \\t\\r\\n\\\"'.,!?")
+    name = re.sub(r"\s+(?:in|at)\s+(?:ninjaone|the\s+ninjaone\s+tenant)\s*$", "", match.group(1), flags=re.I)
+    name = name.strip(" \t\r\n\"'.,!?")
     if not name or len(name) < 2:
         return None
 
@@ -1266,8 +1266,7 @@ def recipe_search_people(q):
     total = f'{len(found)} exact NinjaOne person record(s) matched "{name}".'
     if partial_notes:
         total += " Results may be incomplete: " + "; ".join(dict.fromkeys(partial_notes))
-    return total + "\\n" + "\\n".join(lines)
-
+    return total + "\n" + "\n".join(lines)
 
 def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
