@@ -167,7 +167,7 @@ def discover_gateway() -> dict[str, Any]:
             models.append({"id": model_id, "label": model_id, "vision": vision_capable(model_id, item)})
         if configured_model and configured_model not in seen:
             models.insert(0, {"id": configured_model, "label": configured_model + " (configured)", 
-                              "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))})
+                              "vision": vision_capable(configured_model)})
         result.update(connected=True, models=models)
         if not models:
             result["error"] = "Gateway responded successfully but /models returned no model IDs; set LLM_GATEWAY_MODEL."
