@@ -75,6 +75,34 @@ def _try_fast_path(session_id, content):
     try:
         _ensure()
         question = _text(content)
+        # Supported write recipes must run before provider/model discovery. They
+        # resolve targets and call the normal spec-validated write preparation
+        # path, which creates a real pending action for the UI approval card.
+        write_result = core.recipe_add_device_access(question)
+        if write_result:
+            try:
+                prepared = json.loads(write_result)
+            except (TypeError, ValueError):
+                prepared = {}
+            if prepared.get("approval_required"):
+                return (
+                    f'Approval required: {prepared.get("summary", "Add the requested device access")}. '
+                    "Review the exact PATCH in the approval panel and choose Approve and execute. "
+                    "No change has been made yet.",
+                    [
+                        {"kind": "call", "tool": "call_api", "arguments": {
+                            "operation_id": prepared.get("operation_id"),
+                            "method": prepared.get("method"), "path": prepared.get("path"),
+                            "body": prepared.get("body"),
+                        }},
+                        {"kind": "result", "tool": "call_api", "result": write_result[:2500]},
+                        {"kind": "approval_required", "action": prepared},
+                    ],
+                )
+            return write_result, [
+                {"kind": "call", "tool": "add_device_access", "arguments": {"question": question}},
+                {"kind": "result", "tool": "add_device_access", "result": str(write_result)[:2500]},
+            ]
         try:
             answer = core.fast_path(question)
         except requests.RequestException:
