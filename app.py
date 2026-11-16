@@ -609,8 +609,10 @@ async def run_generic_mcp_read(tools, message: str):
                      "result": str(discovery)[:2500]})
     if not isinstance(discovery, dict):
         return None
-    semantic = discovery.get("semantic") or {}
-    selected = semantic.get("selected") if isinstance(semantic, dict) else None
+    semantic = discovery.get("semantic")
+    if not isinstance(semantic, dict):
+        return None
+    selected = semantic.get("selected")
     if semantic.get("mode") != "fuzzy_fast_path" or not isinstance(selected, list) or not selected:
         return None
     first = selected[0]
