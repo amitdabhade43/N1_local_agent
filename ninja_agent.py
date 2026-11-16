@@ -1357,14 +1357,27 @@ def recipe_add_device_access(q):
     This only creates the normal UI approval request; it never executes the PATCH.
     """
     text = re.sub(r"\s+", " ", str(q).strip())
+    # Accept both natural word orders:
+    # "add 2QN9BY3 access to PC Admin Rene Piuk" and
+    # "add device 2QN9BY3 to PC Admin Rene Piuk device access list".
     match = re.search(
         r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
         text, re.I,
     )
-    if not match:
-        return None
+    if match:
+        device_label, user_label = match.group(1), match.group(2)
+    else:
+        match = re.search(
+            r"\b(?:add|grant|give|provide)\s+(?:the\s+)?device\s+(.+?)\s+to\s+(.+?)"
+            r"(?:'s)?\s+(?:device\s+)?access(?:\s+list)?\s*$",
+            text, re.I,
+        )
+        if not match:
+            return None
+        device_label, user_label = match.group(1), match.group(2)
 
-    device_label, user_label = match.group(1).strip().strip("\'").strip('"'), match.group(2).strip()
+    device_label = device_label.strip().strip("\\'").strip('"')
+    user_label = user_label.strip().strip(" .")
     email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
     email = email_match.group(1).strip().lower() if email_match else ""
     user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
