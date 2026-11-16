@@ -62,7 +62,11 @@ def _try_fast_path(session_id, content):
     try:
         _ensure()
         question = _text(content)
-        answer = core.fast_path(question)
+        try:
+            answer = core.fast_path(question)
+        except requests.RequestException:
+            # A failed optional read shortcut must not prevent the model/tool route.
+            return None
         if not answer:
             return None
         return answer, [
