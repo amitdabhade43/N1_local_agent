@@ -130,6 +130,18 @@ def discover_gateway() -> dict[str, Any]:
     base_url = normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", ""))
     token = os.getenv("LLM_GATEWAY_API_KEY", "").strip()
     configured_model = os.getenv("LLM_GATEWAY_MODEL", "").strip()
+    configured_vision_models = {item.strip() for item in os.getenv("LLM_GATEWAY_VISION_MODELS", "").split(",") if item.strip()}
+    def vision_capable(model_id: str, metadata: Any = None) -> bool:
+        metadata = metadata if isinstance(metadata, dict) else {}
+        modalities = metadata.get("modalities") or metadata.get("input_modalities") or []
+        capability_text = " ".join(str(metadata.get(key, "")) for key in ("name", "description", "capabilities", "task"))
+        modality_values = modalities if isinstance(modalities, list) else [modalities]
+        return (
+            model_id in configured_vision_models
+            or metadata.get("vision") is True
+            or any(str(item).lower() in {"image", "vision"} for item in modality_values)
+            or bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", model_id + " " + capability_text, re.I))
+        )
     result = {"connected": False, "base_url": base_url or None, "models": [], "error": None,
               "configured": bool(base_url and token)}
     if not base_url:
@@ -138,7 +150,7 @@ def discover_gateway() -> dict[str, Any]:
     if not token:
         result["error"] = "LLM_GATEWAY_API_KEY is not configured."
         if configured_model:
-            result["models"] = [{"id": configured_model, "label": configured_model, "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))}]
+            result["models"] = [{"id": configured_model, "label": configured_model, "vision": vision_capable(configured_model)}]
         return result
     try:
         response = requests.get(base_url + "/models", headers={"Authorization": f"Bearer {token}"}, timeout=8)
@@ -152,8 +164,7 @@ def discover_gateway() -> dict[str, Any]:
             if not model_id or model_id in seen:
                 continue
             seen.add(model_id)
-            models.append({"id": model_id, "label": model_id,
-                           "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", model_id, re.I))})
+            models.append({"id": model_id, "label": model_id, "vision": vision_capable(model_id, item)})
         if configured_model and configured_model not in seen:
             models.insert(0, {"id": configured_model, "label": configured_model + " (configured)", 
                               "vision": bool(re.search(r"(?:^|[-_.])(vl|vision|multimodal)(?:$|[-_.])", configured_model, re.I))})
