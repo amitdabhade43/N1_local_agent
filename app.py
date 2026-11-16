@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.agents import create_agent
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -51,6 +51,7 @@ Execution strategy:
 - Verify filters, totals, pagination and requested fields against tool results before answering.
 - Retry only transient read failures when a retry is safe; do not repeat a potentially successful write after a timeout without checking its outcome.
 - Keep answers concise for simple questions and tailor tables/lists/selected fields to the requested deliverable.
+- If the previous assistant turn asked the user to choose between matching entities, treat the next reply as that clarification. Use conversation history to resolve the selected entity and complete the original request; never ask the user for internal operation IDs or endpoint names.
 
 For complex tasks:
 1. Identify the objective and any important scope constraints.
@@ -946,6 +947,20 @@ async def run_generic_mcp_read(tools, message: str):
     return answer, activity
 
 
+async def _record_mcp_direct_turn(session_id: str, message_content: Any, result):
+    """Keep direct MCP answers in chat history for multi-turn clarification."""
+    if result is None:
+        return
+    answer, _activity = result
+    async with _session_lock:
+        history = list(_sessions.get(session_id, []))
+        history.extend([
+            HumanMessage(content=message_content),
+            AIMessage(content=str(answer)),
+        ])
+        _sessions[session_id] = history[-MAX_STORED_MESSAGES:]
+
+
 async def try_direct_backend_request(session_id: str, message_content: Any):
     """Try a safe no-LLM route before model discovery/inference."""
     message_text = _text_from_content(message_content)
@@ -959,9 +974,13 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
-        return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+        result = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+        await _record_mcp_direct_turn(session_id, message_content, result)
+        return result
     try:
-        return await run_generic_mcp_read(tools, message_text)
+        result = await run_generic_mcp_read(tools, message_text)
+        await _record_mcp_direct_turn(session_id, message_content, result)
+        return result
     except Exception as exc:
         _logger.warning("MCP direct read preflight failed; handing off to model: %s", type(exc).__name__)
         return None
