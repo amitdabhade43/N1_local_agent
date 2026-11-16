@@ -1275,7 +1275,7 @@ def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
     text = str(q).strip().rstrip("?.! ")
     match = re.search(
-        r"\\b(?:users?|people|accounts?)\\b.*?\\b(?:with|having)\\s+(?:the\\s+)?name\\s+(.+)$",
+        r"\b(?:users?|people|accounts?)\b.*?\b(?:with|having)\s+(?:the\s+)?name\s+(.+)$",
         text, re.I
     )
     if not match:
