@@ -35,6 +35,29 @@ class NativeTextCallTests(unittest.TestCase):
         self.assertIn("7 NinjaOne user record(s)", answer)
         self.assertIn("rene@example.com", answer)
 
+    def test_organization_list_includes_ids_when_requested(self):
+        rows = [
+            {"id": 6, "name": "HOERBIGER"},
+            {"id": 7, "name": "HOERBIGER - Unattended"},
+        ]
+        with patch.object(ninja_agent, "op_by_path", return_value={"operationId": "getOrganizations"}), patch.object(
+            ninja_agent, "fetch", return_value=rows
+        ):
+            answer = ninja_agent.recipe_list_organizations(
+                "List all organizations and their IDs."
+            )
+        self.assertIn("HOERBIGER — ID: 6", answer)
+        self.assertIn("HOERBIGER - Unattended — ID: 7", answer)
+
+    def test_organization_names_only_request_remains_concise(self):
+        rows = [{"id": 6, "name": "HOERBIGER"}]
+        with patch.object(ninja_agent, "op_by_path", return_value={"operationId": "getOrganizations"}), patch.object(
+            ninja_agent, "fetch", return_value=rows
+        ):
+            answer = ninja_agent.recipe_list_organizations("List organization names.")
+        self.assertIn("1. HOERBIGER", answer)
+        self.assertNotIn("ID:", answer)
+
 
 if __name__ == "__main__":
     unittest.main()
