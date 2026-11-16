@@ -10,6 +10,7 @@ Reuses the spec index, tools and fast path from ninja_agent.py.
 import asyncio, hashlib, json, os, re
 
 import requests
+import httpx
 from fastapi import HTTPException
 from openai import OpenAI
 
@@ -97,7 +98,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
 
     activity = []
     hist = _sessions.get(session_id, [])[-6:]
-    system = core.SYSTEM + core.candidates(q) + "\nReply in plain text only (the UI shows raw text): no markdown, no bold, no tables." + ("\n/no_think" if core.NO_THINK else "")
+    system = core.SYSTEM + core.candidates(q) + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
     called = nudged = False
