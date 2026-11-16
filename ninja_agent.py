@@ -1698,6 +1698,49 @@ def recipe_devices_in(q):
     return f'{n} devices in {ms[0].get("name")}.'
 
 
+
+def recipe_count_device_prefix(q):
+    """Count device names by prefix using the complete spec-aware inventory fetch."""
+    text = (q or "").strip()
+    if not re.search(r"\\b(?:count|how many|number of|total)\\b", text, re.I):
+        return None
+    if not re.search(r"\\b(?:devices?|machines?|computers?|endpoints?)\\b", text, re.I):
+        return None
+
+    patterns = (
+        r"\\b(?:device|machine|computer|endpoint)s?\\b.*?\\b(?:names?|hostnames?)\\s+(?:start|starts|begin|begins)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
+        r"\\b(?:devices?|machines?|computers?|endpoints?)\\s+(?:that\\s+)?(?:start|starts|begin|begins)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
+        r"\\b(?:names?|hostnames?)\\s+(?:starting|beginning)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
+    )
+    match = next((re.search(pattern, text, re.I) for pattern in patterns
+                  if re.search(pattern, text, re.I)), None)
+    if not match:
+        return None
+
+    prefix = match.group(1).rstrip(".,;:!?")
+    if not prefix:
+        return None
+    operation = op_by_path("/v2/devices")
+    if not operation:
+        return None
+    fetched = fetch(operation, "/v2/devices", {})
+    name_fields = ("systemName", "name", "displayName", "hostname")
+    matched = 0
+    for row in fetched:
+        if not isinstance(row, dict):
+            continue
+        device_name = next((str(row.get(field)).strip() for field in name_fields
+                            if row.get(field) not in (None, "")), "")
+        if device_name.casefold().startswith(prefix.casefold()):
+            matched += 1
+
+    if getattr(fetched, "complete", True) is False:
+        return (f'At least {matched} devices have names starting with "{prefix}" in the returned page; '
+                f'the complete total is unknown.{_partial_note(fetched)}')
+    return f'{matched} devices have names starting with "{prefix}".'
+
+
+
 def fast_path(q):
     if GREET.match(q):
         return HELP
@@ -1719,7 +1762,7 @@ def fast_path(q):
             heading = f"{len(rows)} {label} in the returned result"
             return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_count_device_prefix, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
