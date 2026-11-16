@@ -139,10 +139,55 @@ def _try_fast_path(session_id, content):
         core.clear_active_session()
 
 
+def _record_fast_path_turn(session_id, content, result):
+    """Persist direct answers so a later turn can clarify or refer to them."""
+    if result is None:
+        return
+    answer, _activity = result
+    history = list(_sessions.get(session_id, []))
+    history.extend([
+        {"role": "user", "content": _text(content)},
+        {"role": "assistant", "content": str(answer)},
+    ])
+    _sessions[session_id] = history[-12:]
+
+
+_CLARIFICATION_RE = re.compile(
+    r"\bplease\s+(?:confirm\s+which|clarify)\b"
+    r"|\bwhich\s+(?:user|person|record|device|organization|technician|one)\b"
+    r"|\bmultiple\b.{0,160}\b(?:matches|match|records|users|devices)\b",
+    re.I | re.S,
+)
+
+
+def _has_pending_clarification(history):
+    """Recognize when the last assistant turn explicitly asked the user to disambiguate."""
+    for item in reversed(history or []):
+        if item.get("role") == "assistant":
+            return bool(_CLARIFICATION_RE.search(_text(item.get("content", ""))))
+        if item.get("role") == "user":
+            break
+    return False
+
+
+_CLARIFICATION_GUIDANCE = (
+    "\n\nCONVERSATION CLARIFICATION: Your previous answer asked the user to choose "
+    "between matching NinjaOne entities. The current user message is their clarification "
+    "for the original request. Read the prior user request and your clarification question "
+    "from conversation history, match the user's answer to one of the listed candidates, "
+    "then resolve that exact entity through the appropriate API tool and finish the original "
+    "request. Do not ask the user for operation IDs or endpoint names; those are internal. "
+    "If the answer does not uniquely identify a candidate, ask one concise follow-up."
+)
+
+
 async def try_fast_path(session_id, content):
     """Async preflight used by app.py before potentially slow model discovery."""
     try:
-        return await asyncio.to_thread(_try_fast_path, session_id, content)
+        result = await asyncio.to_thread(_try_fast_path, session_id, content)
+        if result is not None:
+            await asyncio.to_thread(_record_fast_path_turn, session_id, content, result)
+        return result
     except HTTPException:
         raise
     except Exception as exc:
@@ -205,7 +250,8 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
 
     activity = []
-    system = core.SYSTEM + core.candidates(q) + ("\n/no_think" if core.NO_THINK else "")
+    clarification_guidance = _CLARIFICATION_GUIDANCE if _has_pending_clarification(hist) else ""
+    system = core.SYSTEM + core.candidates(q) + clarification_guidance + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
     called = nudged = False
