@@ -20,11 +20,13 @@ _ready, _sessions, _clients = False, {}, {}
 
 
 # Cache clients by endpoint because Foundry can receive a new port after restart.
-def _client(base):
-    if base not in _clients:
-        _clients[base] = OpenAI(base_url=base, api_key=os.getenv("FOUNDRY_API_KEY", "local"),
-                                timeout=120, max_retries=0)
-    return _clients[base]
+def _client(base, api_key=None):
+    # Cache separately by endpoint and credential identity; never log credentials.
+    key = (base, api_key or "local")
+    if key not in _clients:
+        _clients[key] = OpenAI(base_url=base, api_key=api_key or os.getenv("FOUNDRY_API_KEY", "local"),
+                               timeout=120, max_retries=0)
+    return _clients[key]
 
 
 def _text(content):
@@ -44,7 +46,7 @@ def _ensure():
     _ready = True
 
 
-def _run_inner(session_id, model_id, content, base, progress=None):
+def _run_inner(session_id, model_id, content, base, progress=None, api_key=None):
     def emit(message, stage='working'):
         if progress:
             progress({'stage': stage, 'message': message})
@@ -94,7 +96,7 @@ def _run_inner(session_id, model_id, content, base, progress=None):
     steps_text = 0
     for step in range(MAX_STEPS):
         emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
-        m = _client(base).chat.completions.create(
+        m = _client(base, api_key).chat.completions.create(
             model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
         if not m.tool_calls:
             tc = core.text_call(m.content)
@@ -169,17 +171,17 @@ def _run_inner(session_id, model_id, content, base, progress=None):
                                      {"role": "assistant", "content": answer}])[-12:]
     return answer, activity
 
-def _run(session_id, model_id, content, base, progress=None):
+def _run(session_id, model_id, content, base, progress=None, api_key=None):
     core.set_active_session(session_id)
     try:
-        return _run_inner(session_id, model_id, content, base, progress)
+        return _run_inner(session_id, model_id, content, base, progress, api_key)
     finally:
         core.clear_active_session()
 
 
-async def run_native(session_id, model_id, content, base_url, progress=None):
+async def run_native(session_id, model_id, content, base_url, progress=None, api_key=None):
     try:
-        return await asyncio.to_thread(_run, session_id, model_id, content, base_url, progress)
+        return await asyncio.to_thread(_run, session_id, model_id, content, base_url, progress, api_key)
     except HTTPException:
         raise
     except Exception as exc:
