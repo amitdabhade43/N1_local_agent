@@ -18,6 +18,8 @@ Configure the gateway in your local, untracked `.env` file:
 LLM_PROVIDER=foundry
 LLM_GATEWAY_BASE_URL=https://llm-gateway.example.com/v1
 LLM_GATEWAY_API_KEY=your_gateway_token
+# Optional path to your company's PEM-encoded root/intermediate CA bundle
+LLM_GATEWAY_CA_BUNDLE=C:\\certificates\\company-root-ca.pem
 LLM_GATEWAY_MODEL=your_model_id
 # Optional, for vision models with non-descriptive IDs:
 LLM_GATEWAY_VISION_MODELS=model-id-1,model-id-2
@@ -26,6 +28,8 @@ LLM_GATEWAY_VISION_MODELS=model-id-1,model-id-2
 Set `LLM_GATEWAY_BASE_URL` to the API base URL (normally ending in `/v1`), not the full `/chat/completions` route. The agent queries `/models` to populate the model selector. `LLM_GATEWAY_MODEL` is an optional fallback when the gateway does not expose model discovery.
 
 The gateway must accept OpenAI-compatible `/chat/completions` requests with Bearer-token authentication. Tool/function calling is required for model-driven NinjaOne operations in both Native and MCP modes. Vision requests additionally require a gateway vision model. Capability is detected from model IDs/metadata where possible; set `LLM_GATEWAY_VISION_MODELS` to a comma-separated list when the gateway uses model IDs that do not identify vision support.
+
+For an internally issued TLS certificate, export the approved company root/intermediate CA certificate in PEM format and set `LLM_GATEWAY_CA_BUNDLE` to its local file path (for example, `C:\\certificates\\company-root-ca.pem`). This CA bundle is used for both `/models` discovery and inference requests to the configured gateway. Leave it blank for the normal system trust store. Do not use `verify=False` or disable TLS verification.
 
 The gateway token is read only by the backend and is never returned by the configuration endpoint or sent to browser JavaScript. Keep `.env` out of Git. Gateway inference sends prompts and any included NinjaOne context to that gateway, so confirm its data-handling policy before using it with production information. Foundry Local remains available as the local/private option.
 
