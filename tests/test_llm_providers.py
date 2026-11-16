@@ -38,6 +38,30 @@ class GatewayProviderTests(unittest.TestCase):
     @patch.dict(os.environ, {
         "LLM_GATEWAY_BASE_URL": "https://llm-gateway.example.com/v1",
         "LLM_GATEWAY_API_KEY": "secret-test-token",
+        "LLM_GATEWAY_MODEL": "",
+        "LLM_GATEWAY_VISION_MODELS": "custom-image-model",
+    }, clear=False)
+    @patch("app.requests.get")
+    def test_gateway_vision_detection_uses_metadata_and_override(self, get):
+        response = Mock()
+        response.json.return_value = {"data": [
+            {"id": "gpt-4o", "modalities": ["text", "image"]},
+            {"id": "custom-image-model"},
+            {"id": "text-only-model"},
+        ]}
+        response.raise_for_status.return_value = None
+        get.return_value = response
+
+        result = app.discover_gateway()
+        vision = {item["id"]: item["vision"] for item in result["models"]}
+
+        self.assertTrue(vision["gpt-4o"])
+        self.assertTrue(vision["custom-image-model"])
+        self.assertFalse(vision["text-only-model"])
+
+    @patch.dict(os.environ, {
+        "LLM_GATEWAY_BASE_URL": "https://llm-gateway.example.com/v1",
+        "LLM_GATEWAY_API_KEY": "secret-test-token",
         "LLM_GATEWAY_MODEL": "qwen3-14b",
     }, clear=False)
     @patch("app.discover_gateway")
