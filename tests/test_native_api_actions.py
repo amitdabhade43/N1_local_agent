@@ -369,3 +369,85 @@ class NativeApiActionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiDeviceAccessRecipeTests(unittest.TestCase):
+    def setUp(self):
+        self.user = {
+            "id": 31, "firstName": "PC Admin", "lastName": "Rene Piuk",
+            "email": "admin_pr@hoerbiger.com", "organizationId": 6,
+            "accessibleDeviceIds": [24],
+        }
+        self.devices = {
+            "2QN9BY3": {
+                "id": 32, "systemName": "2QN9BY3", "organizationId": 6,
+            },
+            "VM-6804B761": {
+                "id": 50, "systemName": "VM-6804B761", "organizationId": 7,
+            },
+        }
+
+    def _resolver(self, args):
+        if args["kind"] == "end_user":
+            if args["name"] == "PC Admin Rene Piuk":
+                return json.dumps({"matches": [self.user]})
+            return json.dumps({"matches": []})
+        row = self.devices.get(args["name"])
+        return json.dumps({"matches": [row] if row else []})
+
+    def test_multiple_devices_prepare_one_approval_patch(self):
+        operation = {
+            "id": "patchEndUserDeviceAccess",
+            "method": "PATCH",
+            "path": "/v2/user/end-user/{id}/device-access",
+        }
+        approval = {
+            "approval_required": True,
+            "action_id": "approval-123",
+            "method": "PATCH",
+            "path": "/v2/user/end-user/31/device-access",
+            "body": {"addDeviceIds": [32, 50]},
+        }
+        with patch.object(core, "OPS", {"patchEndUserDeviceAccess": operation}), \
+             patch.object(core, "t_resolve", side_effect=self._resolver), \
+             patch.object(core, "t_call", return_value=json.dumps(approval)) as call:
+            result = json.loads(core.recipe_add_device_access(
+                "add below systems to accessible device list for "
+                "PC Admin Rene Piuk 2QN9BY3 VM-6804B761"
+            ))
+
+        self.assertTrue(result["approval_required"])
+        call.assert_called_once()
+        self.assertEqual(call.call_args.args[0]["operation_id"], "patchEndUserDeviceAccess")
+        self.assertEqual(call.call_args.args[0]["path_params"], {"id": 31})
+        self.assertEqual(call.call_args.args[0]["body"], {"addDeviceIds": [32, 50]})
+        self.assertIn("2QN9BY3 (ID 32, org 6)", result["summary"])
+        self.assertIn("VM-6804B761 (ID 50, org 7)", result["summary"])
+        self.assertIn("cross-organization access", result["summary"])
+
+    def test_already_accessible_device_is_omitted_from_patch(self):
+        self.user["accessibleDeviceIds"] = [24, 32]
+        operation = {
+            "id": "patchEndUserDeviceAccess",
+            "method": "PATCH",
+            "path": "/v2/user/end-user/{id}/device-access",
+        }
+        approval = {
+            "approval_required": True,
+            "action_id": "approval-456",
+            "method": "PATCH",
+            "path": "/v2/user/end-user/31/device-access",
+            "body": {"addDeviceIds": [50]},
+        }
+        with patch.object(core, "OPS", {"patchEndUserDeviceAccess": operation}), \
+             patch.object(core, "t_resolve", side_effect=self._resolver), \
+             patch.object(core, "t_call", return_value=json.dumps(approval)) as call:
+            result = json.loads(core.recipe_add_device_access(
+                "add below systems to accessible device list for "
+                "PC Admin Rene Piuk 2QN9BY3 VM-6804B761"
+            ))
+
+        self.assertTrue(result["approval_required"])
+        self.assertEqual(call.call_args.args[0]["body"], {"addDeviceIds": [50]})
+        self.assertIn("Already accessible and omitted: 2QN9BY3", result["summary"])
+
