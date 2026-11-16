@@ -8,6 +8,25 @@ Local browser UI for Microsoft Foundry Local with two NinjaOne backends:
 
 The app discovers the running Foundry Local endpoint and loaded models. It runs `foundry server status`, queries the discovered `/v1/models` endpoint, and populates the model selector. Leave `FOUNDRY_BASE_URL` blank for automatic discovery. Use **Refresh Foundry models** after starting/loading models or restarting Foundry.
 
+## Optional OpenAI-compatible LLM Gateway
+
+Foundry Local and a remote OpenAI-compatible gateway can be used side by side. The provider selector in the browser UI chooses the inference provider for each chat request; it does not change the Native/MCP backend or NinjaOne API permissions.
+
+Configure the gateway in your local, untracked `.env` file:
+
+```dotenv
+LLM_PROVIDER=foundry
+LLM_GATEWAY_BASE_URL=https://llm-gateway.example.com/v1
+LLM_GATEWAY_API_KEY=your_gateway_token
+LLM_GATEWAY_MODEL=your_model_id
+```
+
+Set `LLM_GATEWAY_BASE_URL` to the API base URL (normally ending in `/v1`), not the full `/chat/completions` route. The agent queries `/models` to populate the model selector. `LLM_GATEWAY_MODEL` is an optional fallback when the gateway does not expose model discovery.
+
+The gateway must accept OpenAI-compatible `/chat/completions` requests with Bearer-token authentication. Tool/function calling is required for model-driven NinjaOne operations in both Native and MCP modes. Vision requests additionally require a gateway vision model; image capability is inferred from model IDs containing `vl`, `vision`, or `multimodal`.
+
+The gateway token is read only by the backend and is never returned by the configuration endpoint or sent to browser JavaScript. Keep `.env` out of Git. Gateway inference sends prompts and any included NinjaOne context to that gateway, so confirm its data-handling policy before using it with production information. Foundry Local remains available as the local/private option.
+
 Verify discovery in PowerShell:
 
 ```powershell
