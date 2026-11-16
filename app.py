@@ -690,6 +690,9 @@ async def run_generic_mcp_read(tools, message: str):
         labels = [_generic_record_label(record) for record in records[:50]]
         if labels:
             answer = f"NinjaOne returned {fetched_count} records for {resource}: " + ", ".join(labels)
+        elif fetched_count:
+            answer = (f"NinjaOne returned {fetched_count} records for {resource}, "
+                      "but the record preview was unavailable.")
         else:
             answer = f"NinjaOne returned no records for {resource}."
         if not complete:
