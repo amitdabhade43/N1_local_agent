@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock
+import os
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -51,6 +52,17 @@ async def test_generic_mcp_count_uses_discovery_schema_and_get_result():
     })
     tools[1].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
     tools[2].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
+
+
+@pytest.mark.asyncio
+async def test_generic_mcp_preflight_runs_before_provider_resolution():
+    tools = toolset()
+    with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
+        with patch.object(app, "get_tools", new=AsyncMock(return_value=tools)):
+            with patch.object(app, "detect_direct_tool_request", return_value=None):
+                result = await app.try_direct_backend_request("session-1", "How many devices?")
+
+    assert result[0] == "2 records returned by NinjaOne for that request."
 
 
 @pytest.mark.asyncio
