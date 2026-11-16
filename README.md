@@ -71,6 +71,19 @@ The OAuth app must actually be granted those scopes. Changing `.env` cannot gran
 4. Open `http://127.0.0.1:8080`.
 5. Select a loaded model and ask a NinjaOne question.
 
+## Request routing and performance
+
+Chat requests first check for a safe deterministic route before resolving or invoking an LLM:
+- Native mode can answer supported fast-path requests directly through the NinjaOne API.
+- MCP mode can answer supported simple inventory requests directly through the cached MCP tool catalog.
+- Requests that do not qualify continue through the selected model and the relevant Native or MCP execution adapter.
+
+Foundry discovery results are cached for 30 seconds after success and 3 seconds after failure. Gateway discovery results are cached for 30 seconds after success and 8 seconds after failure. The Foundry and Gateway refresh actions bypass these caches. Gateway cache durations can be overridden with `LLM_GATEWAY_DISCOVERY_CACHE_SECONDS` and `LLM_GATEWAY_ERROR_CACHE_SECONDS`.
+
+Execution activity includes elapsed-time metrics for direct MCP calls, Native model inference and Native NinjaOne tool calls. The server log records total request duration and MCP model-agent duration. These measurements help distinguish model latency from NinjaOne API latency.
+
+**MCP server boundary:** this repository contains the MCP client, routing and UI integration. The configured `MCP_URL` points to a separately hosted MCP server; changes here improve client-side discovery, routing and measurement, but do not change the server's own implementation or internal API pagination.
+
 ## Native OpenAPI backend
 
 Set `AGENT_BACKEND=native`. The bundled `ninja_spec.json` is the source of truth for endpoint discovery and request validation.
