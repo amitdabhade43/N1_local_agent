@@ -104,6 +104,40 @@ class NativeTextCallTests(unittest.TestCase):
         self.assertIn("1. HOERBIGER", answer)
         self.assertNotIn("ID:", answer)
 
+    def test_fast_count_never_claims_total_from_partial_page(self):
+        rows = ninja_agent.FetchRows([{"id": 1}], complete=False, note="cursor unavailable")
+        with patch.object(ninja_agent, "op_by_path", return_value={"id": "getDevices"}), patch.object(
+            ninja_agent, "fetch", return_value=rows
+        ):
+            answer = ninja_agent.fast_path("how many devices")
+        self.assertIn("At least 1", answer)
+        self.assertIn("total is unknown", answer)
+        self.assertIn("cursor unavailable", answer)
+
+    def test_named_user_count_marks_partial_matches_as_lower_bound(self):
+        payload = {
+            "total_matches": 3,
+            "matches": [{"firstName": "Rene", "lastName": "Example"}],
+            "partial": True,
+            "pagination_note": "Only the first page was returned.",
+        }
+        with patch.object(ninja_agent, "t_resolve", return_value=json.dumps(payload)):
+            answer = ninja_agent.recipe_count_named("how many users are there with name rene?")
+        self.assertIn("At least 3", answer)
+        self.assertIn("tenant-wide total is unknown", answer)
+        self.assertIn("Only the first page", answer)
+
+    def test_organization_list_discloses_partial_result(self):
+        rows = ninja_agent.FetchRows(
+            [{"id": 6, "name": "HOERBIGER"}], complete=False, note="pagination not documented"
+        )
+        with patch.object(ninja_agent, "op_by_path", return_value={"operationId": "getOrganizations"}), patch.object(
+            ninja_agent, "fetch", return_value=rows
+        ):
+            answer = ninja_agent.recipe_list_organizations("List organization names.")
+        self.assertIn("partial data only", answer.lower())
+        self.assertIn("HOERBIGER", answer)
+
 
 if __name__ == "__main__":
     unittest.main()
