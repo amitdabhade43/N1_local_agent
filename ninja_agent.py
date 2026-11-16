@@ -1352,95 +1352,169 @@ def recipe_find(q):
 
 
 def recipe_add_device_access(q):
-    """Prepare an explicit end-user device-access grant without relying on LLM tool selection.
+    """Prepare exact end-user device-access grants as one approval-only PATCH.
 
-    This only creates the normal UI approval request; it never executes the PATCH.
+    Supports one or many device system names. It never executes the mutation.
     """
-    text = re.sub(r"\s+", " ", str(q).strip())
-    # Accept both natural word orders:
-    # "add 2QN9BY3 access to PC Admin Rene Piuk" and
-    # "add device 2QN9BY3 to PC Admin Rene Piuk device access list".
-    match = re.search(
-        r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
+    text = re.sub(r"\s+", " ", str(q).strip()).strip(" .!?")
+    multi = re.search(
+        r"^(?:please\s+)?(?:add|grant|give|provide)\s+"
+        r"(?:(?:the\s+)?(?:below|following)\s+)?"
+        r"(?:systems|devices|computers|machines|endpoints)\s+to\s+"
+        r"(?:the\s+)?accessible\s+device\s+list\s+for\s+(.+)$",
         text, re.I,
     )
-    if match:
-        device_label, user_label = match.group(1), match.group(2)
-    else:
-        match = re.search(
-            r"\b(?:add|grant|give|provide)\s+(?:the\s+)?device\s+(.+?)\s+to\s+(.+?)"
-            r"(?:'s)?\s+(?:device\s+)?access(?:\s+list)?\s*$",
-            text, re.I,
-        )
-        if not match:
-            return None
-        device_label, user_label = match.group(1), match.group(2)
-
-    device_label = device_label.strip().strip("\\'").strip('"')
-    user_label = user_label.strip().strip(" .")
-    email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
-    email = email_match.group(1).strip().lower() if email_match else ""
-    user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
-    if not device_label or not user_name:
-        return "Please provide both a device name and an end-user name."
 
     def normalized(value):
         return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
 
-    # Resolve the end-user using the email when supplied, then require an exact match.
-    lookup = email or user_name
-    try:
-        user_result = json.loads(t_resolve({"kind": "end_user", "name": lookup}))
-    except Exception as exc:
-        return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
-    user_matches = user_result.get("matches") or []
-    exact_users = [
-        row for row in user_matches
-        if (email and str(row.get("email", "")).strip().lower() == email)
-        or (not email and normalized(row_name(row)) == normalized(user_name))
-    ]
-    if not exact_users:
-        if user_matches:
-            return f'No exact end-user match for "{user_label}". Closest result: {row_name(user_matches[0])}. No change was prepared.'
-        return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
-    if len(exact_users) != 1:
-        return f'Multiple exact end-user records matched "{user_label}". Please clarify before changing access.'
-    user = exact_users[0]
+    def exact_user_rows(label):
+        result = json.loads(t_resolve({"kind": "end_user", "name": label}))
+        return [
+            row for row in (result.get("matches") or [])
+            if normalized(row_name(row)) == normalized(label)
+        ]
+
+    def exact_device_rows(label):
+        result = json.loads(t_resolve({"kind": "device", "name": label}))
+        exact = []
+        for row in (result.get("matches") or []):
+            labels = (
+                row.get("systemName"), row.get("displayName"), row.get("dnsName"),
+                row.get("netbiosName"), row.get("serialNumber"), row.get("name"),
+            )
+            if any(normalized(value) == normalized(label) for value in labels if value):
+                exact.append(row)
+        return exact
+
+    user_label = ""
+    device_labels = []
+    user = None
+
+    if multi:
+        # System names are single whitespace-delimited identifiers in NinjaOne.
+        # Try each possible user/device boundary, accepting only an exact user
+        # name followed by exact device matches. Never use fuzzy matches for writes.
+        tail = multi.group(1).strip()
+        tokens = [token.strip(" ,;") for token in tail.split() if token.strip(" ,;")]
+        if len(tokens) < 2:
+            return "Please provide an exact end-user name followed by one or more device system names. No change was prepared."
+        partitions = []
+        for split_at in range(1, len(tokens)):
+            candidate_user = " ".join(tokens[:split_at]).strip(" ,;")
+            candidate_devices = [token.strip(" ,;") for token in tokens[split_at:]]
+            try:
+                users = exact_user_rows(candidate_user)
+            except Exception as exc:
+                return f"Could not resolve the end user: {type(exc).__name__}: {exc}. No change was prepared."
+            if len(users) != 1:
+                continue
+            resolved_devices = []
+            valid = True
+            for label in candidate_devices:
+                try:
+                    matches = exact_device_rows(label)
+                except Exception as exc:
+                    return f'Could not resolve device "{label}": {type(exc).__name__}: {exc}. No change was prepared.'
+                if len(matches) != 1:
+                    valid = False
+                    break
+                resolved_devices.append(matches[0])
+            if valid:
+                partitions.append((candidate_user, users[0], candidate_devices, resolved_devices))
+        if not partitions:
+            return (
+                "I could not split that request into one exact end-user name and exact device system names. "
+                "Please use: add below systems to accessible device list for <end-user name> <device1> <device2>. "
+                "No change was prepared."
+            )
+        if len(partitions) != 1:
+            return "More than one exact end-user/device interpretation matched. Please clarify the end-user and device names. No change was prepared."
+        user_label, user, device_labels, devices = partitions[0]
+    else:
+        # Retain the existing single-device natural-language forms.
+        match = re.search(
+            r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
+            text, re.I,
+        )
+        if match:
+            device_label, user_label = match.group(1), match.group(2)
+        else:
+            match = re.search(
+                r"\b(?:add|grant|give|provide)\s+(?:the\s+)?device\s+(.+?)\s+to\s+(.+?)"
+                r"(?:'s)?\s+(?:device\s+)?access(?:\s+list)?\s*$",
+                text, re.I,
+            )
+            if not match:
+                return None
+            device_label, user_label = match.group(1), match.group(2)
+
+        device_label = device_label.strip().strip("\\'").strip('"')
+        user_label = user_label.strip().strip(" .")
+        email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
+        email = email_match.group(1).strip().lower() if email_match else ""
+        user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
+        if not device_label or not user_name:
+            return "Please provide both a device name and an end-user name."
+        try:
+            lookup = email or user_name
+            user_result = json.loads(t_resolve({"kind": "end_user", "name": lookup}))
+        except Exception as exc:
+            return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
+        exact_users = [
+            row for row in (user_result.get("matches") or [])
+            if (email and str(row.get("email", "")).strip().lower() == email)
+            or (not email and normalized(row_name(row)) == normalized(user_name))
+        ]
+        if not exact_users:
+            if user_result.get("matches"):
+                return f'No exact end-user match for "{user_label}". Closest result: {row_name(user_result["matches"][0])}. No change was prepared.'
+            return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
+        if len(exact_users) != 1:
+            return f'Multiple exact end-user records matched "{user_label}". Please clarify before changing access.'
+        user = exact_users[0]
+        try:
+            devices = exact_device_rows(device_label)
+        except Exception as exc:
+            return f"Could not resolve the device: {type(exc).__name__}: {exc}"
+        if not devices:
+            return f'No exact device match for "{device_label}". No change was prepared.'
+        if len(devices) != 1:
+            return f'Multiple exact device records matched "{device_label}". Please clarify before changing access.'
+        device_labels = [device_label]
+
     user_id = user.get("id")
     if not isinstance(user_id, int) and not str(user_id or "").isdigit():
         return "The matched end-user record has no numeric NinjaOne ID. No change was prepared."
+    user_id = int(user_id)
 
-    # Resolve the requested device name to its exact numeric NinjaOne device ID.
-    try:
-        device_result = json.loads(t_resolve({"kind": "device", "name": device_label}))
-    except Exception as exc:
-        return f"Could not resolve the device: {type(exc).__name__}: {exc}"
-    device_matches = device_result.get("matches") or []
-    exact_devices = []
-    for row in device_matches:
-        labels = (
-            row.get("systemName"), row.get("displayName"), row.get("dnsName"),
-            row.get("netbiosName"), row.get("serialNumber"), row.get("name"),
-        )
-        if any(normalized(label) == normalized(device_label) for label in labels if label):
-            exact_devices.append(row)
-    if not exact_devices:
-        if device_matches:
-            return f'No exact device match for "{device_label}". Closest result: {row_name(device_matches[0])}. No change was prepared.'
-        return f'No NinjaOne device matched "{device_label}". No change was prepared.'
-    if len(exact_devices) != 1:
-        return f'Multiple exact device records matched "{device_label}". Please clarify before changing access.'
-    device = exact_devices[0]
-    device_id = device.get("id")
-    if not isinstance(device_id, int) and not str(device_id or "").isdigit():
-        return "The matched device has no numeric NinjaOne ID. No change was prepared."
-    device_id = int(device_id)
+    if len(devices) > 100:
+        return f"{len(devices)} devices were requested, but NinjaOne allows at most 100 device IDs per PATCH. No change was prepared."
 
     accessible_ids = user.get("accessibleDeviceIds")
     if not isinstance(accessible_ids, list):
         return "The end-user lookup did not return accessibleDeviceIds. I cannot safely check for duplicate access; no change was prepared."
-    if device_id in [int(value) for value in accessible_ids if str(value).isdigit()]:
-        return f'{row_name(user)} already has access to {row_name(device)} (device ID {device_id}). No change is needed.'
+    existing_ids = {int(value) for value in accessible_ids if str(value).isdigit()}
+
+    unique_devices = {}
+    for label, device in zip(device_labels, devices):
+        device_id = device.get("id")
+        if not isinstance(device_id, int) and not str(device_id or "").isdigit():
+            return f'The matched device "{label}" has no numeric NinjaOne ID. No change was prepared.'
+        unique_devices[int(device_id)] = (label, device)
+
+    already_accessible = [
+        (label, device) for device_id, (label, device) in unique_devices.items()
+        if device_id in existing_ids
+    ]
+    new_devices = [
+        (device_id, label, device)
+        for device_id, (label, device) in unique_devices.items()
+        if device_id not in existing_ids
+    ]
+    if not new_devices:
+        names = ", ".join(row_name(device) for _label, device in already_accessible)
+        return f'{row_name(user)} already has access to all requested device(s): {names}. No change is needed.'
 
     op = next((
         operation for operation in OPS.values()
@@ -1451,12 +1525,13 @@ def recipe_add_device_access(q):
         return "The bundled NinjaOne API catalog does not contain the documented end-user device-access PATCH. No change was prepared."
 
     path_params = {
-        name: int(user_id) for name in re.findall(r"\{([^}]+)\}", op["path"])
+        name: user_id for name in re.findall(r"\{([^}]+)\}", op["path"])
     }
+    add_ids = [device_id for device_id, _label, _device in new_devices]
     prepared_raw = t_call({
         "operation_id": op["id"],
         "path_params": path_params,
-        "body": {"addDeviceIds": [device_id]},
+        "body": {"addDeviceIds": add_ids},
     })
     try:
         prepared = json.loads(prepared_raw)
@@ -1464,12 +1539,30 @@ def recipe_add_device_access(q):
         return f"Could not prepare the access change: {prepared_raw}"
     if not prepared.get("approval_required"):
         return f"Could not prepare the access change: {prepared_raw}"
+
+    user_org = user.get("organizationId")
+    device_orgs = sorted({
+        str(device.get("organizationId"))
+        for _device_id, _label, device in new_devices
+        if device.get("organizationId") is not None
+    })
+    target_text = ", ".join(
+        f'{row_name(device)} (ID {device_id}, org {device.get("organizationId", "unknown")})'
+        for device_id, _label, device in new_devices
+    )
+    org_note = ""
+    if user_org is not None and any(str(user_org) != org for org in device_orgs):
+        org_note = f" Note: end user is in organization {user_org}, while one or more target devices are in organization(s) {', '.join(device_orgs)}; verify this cross-organization access is intended before approving."
+    already_note = (
+        " Already accessible and omitted: " +
+        ", ".join(row_name(device) for _label, device in already_accessible) + "."
+        if already_accessible else ""
+    )
     prepared["summary"] = (
         f'Add device access for {row_name(user)} ({user.get("email", "no email")}) '
-        f'to {row_name(device)} (device ID {device_id})'
+        f'to {len(add_ids)} device(s): {target_text}.{already_note}{org_note}'
     )
     return json.dumps(prepared, default=str)
-
 
 def recipe_person_device_access(q):
     """Resolve a named end user and report the complete accessible/assigned device lists."""
