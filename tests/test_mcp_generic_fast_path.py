@@ -34,6 +34,8 @@ def test_generic_read_gate_allows_simple_count_and_blocks_scoped_requests():
     assert app.is_simple_generic_read("How many devices are there?")
     assert app.is_simple_generic_read("How many users in NinjaOne?")
     assert not app.is_simple_generic_read("List devices assigned to Rene")
+    assert not app.is_simple_generic_read("List devices from organization 6")
+    assert not app.is_simple_generic_read("How many users for organization 6?")
     assert not app.is_simple_generic_read("Count devices with names starting with VM")
     assert not app.is_simple_generic_read("Compare users and devices")
 
