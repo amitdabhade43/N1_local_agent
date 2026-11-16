@@ -719,16 +719,13 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
     return tool.name, {}, operation, fields
 
 
-async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, fields: list[str] | None = None, progress_callback=None):
+async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, fields: list[str] | None = None):
     tools = await get_tools()
     tool = next((t for t in tools if t.name == tool_name), None)
     if tool is None:
         raise HTTPException(status_code=502, detail=f"MCP tool not found: {tool_name}")
 
     started = time.perf_counter()
-    if progress_callback:
-        progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}',
-                           'activity_event': {'kind': 'call', 'tool': tool_name, 'arguments': arguments}})
     try:
         raw_result = await tool.ainvoke(arguments)
     except Exception as exc:
@@ -737,12 +734,6 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     parsed = parse_mcp_result(raw_result)
     records = _flatten_records(parsed)
     elapsed = time.perf_counter() - started
-    if progress_callback:
-        progress_callback({'stage': 'result', 'message': f'Received result from {tool_name}.',
-                           'activity_event': {'kind': 'result', 'tool': tool_name, 'result': str(parsed)[:4000]}})
-        progress_callback({'stage': 'result', 'message': f'{tool_name} completed in {elapsed * 1000:.1f} ms.',
-                           'activity_event': {'kind': 'metric', 'stage': 'mcp_tool', 'tool': tool_name,
-                                              'elapsed_ms': round(elapsed * 1000, 1)}})
     activity = [
         {"kind": "call", "tool": tool_name, "arguments": arguments},
         {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]},
@@ -1046,7 +1037,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         tool_name, arguments, operation, fields = direct_request
         if progress_callback:
             progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}'})
-        direct_answer, direct_activity = await run_direct_mcp_tool(tool_name, arguments, operation, fields, progress_callback)
+        direct_answer, direct_activity = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
         if progress_callback:
             progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
         return direct_answer, direct_activity
@@ -1061,57 +1052,12 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     started = time.perf_counter()
     try:
         if progress_callback:
-            progress_callback({'stage': 'model', 'message': 'The LLM is evaluating the request and deciding whether tools are needed.'})
-        from langchain_core.callbacks import BaseCallbackHandler
-
-        class LiveActivityCallback(BaseCallbackHandler):
-            def __init__(self):
-                self.tool_runs = {}
-
-            def on_chat_model_start(self, serialized, messages, **kwargs):
-                if progress_callback:
-                    progress_callback({'stage': 'model', 'message': 'LLM inference started.'})
-
-            def on_llm_end(self, response, **kwargs):
-                if progress_callback:
-                    progress_callback({'stage': 'model', 'message': 'LLM response received; checking the next action.'})
-
-            def on_tool_start(self, serialized, input_str, run_id=None, **kwargs):
-                identifier = (serialized or {}).get('id') or []
-                if isinstance(identifier, (list, tuple)):
-                    identifier = identifier[-1] if identifier else 'NinjaOne tool'
-                name = (serialized or {}).get('name') or str(identifier).rsplit('.', 1)[-1]
-                try:
-                    arguments = json.loads(input_str) if isinstance(input_str, str) else input_str
-                except (TypeError, ValueError):
-                    arguments = input_str
-                self.tool_runs[str(run_id)] = (name, time.perf_counter())
-                if progress_callback:
-                    event = {'kind': 'call', 'tool': name, 'arguments': arguments}
-                    progress_callback({'stage': 'tool', 'message': f'Calling NinjaOne tool: {name}', 'activity_event': event})
-
-            def on_tool_end(self, output, run_id=None, **kwargs):
-                name, began = self.tool_runs.pop(str(run_id), ('NinjaOne tool', time.perf_counter()))
-                elapsed_ms = round((time.perf_counter() - began) * 1000, 1)
-                result_text = str(output)[:2500]
-                if progress_callback:
-                    result_event = {'kind': 'result', 'tool': name, 'result': result_text}
-                    progress_callback({'stage': 'result', 'message': f'Received result from {name}.', 'activity_event': result_event})
-                    metric = {'kind': 'metric', 'stage': 'ninjaone_tool', 'tool': name, 'elapsed_ms': elapsed_ms}
-                    progress_callback({'stage': 'result', 'message': f'{name} completed in {elapsed_ms:.1f} ms.', 'activity_event': metric})
-
-            def on_tool_error(self, error, run_id=None, **kwargs):
-                name, began = self.tool_runs.pop(str(run_id), ('NinjaOne tool', time.perf_counter()))
-                elapsed_ms = round((time.perf_counter() - began) * 1000, 1)
-                if progress_callback:
-                    event = {'kind': 'result', 'tool': name, 'result': f'ERROR: {type(error).__name__}: {error}'}
-                    progress_callback({'stage': 'error', 'message': f'{name} failed: {error}', 'activity_event': event})
-
+            progress_callback({'stage': 'model', 'message': 'The agent is working through the request.'})
         session_context_token = _mcp_active_session.set(session_id)
         try:
             result = await agent.ainvoke(
                 {"messages": history},
-                config={"recursion_limit": AGENT_RECURSION_LIMIT, "callbacks": [LiveActivityCallback()]},
+                config={"recursion_limit": AGENT_RECURSION_LIMIT},
             )
         finally:
             _mcp_active_session.reset(session_context_token)
