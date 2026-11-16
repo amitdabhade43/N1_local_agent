@@ -35,6 +35,15 @@ class NativeTextCallTests(unittest.TestCase):
         self.assertIn("7 NinjaOne user record(s)", answer)
         self.assertIn("rene@example.com", answer)
 
+    def test_named_user_count_strips_ninjaone_context(self):
+        payload = {"total_matches": 1, "matches": [
+            {"id": 2, "firstName": "Richard", "lastName": "Otrebski", "email": "richard.ot@ger.com"}
+        ]}
+        with patch.object(ninja_agent, "t_resolve", return_value=json.dumps(payload)) as resolve:
+            answer = ninja_agent.recipe_count_named("How many users with name Richard in NinjaOne?")
+        self.assertEqual(resolve.call_args.args[0]["name"], "Richard")
+        self.assertIn("1 NinjaOne user record(s)", answer)
+
     def test_people_search_extracts_name_and_excludes_similar_names(self):
         payloads = {
             "user": {"matches": [
