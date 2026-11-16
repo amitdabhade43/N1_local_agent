@@ -25,8 +25,15 @@ def _client(base, api_key=None):
     credential_fingerprint = hashlib.sha256((api_key or os.getenv("FOUNDRY_API_KEY", "local")).encode("utf-8")).hexdigest()[:16]
     key = (base, credential_fingerprint)
     if key not in _clients:
+        client_options = {}
+        gateway_base = os.getenv("LLM_GATEWAY_BASE_URL", "").strip().rstrip("/")
+        gateway_base = gateway_base.removesuffix("/chat/completions").removesuffix("/models").rstrip("/")
+        if gateway_base and base.rstrip("/").lower() == gateway_base.lower():
+            ca_bundle = os.getenv("LLM_GATEWAY_CA_BUNDLE", "").strip()
+            if ca_bundle:
+                client_options["http_client"] = httpx.Client(verify=ca_bundle, timeout=120)
         _clients[key] = OpenAI(base_url=base, api_key=api_key or os.getenv("FOUNDRY_API_KEY", "local"),
-                               timeout=120, max_retries=0)
+                               timeout=120, max_retries=0, **client_options)
     return _clients[key]
 
 
