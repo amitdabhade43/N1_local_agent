@@ -1,15 +1,19 @@
 import asyncio
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import threading
 import time
 import requests
 import httpx
 import uuid
+from contextvars import ContextVar
+from urllib.parse import quote, urlsplit
 from typing import Any
 
 from dotenv import load_dotenv
@@ -18,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.agents import create_agent
 from langchain_core.messages import HumanMessage
+from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel
@@ -103,7 +108,14 @@ _GATEWAY_ERROR_CACHE_TTL_SECONDS = max(2.0, float(os.getenv("LLM_GATEWAY_ERROR_C
 # one test, environment change, or provider configuration from reusing another
 # gateway's model list. Credentials are represented only by a one-way digest.
 _gateway_discovery_cache: dict[str, Any] = {"at": 0.0, "value": None, "key": None}
+
 _gateway_discovery_lock = threading.Lock()
+
+# MCP mutations are held in this process until the user clicks the approval card.
+# The approval secret is never passed to the model or exposed in tool schemas.
+_mcp_pending_actions: dict[str, dict[str, Any]] = {}
+_mcp_pending_lock = threading.Lock()
+_mcp_active_session: ContextVar[str | None] = ContextVar("mcp_active_session", default=None)
 
 
 class ChatRequest(BaseModel):
@@ -310,6 +322,211 @@ async def get_tools():
         return _tools
 
 
+def _mcp_write_request(tool_name: str, arguments: dict[str, Any]):
+    """Return (method, concrete_path, body) only for schema-driven MCP write tools."""
+    short_name = tool_name.rsplit("__", 1)[-1].casefold()
+    if short_name == "execute_endpoint":
+        endpoint = str(arguments.get("endpoint") or "").strip()
+        parts = endpoint.split(None, 1)
+        if len(parts) != 2:
+            return None
+        method, template = parts[0].upper(), parts[1]
+        path_params = arguments.get("path_params") or {}
+        if not isinstance(path_params, dict):
+            return None
+        missing = re.findall(r"\{([^}]+)\}", template)
+        if any(name not in path_params or path_params[name] is None for name in missing):
+            return None
+        path = re.sub(
+            r"\{([^}]+)\}",
+            lambda match: quote(str(path_params[match.group(1)]), safe=""),
+            template,
+        )
+        return method, path, arguments.get("body")
+    if short_name == "execute_raw_request":
+        request = str(arguments.get("request") or "").strip()
+        parts = request.split(None, 1)
+        if len(parts) != 2:
+            return None
+        method = parts[0].upper()
+        split = urlsplit(parts[1])
+        if split.scheme or split.netloc or not split.path.startswith("/"):
+            return None
+        return method, split.path, arguments.get("body")
+    return None
+
+
+def _mcp_approval_action(session_id: str, tool: Any, arguments: dict[str, Any],
+                         method: str, path: str, body: Any) -> dict[str, Any]:
+    action_id = secrets.token_urlsafe(24)
+    summary = getattr(tool, "description", "") or f"Execute {method} {path}"
+    action = {
+        "action_id": action_id,
+        "session_id": session_id,
+        "tool": tool,
+        "arguments": {key: value for key, value in arguments.items() if key != "approval_token"},
+        "method": method,
+        "path": path,
+        "body": body,
+        "summary": summary[:240],
+        "expires_at": time.time() + 600,
+    }
+    with _mcp_pending_lock:
+        now = time.time()
+        expired = [key for key, value in _mcp_pending_actions.items()
+                   if now > value.get("expires_at", 0)]
+        for key in expired:
+            _mcp_pending_actions.pop(key, None)
+        if len(_mcp_pending_actions) >= 100:
+            raise RuntimeError("Too many pending MCP approvals. Approve, reject, or clear an existing request first.")
+        _mcp_pending_actions[action_id] = action
+    return {
+        "approval_required": True,
+        "action_id": action_id,
+        "method": method,
+        "path": path,
+        "summary": action["summary"],
+        "query": action["arguments"].get("query") or {},
+        "headers": {},
+        "body": body,
+        "media_type": "application/json",
+        "expires_in_seconds": 600,
+        "note": "The request has NOT been executed. Use the Approve and execute or Reject button in the chat UI.",
+    }
+
+
+def wrap_mcp_write_tools(tools):
+    """Wrap MCP write executors so the model can prepare, but never self-approve, writes."""
+    wrapped = []
+    for tool in tools:
+        if tool.name.rsplit("__", 1)[-1].casefold() not in {"execute_endpoint", "execute_raw_request"}:
+            wrapped.append(tool)
+            continue
+
+        async def invoke_write_tool(_tool=tool, **arguments):
+            try:
+                target = _mcp_write_request(_tool.name, arguments)
+                if target is None:
+                    # Let the MCP schema validator report missing/invalid request fields.
+                    safe_arguments = {key: value for key, value in arguments.items() if key != "approval_token"}
+                    return await _tool.ainvoke(safe_arguments)
+                method, path, body = target
+                if method == "DELETE":
+                    return json.dumps({"error": "DELETE operations are blocked and cannot be prepared or executed.",
+                                       "executed": False})
+                if method == "GET":
+                    safe_arguments = {key: value for key, value in arguments.items() if key != "approval_token"}
+                    return await _tool.ainvoke(safe_arguments)
+                if method not in {"POST", "PUT", "PATCH"}:
+                    return json.dumps({"error": f"Unsupported write method {method}.", "executed": False})
+                session_id = _mcp_active_session.get()
+                if not session_id:
+                    return json.dumps({"error": "No active chat session is associated with this approval request.",
+                                       "executed": False})
+                if not os.getenv("NINJA_MCP_APPROVAL_SECRET", "").strip():
+                    return json.dumps({
+                        "error": "MCP writes are disabled until NINJA_MCP_APPROVAL_SECRET is configured in the Local Agent environment and the MCP server environment.",
+                        "executed": False,
+                    })
+                action = _mcp_approval_action(session_id, _tool, arguments, method, path, body)
+                return json.dumps(action, ensure_ascii=False, default=str)
+            except Exception as exc:
+                _logger.exception("Could not prepare MCP approval request")
+                return json.dumps({"error": f"Could not prepare approval request: {type(exc).__name__}: {exc}",
+                                   "executed": False})
+
+        try:
+            wrapped.append(StructuredTool.from_function(
+                coroutine=invoke_write_tool,
+                name=tool.name,
+                description=(tool.description or "") + (
+                    "\nFor POST/PUT/PATCH, call this tool with the validated request but do not supply an approval token. "
+                    "The Local Agent will create a pending human approval card. DELETE is blocked."
+                ),
+                args_schema=tool.args_schema,
+                infer_schema=False,
+            ))
+        except Exception:
+            # Fail closed: never expose an unwrapped write executor to the model.
+            _logger.exception("Could not install approval wrapper for MCP tool %s; hiding the unwrapped tool", tool.name)
+    return wrapped
+
+
+def _mint_mcp_approval_token(method: str, path: str, body: Any) -> str:
+    secret = os.getenv("NINJA_MCP_APPROVAL_SECRET", "").strip()
+    if not secret:
+        raise RuntimeError("NINJA_MCP_APPROVAL_SECRET is not configured.")
+    body_json = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    payload = {
+        "method": method.upper(),
+        "path": path,
+        "body_sha256": hashlib.sha256(body_json).hexdigest(),
+        "exp": int(time.time()) + 300,
+        "jti": secrets.token_urlsafe(18),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    signature = hmac.new(secret.encode("utf-8"), encoded.encode("ascii"), hashlib.sha256).digest()
+    signed = base64.urlsafe_b64encode(signature).decode("ascii").rstrip("=")
+    return encoded + "." + signed
+
+
+async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[str, Any]:
+    with _mcp_pending_lock:
+        action = _mcp_pending_actions.get(action_id)
+        if not action:
+            return {"ok": False, "error": "Approval request not found or already used."}
+        if action.get("session_id") != session_id:
+            return {"ok": False, "error": "Approval request belongs to a different chat session."}
+        if time.time() > action.get("expires_at", 0):
+            _mcp_pending_actions.pop(action_id, None)
+            return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
+        # Consume before execution: repeated clicks cannot submit the write twice.
+        _mcp_pending_actions.pop(action_id, None)
+
+    try:
+        token = _mint_mcp_approval_token(action["method"], action["path"], action.get("body"))
+        arguments = dict(action["arguments"])
+        arguments["approval_token"] = token
+        raw_result = await action["tool"].ainvoke(arguments)
+        result = parse_mcp_result(raw_result)
+        if isinstance(result, dict):
+            ok = bool(result.get("executed")) and not result.get("error")
+            response = {"ok": ok, "result": result}
+            if ok and action["method"] == "PATCH" and action["path"] == "/v2/user/end-user/" + str(
+                (action["arguments"].get("path_params") or {}).get("id")
+            ) + "/device-access":
+                data = result.get("data")
+                accessible = data.get("accessibleDeviceIds") if isinstance(data, dict) else None
+                body = action.get("body") or {}
+                adds = body.get("addDeviceIds") or []
+                removes = body.get("removeDeviceIds") or []
+                if isinstance(accessible, list):
+                    response["verified"] = (
+                        all(value in accessible for value in adds)
+                        and all(value not in accessible for value in removes)
+                    )
+                    response["verification"] = {
+                        "accessibleDeviceIds": accessible,
+                        "added_ids_present": all(value in accessible for value in adds),
+                        "removed_ids_absent": all(value not in accessible for value in removes),
+                    }
+            return response
+        return {"ok": False, "error": "MCP write tool returned an unrecognized response.", "result": result}
+    except Exception as exc:
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def reject_mcp_pending_action(action_id: str, session_id: str) -> bool:
+    with _mcp_pending_lock:
+        action = _mcp_pending_actions.get(action_id)
+        if not action or action.get("session_id") != session_id:
+            return False
+        _mcp_pending_actions.pop(action_id, None)
+        return True
+
+
 def get_model(model_id: str, base_url: str, api_key: str | None = None):
     client_options = {}
     if is_gateway_base_url(base_url) and gateway_ca_bundle():
@@ -334,7 +551,7 @@ async def get_agent(model_id: str, base_url: str, tools, api_key: str | None = N
         if cache_key not in _agents:
             _agents[cache_key] = create_agent(
                 model=get_model(model_id, base_url, api_key),
-                tools=tools,
+                tools=wrap_mcp_write_tools(tools),
                 system_prompt=SYSTEM_PROMPT,
             )
         return _agents[cache_key]
@@ -789,10 +1006,14 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     try:
         if progress_callback:
             progress_callback({'stage': 'model', 'message': 'The agent is working through the request.'})
-        result = await agent.ainvoke(
-            {"messages": history},
-            config={"recursion_limit": AGENT_RECURSION_LIMIT},
-        )
+        session_context_token = _mcp_active_session.set(session_id)
+        try:
+            result = await agent.ainvoke(
+                {"messages": history},
+                config={"recursion_limit": AGENT_RECURSION_LIMIT},
+            )
+        finally:
+            _mcp_active_session.reset(session_context_token)
     except Exception as exc:
         raise HTTPException(
             status_code=502,
@@ -827,18 +1048,39 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                     "arguments": call.get("args", {}),
                 })
         elif getattr(msg, "type", "") == "tool":
+            tool_result = getattr(msg, "content", "")
             activity.append({
                 "kind": "result",
                 "tool": getattr(msg, "name", "tool"),
-                "result": str(getattr(msg, "content", ""))[:2500],
+                "result": str(tool_result)[:2500],
             })
+            parsed_tool_result = parse_mcp_result(tool_result)
+            if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
+                activity.append({
+                    "kind": "approval_required",
+                    "action": parsed_tool_result,
+                })
     has_tool_call = any(item.get("kind") == "call" for item in activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
         re.I,
     ))
-    if lookup_question and not has_tool_call:
+    approval_events = [item for item in activity if item.get("kind") == "approval_required"]
+    if approval_events:
+        action = approval_events[-1].get("action", {})
+        final_text = (
+            f"Prepared {action.get('method', 'write')} {action.get('path', '')}. "
+            "It has NOT been executed. Review the exact request in the approval panel "
+            "and choose Approve and execute or Reject."
+        )
+    elif ninja_native._is_mutation_request(message_text):
+        final_text = (
+            "I could not create a real NinjaOne approval request for this change. "
+            "No write was executed and no change was made. Please retry with the target "
+            "record and requested change clearly identified."
+        )
+    elif lookup_question and not has_tool_call:
         final_text = (
             "I couldn't execute a NinjaOne lookup for that request. "
             "No MCP tool was called, so I won't report unverified data. "
@@ -921,25 +1163,32 @@ async def list_tools():
 
 @app.post("/api/actions/{action_id}/approve")
 async def approve_native_action(action_id: str, req: ActionApprovalRequest):
-    if os.getenv("AGENT_BACKEND", "mcp").lower() != "native":
-        raise HTTPException(status_code=400, detail="Action approval is available only in Native backend mode.")
-    result = await asyncio.to_thread(
-        ninja_native.core.execute_pending_action, action_id, req.session_id
-    )
-    ninja_native.record_action_result(req.session_id, result)
-    return result
+    backend = os.getenv("AGENT_BACKEND", "mcp").lower()
+    if backend == "native":
+        result = await asyncio.to_thread(
+            ninja_native.core.execute_pending_action, action_id, req.session_id
+        )
+        ninja_native.record_action_result(req.session_id, result)
+        return result
+    if backend == "mcp":
+        return await execute_mcp_pending_action(action_id, req.session_id)
+    raise HTTPException(status_code=400, detail=f"Unsupported backend for approvals: {backend}.")
 
 
 @app.post("/api/actions/{action_id}/reject")
 async def reject_native_action(action_id: str, req: ActionApprovalRequest):
-    if os.getenv("AGENT_BACKEND", "mcp").lower() != "native":
-        raise HTTPException(status_code=400, detail="Action approval is available only in Native backend mode.")
-    rejected = await asyncio.to_thread(
-        ninja_native.core.reject_pending_action, action_id, req.session_id
-    )
-    result = {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
-    ninja_native.record_action_result(req.session_id, result)
-    return result
+    backend = os.getenv("AGENT_BACKEND", "mcp").lower()
+    if backend == "native":
+        rejected = await asyncio.to_thread(
+            ninja_native.core.reject_pending_action, action_id, req.session_id
+        )
+        result = {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
+        ninja_native.record_action_result(req.session_id, result)
+        return result
+    if backend == "mcp":
+        rejected = reject_mcp_pending_action(action_id, req.session_id)
+        return {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
+    raise HTTPException(status_code=400, detail=f"Unsupported backend for approvals: {backend}.")
 
 
 @app.post("/api/chat/stream")
@@ -1060,6 +1309,11 @@ async def clear_session(session_id: str):
     async with _session_lock:
         _sessions.pop(session_id, None)
     ninja_native.clear_session(session_id)
+    with _mcp_pending_lock:
+        stale_actions = [key for key, value in _mcp_pending_actions.items()
+                         if value.get("session_id") == session_id]
+        for key in stale_actions:
+            _mcp_pending_actions.pop(key, None)
     return {"ok": True}
 
 
