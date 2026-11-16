@@ -2,8 +2,10 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 import os
 import re
+import threading
 import time
 import requests
 import httpx
@@ -80,6 +82,11 @@ _agents: dict[str, Any] = {}
 _agents_lock = asyncio.Lock()
 _sessions: dict[str, list[Any]] = {}
 _session_lock = asyncio.Lock()
+_logger = logging.getLogger("n1_local_agent")
+_GATEWAY_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("LLM_GATEWAY_DISCOVERY_CACHE_SECONDS", "30")))
+_GATEWAY_ERROR_CACHE_TTL_SECONDS = max(2.0, float(os.getenv("LLM_GATEWAY_ERROR_CACHE_SECONDS", "8")))
+_gateway_discovery_cache: dict[str, Any] = {"at": 0.0, "value": None}
+_gateway_discovery_lock = threading.Lock()
 
 
 class ChatRequest(BaseModel):
@@ -143,7 +150,7 @@ def is_gateway_base_url(base_url: str) -> bool:
     return bool(configured and base_url.rstrip("/").lower() == configured.rstrip("/").lower())
 
 
-def discover_gateway() -> dict[str, Any]:
+def _discover_gateway_uncached() -> dict[str, Any]:
     """Discover gateway models without ever returning or logging its API token."""
     base_url = normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", ""))
     token = os.getenv("LLM_GATEWAY_API_KEY", "").strip()
@@ -197,6 +204,23 @@ def discover_gateway() -> dict[str, Any]:
     except (ValueError, TypeError, AttributeError) as exc:
         result["error"] = f"Gateway returned an invalid /models response: {type(exc).__name__}."
     return result
+
+
+
+def discover_gateway(force: bool = False) -> dict[str, Any]:
+    """Return cached gateway discovery; force=True is used by the explicit refresh action."""
+    now = time.monotonic()
+    with _gateway_discovery_lock:
+        cached = _gateway_discovery_cache.get("value")
+        if cached is not None and not force:
+            ttl = (_GATEWAY_CACHE_TTL_SECONDS if cached.get("connected")
+                   else _GATEWAY_ERROR_CACHE_TTL_SECONDS)
+            if now - _gateway_discovery_cache["at"] < ttl:
+                return {**cached, "models": [dict(item) for item in cached.get("models", [])]}
+
+        result = _discover_gateway_uncached()
+        _gateway_discovery_cache.update(at=time.monotonic(), value=result)
+        return {**result, "models": [dict(item) for item in result.get("models", [])]}
 
 
 def resolve_model_provider(provider: str, choice: str) -> tuple[str, str, str]:
@@ -461,6 +485,7 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     activity = [
         {"kind": "call", "tool": tool_name, "arguments": arguments},
         {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]},
+        {"kind": "metric", "stage": "mcp_tool", "elapsed_ms": round(elapsed * 1000, 1)},
     ]
 
     noun = tool_name.replace("list_", "")
@@ -492,6 +517,21 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
             answer = json.dumps(parsed, indent=2, ensure_ascii=False, default=str)
 
     return answer, activity
+
+
+async def try_direct_backend_request(session_id: str, message_content: Any):
+    """Try a safe no-LLM route before model discovery/inference."""
+    backend = os.getenv("AGENT_BACKEND", "mcp").strip().lower()
+    if backend == "native":
+        return await ninja_native.try_fast_path(session_id, message_content)
+
+    message_text = _text_from_content(message_content)
+    tools = await get_tools()
+    direct_request = detect_direct_tool_request(message_text, tools)
+    if direct_request:
+        tool_name, arguments, operation, fields = direct_request
+        return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+    return None
 
 
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None):
@@ -614,7 +654,7 @@ async def refresh_foundry():
 
 @app.post("/api/gateway/refresh")
 async def refresh_gateway():
-    gateway = await asyncio.to_thread(discover_gateway)
+    gateway = await asyncio.to_thread(discover_gateway, True)
     return {"gateway": gateway}
 
 
@@ -694,6 +734,15 @@ async def chat_stream(req: ChatRequest):
         async def execute():
             try:
                 provider = (req.provider or "foundry").lower()
+                request_started = time.perf_counter()
+                publish({"type": "progress", "stage": "routing", "message": "Checking for a safe direct NinjaOne route."})
+                direct_result = await try_direct_backend_request(session_id, req.message)
+                if direct_result is not None:
+                    answer, activity = direct_result
+                    _logger.info("chat_complete backend=%s route=direct provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
+                    publish({"type": "complete", "session_id": session_id, "provider": provider, "model": req.model,
+                             "answer": answer, "activity": activity})
+                    return
                 publish({"type": "progress", "stage": "setup", "message": f"Checking the selected {provider} model."})
                 model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, req.model)
                 publish({"type": "progress", "stage": "ready", "message": f"{provider.title()} model is ready. Starting the agent."})
@@ -702,6 +751,7 @@ async def chat_stream(req: ChatRequest):
                     progress_callback=lambda item: publish({"type": "progress", **item}),
                     api_key=api_key,
                 )
+                _logger.info("chat_complete backend=%s route=agent provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
                 publish({"type": "complete", "session_id": session_id, "provider": provider, "model": req.model,
                          "answer": answer, "activity": activity})
             except HTTPException as exc:
@@ -733,8 +783,15 @@ async def chat_stream(req: ChatRequest):
 async def chat(req: ChatRequest):
     session_id = req.session_id or str(uuid.uuid4())
     provider = (req.provider or "foundry").lower()
+    request_started = time.perf_counter()
+    direct_result = await try_direct_backend_request(session_id, req.message)
+    if direct_result is not None:
+        answer, activity = direct_result
+        _logger.info("chat_complete backend=%s route=direct provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
+        return {"session_id": session_id, "provider": provider, "model": req.model, "answer": answer, "activity": activity}
     model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, req.model)
     answer, activity = await run_agent(session_id, model_id, req.message, base_url, api_key=api_key)
+    _logger.info("chat_complete backend=%s route=agent provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
     return {"session_id": session_id, "provider": provider, "model": req.model, "answer": answer, "activity": activity}
 
 
