@@ -594,11 +594,11 @@ async def run_generic_mcp_read(tools, message: str):
     activity = []
     discovery_started = time.perf_counter()
     discovery_raw = await discover.ainvoke({
-        "intent": message, "method": "GET", "candidate_limit": 8,
+        "intent": message, "candidate_limit": 8,
     })
     discovery = parse_mcp_result(discovery_raw)
     activity.append({"kind": "call", "tool": "discover_endpoints",
-                     "arguments": {"intent": message, "method": "GET", "candidate_limit": 8}})
+                     "arguments": {"intent": message, "candidate_limit": 8}})
     activity.append({"kind": "result", "tool": "discover_endpoints",
                      "result": str(discovery)[:2500]})
     if not isinstance(discovery, dict):
