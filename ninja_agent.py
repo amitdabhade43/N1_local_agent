@@ -1357,6 +1357,8 @@ def recipe_add_device_access(q):
     This only creates the normal UI approval request; it never executes the PATCH.
     """
     text = re.sub(r"\s+", " ", str(q).strip())
+    text = re.sub(r"^(?:(?:can|could|would) you\s+|please\s+)+", "", text, flags=re.I)
+    text = re.sub(r"\s+(?:now|please)$", "", text, flags=re.I).strip(" .!?")
     # Accept both natural word orders:
     # "add 2QN9BY3 access to PC Admin Rene Piuk" and
     # "add device 2QN9BY3 to PC Admin Rene Piuk device access list".
