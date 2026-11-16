@@ -1277,7 +1277,8 @@ def recipe_count_named(q):
     )
     if not match:
         return None
-    name = match.group(1).strip().strip("\"'")
+    name = re.sub(r"\s+(?:in|at)\s+(?:ninjaone|the\s+ninjaone\s+tenant)\s*$", "", match.group(1), flags=re.I)
+    name = name.strip().strip("\"'")
     if not name or len(name) < 2:
         return None
     result = json.loads(t_resolve({"kind": "user", "name": name}))
