@@ -7,7 +7,7 @@ Keeps the UI contract of app.py: returns (answer, activity) where activity is a 
 {"kind":"call","tool","arguments"} / {"kind":"result","tool","result"} items.
 Reuses the spec index, tools and fast path from ninja_agent.py.
 """
-import asyncio, json, os, re
+import asyncio, hashlib, json, os, re
 
 import requests
 from fastapi import HTTPException
@@ -22,7 +22,8 @@ _ready, _sessions, _clients = False, {}, {}
 # Cache clients by endpoint because Foundry can receive a new port after restart.
 def _client(base, api_key=None):
     # Cache separately by endpoint and credential identity; never log credentials.
-    key = (base, api_key or "local")
+    credential_fingerprint = hashlib.sha256((api_key or os.getenv("FOUNDRY_API_KEY", "local")).encode("utf-8")).hexdigest()[:16]
+    key = (base, credential_fingerprint)
     if key not in _clients:
         _clients[key] = OpenAI(base_url=base, api_key=api_key or os.getenv("FOUNDRY_API_KEY", "local"),
                                timeout=120, max_retries=0)
