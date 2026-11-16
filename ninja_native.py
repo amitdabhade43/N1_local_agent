@@ -82,7 +82,7 @@ async def try_fast_path(session_id, content):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Native NinjaOne fast path failed: {exc}")
 
-def _run_inner(session_id, model_id, content, base, progress=None, api_key=None):
+def _run_inner(session_id, model_id, content, base, progress=None, api_key=None, fast_path_checked=False):
     def emit(message, stage='working'):
         if progress:
             progress({'stage': stage, 'message': message})
@@ -118,7 +118,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
         return write_result, [{"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
                              {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
 
-    fp = core.fast_path(q)  # no-LLM answer for simple inventory questions
+    fp = None if fast_path_checked else core.fast_path(q)  # preflight already checked when routed by app.py
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
@@ -216,17 +216,17 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
                                      {"role": "assistant", "content": answer}])[-12:]
     return answer, activity
 
-def _run(session_id, model_id, content, base, progress=None, api_key=None):
+def _run(session_id, model_id, content, base, progress=None, api_key=None, fast_path_checked=False):
     core.set_active_session(session_id)
     try:
-        return _run_inner(session_id, model_id, content, base, progress, api_key)
+        return _run_inner(session_id, model_id, content, base, progress, api_key, fast_path_checked)
     finally:
         core.clear_active_session()
 
 
-async def run_native(session_id, model_id, content, base_url, progress=None, api_key=None):
+async def run_native(session_id, model_id, content, base_url, progress=None, api_key=None, fast_path_checked=False):
     try:
-        return await asyncio.to_thread(_run, session_id, model_id, content, base_url, progress, api_key)
+        return await asyncio.to_thread(_run, session_id, model_id, content, base_url, progress, api_key, fast_path_checked)
     except HTTPException:
         raise
     except Exception as exc:
