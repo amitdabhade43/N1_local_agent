@@ -69,6 +69,31 @@ class FoundryDiscoveryCacheTests(unittest.TestCase):
         status.assert_called_once()
 
 
+class ContextualRoutingTests(unittest.TestCase):
+    def test_follow_up_references_skip_no_llm_routing(self):
+        examples = [
+            "How many of those are online?",
+            "What about those devices?",
+            "Show me the same users",
+            "How about them?",
+            "List the previous devices",
+        ]
+        for message in examples:
+            with self.subTest(message=message):
+                self.assertTrue(app.is_contextual_followup(message))
+
+    def test_self_contained_requests_remain_eligible_for_fast_routing(self):
+        examples = [
+            "How many devices?",
+            "List all organizations",
+            "Find user Rene Piuk",
+            "Count devices starting with VM",
+        ]
+        for message in examples:
+            with self.subTest(message=message):
+                self.assertFalse(app.is_contextual_followup(message))
+
+
 class DirectRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_fast_path_runs_without_provider_discovery(self):
         expected = ("42 devices in NinjaOne.", [])
