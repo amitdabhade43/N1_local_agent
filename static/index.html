@@ -87,7 +87,7 @@ small{color:var(--muted)}
 const chat=document.getElementById('chat'), message=document.getElementById('message');
 const model=document.getElementById('model'), provider=document.getElementById('provider'), imageInput=document.getElementById('image');
 const preview=document.getElementById('preview'), statusEl=document.getElementById('status');
-let sessionId=null, selectedImage=null, busy=false, providerCatalog=null, selectedModels={};
+let sessionId=null, selectedImage=null, busy=false, providerCatalog=null, selectedModels={}, providerInitialized=false;
 function addMessage(role,text){
  const empty=chat.querySelector('.welcome'); if(empty) empty.remove();
  const el=document.createElement('div'); el.className='msg '+role;
@@ -156,7 +156,7 @@ async function loadProviders(force=false){
   const d=await r.json();
   if(!r.ok)throw new Error(d.detail||'Provider discovery failed');
   providerCatalog=d.providers||{};
-  if(!provider.value)provider.value=d.default_provider||'foundry';
+  if(!providerInitialized){provider.value=(d.default_provider==='gateway'?'gateway':'foundry');providerInitialized=true;}
   const active=provider.value;
   const info=providerCatalog[active]||{models:[],connected:false,error:'Provider is not configured.'};
   const previous=selectedModels[active]||model.value;
