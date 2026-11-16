@@ -74,8 +74,9 @@ The OAuth app must actually be granted those scopes. Changing `.env` cannot gran
 ## Request routing and performance
 
 Chat requests first check for a safe deterministic route before resolving or invoking an LLM:
-- Native mode can answer supported fast-path requests directly through the NinjaOne API.
-- MCP mode can answer supported simple inventory requests directly through the cached MCP tool catalog.
+- Native mode can answer supported fast-path requests directly through the NinjaOne API, before any LLM provider discovery.
+- MCP servers that expose resource-specific list tools can answer supported simple inventory requests directly through the cached tool catalog, before provider discovery.
+- The schema-driven `NinjaRMM-API-Gateway-MCP` exposes generic discover/inspect/execute tools. Its simple read discovery now skips the gateway's secondary semantic-model call, but the orchestrator still uses the selected model to operate those generic tools.
 - Requests that do not qualify continue through the selected model and the relevant Native or MCP execution adapter.
 
 Foundry discovery results are cached for 30 seconds after success and 3 seconds after failure. Gateway discovery results are cached for 30 seconds after success and 8 seconds after failure. The Foundry and Gateway refresh actions bypass these caches. Gateway cache durations can be overridden with `LLM_GATEWAY_DISCOVERY_CACHE_SECONDS` and `LLM_GATEWAY_ERROR_CACHE_SECONDS`.
