@@ -70,7 +70,7 @@ main{max-width:1360px;margin:0 auto;padding:27px 34px 34px}
 (()=> {
 "use strict";
 const $=id=>document.getElementById(id);
-const state={sessionId:null,provider:"foundry",model:"",backend:"unknown",steps:[],selected:-1,filter:"all",tab:"raw",busy:false,lastPrompt:"",startedAt:0,elapsed:0,timer:null,zoom:1,logs:[],lastAnswer:"",providerCatalog:null};
+const state={sessionId:null,provider:"foundry",model:"",backend:"unknown",steps:[],selected:-1,filter:"all",tab:"raw",busy:false,lastPrompt:"",startedAt:0,elapsed:0,timer:null,zoom:1,logs:[],lastAnswer:"",providerCatalog:null,activityKeys:new Set()};
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const pretty=v=>{try{return typeof v==="string"?v:JSON.stringify(v,null,2)}catch{return String(v)}};
 const statusClass=s=>({success:"success",error:"error",warning:"warning",pending:"pending",running:"running",info:"info"}[s]||"info");
@@ -111,9 +111,11 @@ function titleOf(item){
  const name=item.tool||"Agent event";
  return (item.kind==="call"?"Tool call: ":item.kind==="result"?"Tool result: ":"")+name;
 }
+function activityKey(item){try{return JSON.stringify(item)}catch{return String(item)}}
 function activityToSteps(activity){
  (activity||[]).forEach(item=>{
   if(item.kind==="approval_required")return;
+  const key=activityKey(item);if(state.activityKeys.has(key))return;state.activityKeys.add(key);
   const status=classifyActivity(item),endpoint=endpointOf(item);
   const duration=item.elapsed_ms!=null?Number(item.elapsed_ms).toFixed(1)+" ms":"";
   const request=item.kind==="call"?item.arguments:(item.action||null);
@@ -185,8 +187,12 @@ function selectedOutput(){
 function renderOutput(){$("outputText").textContent=selectedOutput();$("outputCaption").textContent=state.selected>=0?"Event "+(state.selected+1)+" of "+state.steps.length:"Run output"}
 function renderAll(){renderSteps();renderFlow();renderOutput();updateMetrics()}
 function pushProgress(ev){
- const stage=ev.stage||"progress";const status=stage==="complete"?"success":"running";
- addStep({kind:"progress",title:ev.message||"Execution update",tool:"Agent runtime",status,duration:"",request:{stage},response:null,category:"all"});
+ const stage=ev.stage||"progress";
+ if(ev.activity_event){activityToSteps([ev.activity_event])}
+ else{
+  const status=stage==="complete"?"success":stage==="error"?"error":"running";
+  addStep({kind:"progress",title:ev.message||"Execution update",tool:"Agent runtime",status,duration:"",request:{stage},response:null,category:"all"});
+ }
  $("flowCaption").textContent=ev.message||"Live execution";
 }
 function showActivity(activity){
@@ -218,7 +224,7 @@ async function loadConfig(force=false){
 }
 function resetRun(){
  if(state.busy){toast("Wait for the active request to finish.");return}
- state.steps=[];state.logs=[];state.selected=-1;state.elapsed=0;state.lastAnswer="";state.lastPrompt="";$("prompt").value="";$("flowCaption").textContent="Live tool and API sequence";$("sessionLabel").textContent="New session · Existing backend";renderAll();toast("Viewer cleared. Ready for a new run.");
+ state.steps=[];state.logs=[];state.activityKeys.clear();state.selected=-1;state.elapsed=0;state.lastAnswer="";state.lastPrompt="";$("prompt").value="";$("flowCaption").textContent="Live tool and API sequence";$("sessionLabel").textContent="New session · Existing backend";renderAll();toast("Viewer cleared. Ready for a new run.");
 }
 async function send(){
  if(state.busy)return;const prompt=$("prompt").value.trim();if(!prompt)return;if(!$("model").value){toast("No model available. Refresh provider discovery.");return}
