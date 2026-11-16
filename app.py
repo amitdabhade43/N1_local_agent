@@ -528,8 +528,8 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
 
 
 _CONTEXTUAL_FOLLOWUP_RE = re.compile(
-    r"\\b(?:those|these|them|they|their|that|it|there|same|above|previous|former|latter|ones)\\b"
-    r"|\\b(?:what about|how about|and then|also do that|do the same)\\b",
+    r"\b(?:those|these|them|they|their|that|it|there|same|above|previous|former|latter|ones)\b"
+    r"|\b(?:what about|how about|and then|also do that|do the same)\b",
     re.I,
 )
 
@@ -540,19 +540,19 @@ def is_contextual_followup(message: str) -> bool:
 
 
 _SIMPLE_GENERIC_READ_RE = re.compile(
-    r"\\b(?:how many|count|number of|total|list|show|display|get|fetch|what are|which are)\\b",
+    r"\b(?:how many|count|number of|total|list|show|display|get|fetch|what are|which are)\b",
     re.I,
 )
 _COMPLEX_GENERIC_READ_RE = re.compile(
-    r"\\b(?:with|where|whose|per|each|by|assigned|accessible|access|offline|online|named|called|"
+    r"\b(?:with|where|whose|per|each|by|assigned|accessible|access|offline|online|named|called|"
     r"starting|beginning|before|after|since|between|compare|versus|vs|and|under|inside|"
-    r"belong\\w*|owned|owner|status|details?)\\b|\\bin\\s+(?!total\\b|ninjaone\\b|ninjarmm\\b|ninja\\b)",
+    r"belong\w*|owned|owner|status|details?)\b|\bin\s+(?!total\b|ninjaone\b|ninjarmm\b|ninja\b)",
     re.I,
 )
 
 
 def is_simple_generic_read(message: str) -> bool:
-    text = re.sub(r"\\s+", " ", (message or "").strip())
+    text = re.sub(r"\s+", " ", (message or "").strip())
     return bool(text and _SIMPLE_GENERIC_READ_RE.search(text)
                 and not _COMPLEX_GENERIC_READ_RE.search(text)
                 and not is_contextual_followup(text))
@@ -625,7 +625,6 @@ async def run_generic_mcp_read(tools, message: str):
     query_parameters = {str(item.get("name")): item for item in parameters if item.get("in") == "query"}
     page_name = next((name for name in query_parameters if name.casefold() == "page"), None)
     size_name = next((name for name in query_parameters if name.casefold() in {"pagesize", "page_size"}), None)
-    response_started = time.perf_counter()
     if page_name and size_name and "execute_paginated_endpoint" in by_name:
         pagination_tool = by_name["execute_paginated_endpoint"]
         response_raw = await pagination_tool.ainvoke({
@@ -655,7 +654,7 @@ async def run_generic_mcp_read(tools, message: str):
     records = _generic_result_records(data)
     complete = bool(result.get("complete", False))
     total = find_total_field(data)
-    count_intent = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", message, re.I))
+    count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", message, re.I))
     if count_intent:
         if total is not None:
             answer = f"{total} records returned by NinjaOne for that request."
@@ -694,7 +693,11 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
         return await run_direct_mcp_tool(tool_name, arguments, operation, fields)
-    return await run_generic_mcp_read(tools, message_text)
+    try:
+        return await run_generic_mcp_read(tools, message_text)
+    except Exception as exc:
+        _logger.warning("MCP direct read preflight failed; handing off to model: %s", type(exc).__name__)
+        return None
 
 
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
