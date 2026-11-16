@@ -71,9 +71,23 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
     tools[1] = FakeTool("inspect_endpoint", {
         "method": "GET",
         "parameters": [{"name": "after", "in": "query", "required": False}],
-        "responses": {"200": {"content": {"application/json": {
-            "schema": {"properties": {"pageInfo": {"properties": {"nextCursor": {"type": "string}}}}
-        }}}},
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "properties": {
+                                "pageInfo": {
+                                    "properties": {
+                                        "nextCursor": {"type": "string"}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
     })
     result = await app.run_generic_mcp_read(tools, "How many devices?")
 
@@ -81,6 +95,7 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
     tools[2].ainvoke.assert_not_awaited()
 
 
+@pytest.mark.asyncio
 async def test_generic_mcp_skips_endpoints_with_required_parameters():
     tools = toolset()
     tools[1] = FakeTool("inspect_endpoint", {
