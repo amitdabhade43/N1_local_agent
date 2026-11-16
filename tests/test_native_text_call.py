@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import patch
 
 import ninja_agent
+import ninja_native
 
 
 class NativeTextCallTests(unittest.TestCase):
@@ -164,6 +165,49 @@ class NativeTextCallTests(unittest.TestCase):
             answer = ninja_agent.recipe_list_organizations("List organization names.")
         self.assertIn("partial data only", answer.lower())
         self.assertIn("HOERBIGER", answer)
+
+
+class NativeClarificationContextTests(unittest.TestCase):
+    def setUp(self):
+        self.session_id = "test-native-clarification"
+        self.previous = ninja_native._sessions.pop(self.session_id, None)
+
+    def tearDown(self):
+        ninja_native._sessions.pop(self.session_id, None)
+        if self.previous is not None:
+            ninja_native._sessions[self.session_id] = self.previous
+
+    def test_fast_path_turn_is_saved_for_followup(self):
+        result = ("Multiple NinjaOne users closely match \"Rene\": "
+                  "PC Admin Rene Piuk, Rene Piuk. Please confirm which user.", [])
+        ninja_native._record_fast_path_turn(
+            self.session_id, "how many devices does Rene have access to?", result
+        )
+        history = ninja_native._sessions[self.session_id]
+        self.assertEqual(history[0]["role"], "user")
+        self.assertIn("how many devices", history[0]["content"])
+        self.assertEqual(history[1]["role"], "assistant")
+        self.assertIn("Please confirm which user", history[1]["content"])
+
+    def test_pending_clarification_is_detected(self):
+        history = [
+            {"role": "user", "content": "how many devices does Rene have access to?"},
+            {"role": "assistant", "content": (
+                "Multiple NinjaOne users closely match Rene. Please confirm which user."
+            )},
+        ]
+        self.assertTrue(ninja_native._has_pending_clarification(history))
+
+    def test_ordinary_answer_is_not_mistaken_for_clarification(self):
+        history = [
+            {"role": "user", "content": "how many organizations?"},
+            {"role": "assistant", "content": "There are 2 organizations in NinjaOne."},
+        ]
+        self.assertFalse(ninja_native._has_pending_clarification(history))
+
+    def test_clarification_guidance_forbids_requesting_internal_operation_ids(self):
+        self.assertIn("Do not ask the user for operation IDs", ninja_native._CLARIFICATION_GUIDANCE)
+        self.assertIn("finish the original request", ninja_native._CLARIFICATION_GUIDANCE)
 
 
 if __name__ == "__main__":
