@@ -55,6 +55,16 @@ async def test_generic_mcp_count_uses_discovery_schema_and_get_result():
 
 
 @pytest.mark.asyncio
+async def test_generic_mcp_supports_namespaced_tool_names():
+    tools = toolset()
+    for tool in tools:
+        tool.name = "ninjaone__" + tool.name
+    answer, _ = await app.run_generic_mcp_read(tools, "How many devices?")
+
+    assert answer == "NinjaOne returned 2 records for devices."
+
+
+@pytest.mark.asyncio
 async def test_generic_mcp_preflight_runs_before_provider_resolution():
     tools = toolset()
     with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
