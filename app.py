@@ -6,6 +6,7 @@ import os
 import re
 import time
 import requests
+import httpx
 import uuid
 from typing import Any
 
@@ -126,6 +127,22 @@ def normalize_gateway_base_url(value: str) -> str:
     return value
 
 
+def gateway_ca_bundle() -> str | None:
+    """Return an optional PEM CA bundle path for the internal gateway."""
+    value = os.getenv("LLM_GATEWAY_CA_BUNDLE", "").strip()
+    return value or None
+
+
+def gateway_verify_setting() -> str | bool:
+    """Use the configured corporate CA for gateway TLS; otherwise use system trust."""
+    return gateway_ca_bundle() or True
+
+
+def is_gateway_base_url(base_url: str) -> bool:
+    configured = normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", ""))
+    return bool(configured and base_url.rstrip("/").lower() == configured.rstrip("/").lower())
+
+
 def discover_gateway() -> dict[str, Any]:
     """Discover gateway models without ever returning or logging its API token."""
     base_url = normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", ""))
@@ -154,7 +171,7 @@ def discover_gateway() -> dict[str, Any]:
             result["models"] = [{"id": configured_model, "label": configured_model, "vision": vision_capable(configured_model)}]
         return result
     try:
-        response = requests.get(base_url + "/models", headers={"Authorization": f"Bearer {token}"}, timeout=8)
+        response = requests.get(base_url + "/models", headers={"Authorization": f"Bearer {token}"}, timeout=8, verify=gateway_verify_setting())
         response.raise_for_status()
         payload = response.json()
         items = payload.get("data", []) if isinstance(payload, dict) else payload
@@ -232,6 +249,11 @@ async def get_tools():
 
 
 def get_model(model_id: str, base_url: str, api_key: str | None = None):
+    client_options = {}
+    if is_gateway_base_url(base_url) and gateway_ca_bundle():
+        ca_bundle = gateway_ca_bundle()
+        client_options["http_client"] = httpx.Client(verify=ca_bundle, timeout=120)
+        client_options["http_async_client"] = httpx.AsyncClient(verify=ca_bundle, timeout=120)
     return ChatOpenAI(
         model=model_id,
         base_url=base_url,
@@ -239,6 +261,7 @@ def get_model(model_id: str, base_url: str, api_key: str | None = None):
         temperature=0,
         timeout=120,
         max_retries=0,
+        **client_options,
     )
 
 
