@@ -589,7 +589,8 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             ),
         )
 
-    print(f"[Agent] {model_id} completed in {time.perf_counter() - started:.2f}s")
+    inference_elapsed = time.perf_counter() - started
+    _logger.info("mcp_agent_complete model=%s elapsed_ms=%.1f", model_id, inference_elapsed * 1000)
     messages = result.get("messages", [])
     final_text = ""
     for msg in reversed(messages):
@@ -601,7 +602,8 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     async with _session_lock:
         _sessions[session_id] = messages[-MAX_STORED_MESSAGES:]
 
-    activity = []
+    activity = [{"kind": "metric", "stage": "llm_agent",
+                 "elapsed_ms": round(inference_elapsed * 1000, 1)}]
     for msg in messages:
         if getattr(msg, "type", "") == "ai":
             for call in getattr(msg, "tool_calls", []) or []:
