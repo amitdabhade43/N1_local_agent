@@ -527,13 +527,27 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
     return answer, activity
 
 
+_CONTEXTUAL_FOLLOWUP_RE = re.compile(
+    r"\\b(?:those|these|them|they|their|that|it|there|same|above|previous|former|latter|ones)\\b"
+    r"|\\b(?:what about|how about|and then|also do that|do the same)\\b",
+    re.I,
+)
+
+
+def is_contextual_followup(message: str) -> bool:
+    """Avoid a no-history shortcut when the user refers to earlier conversation."""
+    return bool(_CONTEXTUAL_FOLLOWUP_RE.search(message or ""))
+
+
 async def try_direct_backend_request(session_id: str, message_content: Any):
     """Try a safe no-LLM route before model discovery/inference."""
+    message_text = _text_from_content(message_content)
+    if is_contextual_followup(message_text):
+        return None
     backend = os.getenv("AGENT_BACKEND", "mcp").strip().lower()
     if backend == "native":
         return await ninja_native.try_fast_path(session_id, message_content)
 
-    message_text = _text_from_content(message_content)
     tools = await get_tools()
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
