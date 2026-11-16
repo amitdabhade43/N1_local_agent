@@ -18,7 +18,8 @@ from urllib.parse import urlparse
 
 import requests
 
-_CACHE_TTL_SECONDS = 5
+_CACHE_TTL_SECONDS = 30
+_ERROR_CACHE_TTL_SECONDS = 3
 _LEGACY_PORTS = (52072, 49934, 64414)
 _CACHE: dict[str, Any] = {"at": 0.0, "value": None}
 _LOCK = threading.Lock()
@@ -132,8 +133,10 @@ def discover_foundry(force: bool = False) -> dict[str, Any]:
     now = time.monotonic()
     with _LOCK:
         cached = _CACHE.get("value")
-        if not force and cached and now - _CACHE["at"] < _CACHE_TTL_SECONDS:
-            return cached
+        if cached and not force:
+            ttl = _CACHE_TTL_SECONDS if cached.get("connected") else _ERROR_CACHE_TTL_SECONDS
+            if now - _CACHE["at"] < ttl:
+                return cached
 
         candidates: list[tuple[str, str]] = []
         override = _normalize_base_url(os.getenv("FOUNDRY_BASE_URL", ""))
