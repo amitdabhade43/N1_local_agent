@@ -625,8 +625,10 @@ async def run_generic_mcp_read(tools, message: str):
     query_parameters = {str(item.get("name")): item for item in parameters if item.get("in") == "query"}
     page_name = next((name for name in query_parameters if name.casefold() == "page"), None)
     size_name = next((name for name in query_parameters if name.casefold() in {"pagesize", "page_size"}), None)
-    if page_name and size_name and "execute_paginated_endpoint" in by_name:
-        pagination_tool = by_name["execute_paginated_endpoint"]
+    if page_name and size_name:
+        pagination_tool = by_name.get("execute_paginated_endpoint")
+        if pagination_tool is None:
+            return None
         response_raw = await pagination_tool.ainvoke({
             "endpoint": endpoint, "page_parameter": page_name,
             "page_size_parameter": size_name, "page_size": 200,
@@ -634,10 +636,15 @@ async def run_generic_mcp_read(tools, message: str):
         })
         execution_tool_name = "execute_paginated_endpoint"
     else:
-        # Cursor pagination cannot be safely guessed by this simple route.
+        # Do not claim a complete total when the endpoint advertises pagination
+        # that this direct route cannot safely drive.
         response_schema = details.get("responses") or {}
         response_text = json.dumps(response_schema, ensure_ascii=False).casefold()
-        if any(name.casefold() == "after" for name in query_parameters) and "nextcursor" in response_text:
+        has_cursor = any(name.casefold() in {"after", "cursor", "nextcursor"} for name in query_parameters)
+        has_page_parameter = any(name.casefold() in {"page", "pagesize", "page_size"} for name in query_parameters)
+        if has_cursor or has_page_parameter and (page_name or size_name):
+            return None
+        if "nextcursor" in response_text and any(name.casefold() == "after" for name in query_parameters):
             return None
         response_raw = await execute.ainvoke({"endpoint": endpoint})
         execution_tool_name = "execute_endpoint"
@@ -654,25 +661,28 @@ async def run_generic_mcp_read(tools, message: str):
     records = _generic_result_records(data)
     complete = bool(result.get("complete", False))
     total = find_total_field(data)
+    fetched_count = result.get("items_fetched")
+    if not isinstance(fetched_count, int) or isinstance(fetched_count, bool):
+        fetched_count = len(records)
     count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", message, re.I))
     if count_intent:
         if total is not None:
             answer = f"{total} records returned by NinjaOne for that request."
         elif complete:
-            answer = f"{len(records)} records returned by NinjaOne for that request."
+            answer = f"{fetched_count} records returned by NinjaOne for that request."
         else:
-            answer = (f"At least {len(records)} records were returned by NinjaOne; "
+            answer = (f"At least {fetched_count} records were returned by NinjaOne; "
                       "the complete total is unknown because the result is incomplete.")
     else:
         labels = [_generic_record_label(record) for record in records[:50]]
         if labels:
-            answer = f"{len(records)} records in the returned result: " + ", ".join(labels)
+            answer = f"{fetched_count} records in the returned result: " + ", ".join(labels)
         else:
             answer = "NinjaOne returned no records for that request."
         if not complete:
             answer += " The result may be incomplete; use a more specific query or pagination."
-        if len(records) > 50:
-            answer += f" Showing 50 of {len(records)} returned records."
+        if fetched_count > 50:
+            answer += f" Showing 50 of {fetched_count} returned records."
     activity.append({"kind": "metric", "stage": "mcp_openapi_read",
                      "elapsed_ms": round((time.perf_counter() - discovery_started) * 1000, 1),
                      "api_elapsed_ms": result.get("elapsed_ms")})
