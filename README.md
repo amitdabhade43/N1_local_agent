@@ -19,11 +19,13 @@ LLM_PROVIDER=foundry
 LLM_GATEWAY_BASE_URL=https://llm-gateway.example.com/v1
 LLM_GATEWAY_API_KEY=your_gateway_token
 LLM_GATEWAY_MODEL=your_model_id
+# Optional, for vision models with non-descriptive IDs:
+LLM_GATEWAY_VISION_MODELS=model-id-1,model-id-2
 ```
 
 Set `LLM_GATEWAY_BASE_URL` to the API base URL (normally ending in `/v1`), not the full `/chat/completions` route. The agent queries `/models` to populate the model selector. `LLM_GATEWAY_MODEL` is an optional fallback when the gateway does not expose model discovery.
 
-The gateway must accept OpenAI-compatible `/chat/completions` requests with Bearer-token authentication. Tool/function calling is required for model-driven NinjaOne operations in both Native and MCP modes. Vision requests additionally require a gateway vision model; image capability is inferred from model IDs containing `vl`, `vision`, or `multimodal`.
+The gateway must accept OpenAI-compatible `/chat/completions` requests with Bearer-token authentication. Tool/function calling is required for model-driven NinjaOne operations in both Native and MCP modes. Vision requests additionally require a gateway vision model. Capability is detected from model IDs/metadata where possible; set `LLM_GATEWAY_VISION_MODELS` to a comma-separated list when the gateway uses model IDs that do not identify vision support.
 
 The gateway token is read only by the backend and is never returned by the configuration endpoint or sent to browser JavaScript. Keep `.env` out of Git. Gateway inference sends prompts and any included NinjaOne context to that gateway, so confirm its data-handling policy before using it with production information. Foundry Local remains available as the local/private option.
 
