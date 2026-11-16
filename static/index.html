@@ -107,6 +107,9 @@ function addActivity(parent,activity){
   if(item.kind==='approval_required'){
    const action=item.action||{};
    const b=document.createElement('b');b.textContent='APPROVAL REQUIRED · '+(action.method||'WRITE')+' '+(action.path||'');row.append(b);
+   if(!action.action_id){
+    const warning=document.createElement('p');warning.textContent='Approval action ID is missing. No change has been made; the request must be prepared again.';row.append(warning);details.append(row);return;
+   }
    const pre=document.createElement('pre');
    pre.textContent=JSON.stringify({summary:action.summary,query:action.query,headers:action.headers,body:action.body,media_type:action.media_type,expires_in_seconds:action.expires_in_seconds},null,2);
    row.append(pre);
