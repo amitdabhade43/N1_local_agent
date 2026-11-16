@@ -38,6 +38,19 @@ def _client(base, api_key=None):
     return _clients[key]
 
 
+def _is_mutation_request(content):
+    """Conservatively identify user requests that ask the agent to change NinjaOne state."""
+    text = re.sub(r"\\s+", " ", str(content or "").strip().lower())
+    if not text:
+        return False
+    return bool(re.search(
+        r"\\b(?:add|assign|grant|give|remove|revoke|update|change|modify|edit|"
+        r"enable|disable|create|delete|reset|rename|move|invite|suspend|unsuspend|"
+        r"activate|deactivate|unlink|link)\\b",
+        text,
+    ))
+
+
 def _text(content):
     if isinstance(content, str):
         return content
@@ -174,7 +187,12 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 word in core.NOUN_WORDS or (word.endswith("s") and word[:-1] in core.NOUN_WORDS)
                 for word in question_words
             )
-            bad = tool_intent or (
+            # A state-changing request is not complete until the API layer has
+            # returned an approval_required action. Never let a prose-only plan
+            # masquerade as a prepared write, even after read/resolve tool calls.
+            has_approval_action = any(item.get("kind") == "approval_required" for item in activity)
+            mutation_without_approval = _is_mutation_request(q) and not has_approval_action
+            bad = tool_intent or mutation_without_approval or (
                 not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
             )
             if bad and not nudged:
@@ -209,6 +227,12 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     approval_events = [item for item in activity if item.get("kind") == "approval_required"]
+    if _is_mutation_request(q) and not approval_events:
+        answer = (
+            "I could not create a real NinjaOne approval request for this change. "
+            "No write was executed and no change was made. Please retry with the target "
+            "record and requested change clearly identified."
+        )
     if approval_events:
         action = approval_events[-1].get("action", {})
         answer = (
