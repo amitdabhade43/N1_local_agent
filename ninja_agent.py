@@ -390,6 +390,14 @@ def slim(r):
     return o
 
 
+def _partial_note(rows):
+    """Return a user-facing warning when an API result is not known to be complete."""
+    if getattr(rows, "complete", True) is False:
+        detail = getattr(rows, "note", "") or "The API returned only a partial result."
+        return f" Partial data only: {detail}"
+    return ""
+
+
 def shape(rows, where=None, contains=None, group_by=None, fields=None, count_only=False, limit=MAX_ROWS):
     if where:
         rows = [r for r in rows if isinstance(r, dict) and
@@ -1079,7 +1087,10 @@ def recipe_per_org(q):
         return "The devices list has no organizationId field, so I can't group it. Fields seen: " + ", ".join(list(devs[0])[:15])
     names, c = _orgs(), Counter(d.get("organizationId") for d in devs)
     lines = [f"{names.get(k) or 'organization ' + str(k)}: {n}" for k, n in c.most_common(40)]
-    return f"{len(devs)} devices across {len(c)} organizations:\n" + "\n".join(lines)
+    partial = _partial_note(devs)
+    heading = (f"Partial breakdown from {len(devs)} returned device record(s); tenant-wide totals are unknown."
+               if partial else f"{len(devs)} devices across {len(c)} organizations:")
+    return heading + partial + "\n" + "\n".join(lines)
 
 
 KIND_MAP = {"enduser": ["end_user"], "technician": ["technician"], "tech": ["technician"],
@@ -1134,7 +1145,7 @@ def recipe_list_entity_fields(q):
     if not output:
         return (f"NinjaOne returned {len(rows)} {label} record(s), but none contained "
                 f"the requested fields ({', '.join(name for name, _ in requested)}).")
-    return f"{len(output)} {label}(s):\n" + "\n".join(
+    return f"{len(output)} {label}(s) in the returned result:{_partial_note(rows)}\n" + "\n".join(
         f"{index}. {value}" for index, value in enumerate(output, 1)
     )
 
@@ -1175,7 +1186,7 @@ def recipe_list_organizations(q):
             f"{index}. {str(row.get('name')).strip()}"
             for index, row in enumerate(records, 1)
         ]
-    return f"{len(records)} organization(s):\n" + "\n".join(lines)
+    return f"{len(records)} organization(s) in the returned result:{_partial_note(rows)}\n" + "\n".join(lines)
 
 
 def recipe_list_technician_names(q):
@@ -1209,7 +1220,7 @@ def recipe_list_technician_names(q):
             f"NinjaOne returned {len(rows)} technician record(s), but none contained "
             "firstName and lastName fields."
         )
-    return f"{len(names)} technician(s):\n" + "\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
+    return f"{len(names)} technician(s) in the returned result:{_partial_note(rows)}\n" + "\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
 
 
 def recipe_search_people(q):
@@ -1294,12 +1305,17 @@ def recipe_count_named(q):
         count = len(result.get("matches", []))
     examples = result.get("matches", [])
     if count == 0:
+        if result.get("partial"):
+            return f'No NinjaOne users matched "{name}" in the returned page; the search is incomplete. {result.get("pagination_note", "")}'
         return f'No NinjaOne users matched the name "{name}".'
     details = ", ".join(
         row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
         for row in examples[:5]
     )
     suffix = f" Examples: {details}." if details else ""
+    if result.get("partial"):
+        return (f'At least {count} NinjaOne user record(s) matched "{name}" in the returned page; '
+                f'the tenant-wide total is unknown. {result.get("pagination_note", "")}{suffix}')
     return f'{count} NinjaOne user record(s) matched the name "{name}".{suffix}'
 
 
@@ -1666,6 +1682,9 @@ def recipe_devices_in(q):
     if not any("organizationId" in d for d in devs):
         return None
     n = sum(1 for d in devs if d.get("organizationId") == ms[0].get("id"))
+    if getattr(devs, "complete", True) is False:
+        return (f'At least {n} devices in {ms[0].get("name")} were found in the returned page; '
+                f'the organization-wide total is unknown. {_partial_note(devs)}')
     return f'{n} devices in {ms[0].get("name")}.'
 
 
@@ -1681,10 +1700,14 @@ def fast_path(q):
             if not op:
                 break
             rows = fetch(op, path, {})
+            partial = _partial_note(rows)
             if set(words) & {"many", "count", "number", "total"}:
+                if partial:
+                    return f"At least {len(rows)} {label} were returned by NinjaOne; the total is unknown.{partial}"
                 return f"{len(rows)} {label} in NinjaOne."
             names = [row_name(r) for r in rows[:50]]
-            return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
+            heading = f"{len(rows)} {label} in the returned result"
+            return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
         for rec in (recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
