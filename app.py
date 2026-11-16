@@ -642,9 +642,7 @@ async def run_generic_mcp_read(tools, message: str):
         response_text = json.dumps(response_schema, ensure_ascii=False).casefold()
         has_cursor = any(name.casefold() in {"after", "cursor", "nextcursor"} for name in query_parameters)
         has_page_parameter = any(name.casefold() in {"page", "pagesize", "page_size"} for name in query_parameters)
-        if has_cursor or has_page_parameter and (page_name or size_name):
-            return None
-        if "nextcursor" in response_text and any(name.casefold() == "after" for name in query_parameters):
+        if has_cursor or has_page_parameter and (page_name or size_name) or "nextcursor" in response_text:
             return None
         response_raw = await execute.ainvoke({"endpoint": endpoint})
         execution_tool_name = "execute_endpoint"
