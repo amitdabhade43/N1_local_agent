@@ -367,11 +367,7 @@ class NativeApiActionTests(unittest.TestCase):
         self.assertIn("management", result["error"].lower())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class MultiDeviceAccessRecipeTests(unittest.TestCase):
+class TestMultiDeviceAccessRecipe(unittest.TestCase):
     def setUp(self):
         self.user = {
             "id": 31, "firstName": "PC Admin", "lastName": "Rene Piuk",
@@ -451,3 +447,5 @@ class MultiDeviceAccessRecipeTests(unittest.TestCase):
         self.assertEqual(call.call_args.args[0]["body"], {"addDeviceIds": [50]})
         self.assertIn("Already accessible and omitted: 2QN9BY3", result["summary"])
 
+if __name__ == "__main__":
+    unittest.main()
