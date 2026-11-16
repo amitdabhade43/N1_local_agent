@@ -547,7 +547,7 @@ _SIMPLE_GENERIC_READ_RE = re.compile(
 )
 _COMPLEX_GENERIC_READ_RE = re.compile(
     r"\b(?:with|where|whose|per|each|by|assigned|accessible|access|offline|online|named|called|"
-    r"starting|beginning|before|after|since|between|compare|versus|vs|and|under|inside|"
+    r"starting|beginning|before|after|since|between|compare|versus|vs|and|under|inside|from|for|on|at|within|"
     r"belong\w*|owned|owner|status|details?)\b|\bin\s+(?!total\b|ninjaone\b|ninjarmm\b|ninja\b)",
     re.I,
 )
