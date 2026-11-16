@@ -95,6 +95,33 @@ class NativeTextCallTests(unittest.TestCase):
         self.assertIn("HOERBIGER — ID: 6", answer)
         self.assertIn("HOERBIGER - Unattended — ID: 7", answer)
 
+    def test_device_prefix_count_uses_complete_inventory_without_llm(self):
+        rows = ninja_agent.FetchRows([
+            {"systemName": "VM-001"},
+            {"systemName": "vm-002"},
+            {"systemName": "PC-003"},
+            {"name": "VM-004"},
+        ])
+        with patch.object(ninja_agent, "op_by_path", return_value={"id": "getDevices"}):
+            with patch.object(ninja_agent, "fetch", return_value=rows) as fetch:
+                answer = ninja_agent.recipe_count_device_prefix(
+                    "can i get count of device with name start with VM"
+                )
+        self.assertEqual(answer, '3 devices have names starting with "VM".')
+        fetch.assert_called_once_with({"id": "getDevices"}, "/v2/devices", {})
+
+    def test_device_prefix_count_discloses_partial_inventory(self):
+        rows = ninja_agent.FetchRows(
+            [{"systemName": "VM-001"}], complete=False, note="Only the first page was returned."
+        )
+        with patch.object(ninja_agent, "op_by_path", return_value={"id": "getDevices"}):
+            with patch.object(ninja_agent, "fetch", return_value=rows):
+                answer = ninja_agent.recipe_count_device_prefix(
+                    "how many devices start with VM"
+                )
+        self.assertIn("At least 1", answer)
+        self.assertIn("complete total is unknown", answer)
+
     def test_organization_names_only_request_remains_concise(self):
         rows = [{"id": 6, "name": "HOERBIGER"}]
         with patch.object(ninja_agent, "op_by_path", return_value={"operationId": "getOrganizations"}), patch.object(
