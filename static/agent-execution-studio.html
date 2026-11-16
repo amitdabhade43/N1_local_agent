@@ -90,11 +90,10 @@ function titleOf(item){
  return (item.kind==="call"?"Tool call: ":item.kind==="result"?"Tool result: ":"")+name;
 }
 function activityToSteps(activity){
- let lastCall=null;
  (activity||[]).forEach(item=>{
+  if(item.kind==="approval_required")return;
   const status=classifyActivity(item),endpoint=endpointOf(item);
-  if(item.kind==="call"){lastCall={tool:item.tool,at:performance.now()};}
-  const duration=item.elapsed_ms!=null?Number(item.elapsed_ms).toFixed(1)+" ms":(item.kind==="result"&&lastCall&&lastCall.tool===item.tool?Math.max(0,performance.now()-lastCall.at).toFixed(0)+" ms":"");
+  const duration=item.elapsed_ms!=null?Number(item.elapsed_ms).toFixed(1)+" ms":"";
   const request=item.kind==="call"?item.arguments:(item.action||null);
   const response=item.kind==="result"?item.result:(item.kind==="metric"?item:null);
   addStep({kind:item.kind,title:titleOf(item),tool:item.tool||"",endpoint,status,duration,request,response,raw:item,category:item.kind==="call"?"api":status==="error"?"error":status==="warning"?"warning":"all"});
