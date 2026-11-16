@@ -921,7 +921,11 @@ API workflow:
 - If a person name resolves ambiguously, show the matching records and ask one concise clarification.
 - Report counts only when based on the complete API result or an authoritative total count. State when results are partial or truncated.
 
-Final answers should be concise, factual, and clearly distinguish completed reads, prepared actions awaiting approval, and completed writes."""
+Final answers should be concise, factual, and clearly distinguish completed reads, prepared actions awaiting approval, and completed writes.
+- Tailor the answer to the user's requested output. If they ask for a list, provide a readable numbered or bulleted list; if they ask for a comparison, use a compact table; if they ask for selected fields, show only those fields; if they ask for a count, give the count first and explain its scope.
+- Use Markdown formatting where it improves readability. Do not dump raw JSON unless the user explicitly asks for raw JSON or the data is best represented that way.
+- For long inventories, group related results and clearly state the total, displayed count, and whether the result is complete or truncated. Never silently omit records.
+- Preserve exact API values and identifiers; do not invent summaries or fields not present in the returned data."""
 
 
 
