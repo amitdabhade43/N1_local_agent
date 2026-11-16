@@ -74,6 +74,7 @@ class ContextualRoutingTests(unittest.TestCase):
         examples = [
             "How many of those are online?",
             "What about those devices?",
+            "How many of them are online?",
             "Show me the same users",
             "How about them?",
             "List the previous devices",
@@ -85,6 +86,7 @@ class ContextualRoutingTests(unittest.TestCase):
     def test_self_contained_requests_remain_eligible_for_fast_routing(self):
         examples = [
             "How many devices?",
+            "How many devices are there?",
             "List all organizations",
             "Find user Rene Piuk",
             "Count devices starting with VM",
