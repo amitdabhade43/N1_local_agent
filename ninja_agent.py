@@ -1239,6 +1239,9 @@ def recipe_search_people(q):
         if result.get("error"):
             return f"Could not search the NinjaOne {label.lower()} inventory: {result['error']}"
         for row in result.get("matches", []):
+            # Defensive second check: never trust approximate or inconsistent upstream previews.
+            if _person_name_match(name, row) < 1.0:
+                continue
             email = str(row.get("email") or row.get("emailAddress") or "").strip().casefold()
             identity = (email,) if email else (kind, str(row.get("id") or ""), _normalize_person_text(row_name(row)))
             if identity in seen:
@@ -1270,10 +1273,10 @@ def recipe_search_people(q):
 
 def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
-    text = q.lower().strip().rstrip("?.! ")
+    text = str(q).strip().rstrip("?.! ")
     match = re.search(
-        r"\b(?:users?|people|accounts?)\b.*?\b(?:with|having)\s+(?:the\s+)?name\s+(.+)$",
-        text
+        r"\\b(?:users?|people|accounts?)\\b.*?\\b(?:with|having)\\s+(?:the\\s+)?name\\s+(.+)$",
+        text, re.I
     )
     if not match:
         return None
