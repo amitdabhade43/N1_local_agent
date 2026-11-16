@@ -1080,14 +1080,15 @@ def recipe_per_org(q):
     dop = op_by_path("/v2/devices")
     if not dop:
         return None
-    devs = [d for d in fetch(dop, "/v2/devices", {}) if isinstance(d, dict)]
+    fetched = fetch(dop, "/v2/devices", {})
+    devs = [d for d in fetched if isinstance(d, dict)]
     if not devs:
-        return "No devices returned by NinjaOne."
+        return "No devices returned by NinjaOne." + _partial_note(fetched)
     if not any("organizationId" in d for d in devs):
-        return "The devices list has no organizationId field, so I can't group it. Fields seen: " + ", ".join(list(devs[0])[:15])
+        return "The devices list has no organizationId field, so I can't group it. Fields seen: " + ", ".join(list(devs[0])[:15]) + _partial_note(fetched)
     names, c = _orgs(), Counter(d.get("organizationId") for d in devs)
     lines = [f"{names.get(k) or 'organization ' + str(k)}: {n}" for k, n in c.most_common(40)]
-    partial = _partial_note(devs)
+    partial = _partial_note(fetched)
     heading = (f"Partial breakdown from {len(devs)} returned device record(s); tenant-wide totals are unknown."
                if partial else f"{len(devs)} devices across {len(c)} organizations:")
     return heading + partial + "\n" + "\n".join(lines)
@@ -1678,13 +1679,14 @@ def recipe_devices_in(q):
     ms = json.loads(t_resolve({"kind": "organization", "name": m.group(1)})).get("matches", [])
     if not dop or not ms or ms[0].get("match", 0) < 0.9 or (len(ms) > 1 and ms[1]["match"] > ms[0]["match"] - 0.2):
         return None
-    devs = [d for d in fetch(dop, "/v2/devices", {}) if isinstance(d, dict)]
+    fetched = fetch(dop, "/v2/devices", {})
+    devs = [d for d in fetched if isinstance(d, dict)]
     if not any("organizationId" in d for d in devs):
         return None
     n = sum(1 for d in devs if d.get("organizationId") == ms[0].get("id"))
-    if getattr(devs, "complete", True) is False:
+    if getattr(fetched, "complete", True) is False:
         return (f'At least {n} devices in {ms[0].get("name")} were found in the returned page; '
-                f'the organization-wide total is unknown. {_partial_note(devs)}')
+                f'the organization-wide total is unknown. {_partial_note(fetched)}')
     return f'{n} devices in {ms[0].get("name")}.'
 
 
