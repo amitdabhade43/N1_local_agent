@@ -1701,16 +1701,16 @@ def recipe_devices_in(q):
 
 def recipe_count_device_prefix(q):
     """Count device names by prefix using the complete spec-aware inventory fetch."""
-    text = (q or "").strip()
-    if not re.search(r"\\b(?:count|how many|number of|total)\\b", text, re.I):
+    text = re.sub(r"""["']""", "", (q or "").strip())
+    if not re.search(r"\b(?:count|how many|number of|total)\b", text, re.I):
         return None
-    if not re.search(r"\\b(?:devices?|machines?|computers?|endpoints?)\\b", text, re.I):
+    if not re.search(r"\b(?:devices?|machines?|computers?|endpoints?)\b", text, re.I):
         return None
 
     patterns = (
-        r"\\b(?:device|machine|computer|endpoint)s?\\b.*?\\b(?:names?|hostnames?)\\s+(?:start|starts|begin|begins)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
-        r"\\b(?:devices?|machines?|computers?|endpoints?)\\s+(?:that\\s+)?(?:start|starts|begin|begins)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
-        r"\\b(?:names?|hostnames?)\\s+(?:starting|beginning)\\s+with\\s+['\\\"]?([a-z0-9._-]+)",
+        r"\b(?:device|machine|computer|endpoint)s?\b.*?\b(?:names?|hostnames?)\s+(?:start|starts|begin|begins)\s+with\s+([a-z0-9._-]+)",
+        r"\b(?:devices?|machines?|computers?|endpoints?)\s+(?:that\s+)?(?:start|starts|begin|begins)\s+with\s+([a-z0-9._-]+)",
+        r"\b(?:names?|hostnames?)\s+(?:starting|beginning)\s+with\s+([a-z0-9._-]+)",
     )
     match = next((re.search(pattern, text, re.I) for pattern in patterns
                   if re.search(pattern, text, re.I)), None)
@@ -1738,7 +1738,6 @@ def recipe_count_device_prefix(q):
         return (f'At least {matched} devices have names starting with "{prefix}" in the returned page; '
                 f'the complete total is unknown.{_partial_note(fetched)}')
     return f'{matched} devices have names starting with "{prefix}".'
-
 
 
 def fast_path(q):
