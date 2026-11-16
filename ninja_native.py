@@ -7,7 +7,7 @@ Keeps the UI contract of app.py: returns (answer, activity) where activity is a 
 {"kind":"call","tool","arguments"} / {"kind":"result","tool","result"} items.
 Reuses the spec index, tools and fast path from ninja_agent.py.
 """
-import asyncio, hashlib, json, os, re
+import asyncio, hashlib, json, os, re, time
 
 import requests
 import httpx
@@ -55,6 +55,33 @@ def _ensure():
     _ready = True
 
 
+
+def _try_fast_path(session_id, content):
+    """Execute only a deterministic read fast path without resolving an LLM provider."""
+    core.set_active_session(session_id)
+    try:
+        _ensure()
+        question = _text(content)
+        answer = core.fast_path(question)
+        if not answer:
+            return None
+        return answer, [
+            {"kind": "call", "tool": "fast_path", "arguments": {"question": question}},
+            {"kind": "result", "tool": "fast_path", "result": answer[:4000]},
+        ]
+    finally:
+        core.clear_active_session()
+
+
+async def try_fast_path(session_id, content):
+    """Async preflight used by app.py before potentially slow model discovery."""
+    try:
+        return await asyncio.to_thread(_try_fast_path, session_id, content)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Native NinjaOne fast path failed: {exc}")
+
 def _run_inner(session_id, model_id, content, base, progress=None, api_key=None):
     def emit(message, stage='working'):
         if progress:
@@ -91,7 +118,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None)
         return write_result, [{"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
                              {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
 
-    fp = core.fast_path(q)  # no-LLM answer for plain "how many devices" style questions
+    fp = core.fast_path(q)  # no-LLM answer for simple inventory questions
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
