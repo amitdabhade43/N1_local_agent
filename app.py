@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 import os
 import re
@@ -242,7 +243,8 @@ def get_model(model_id: str, base_url: str, api_key: str | None = None):
 
 
 async def get_agent(model_id: str, base_url: str, tools, api_key: str | None = None):
-    cache_key = f"{base_url}|{model_id}"
+    credential_fingerprint = hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:16]
+    cache_key = f"{base_url}|{model_id}|{credential_fingerprint}"
     async with _agents_lock:
         if cache_key not in _agents:
             _agents[cache_key] = create_agent(
