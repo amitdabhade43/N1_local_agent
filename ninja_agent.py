@@ -764,41 +764,85 @@ ENT = {
 }
 
 
+def _normalize_person_text(value):
+    return " ".join(re.findall(r"[a-z0-9]+", str(value or "").casefold()))
+
+
+def _person_name_match(name, row):
+    """Return an exact name-match score; similar spellings are not confirmed matches."""
+    query = _normalize_person_text(name)
+    if not query or not isinstance(row, dict):
+        return 0.0
+    first = _normalize_person_text(row.get("firstName") or row.get("first_name"))
+    last = _normalize_person_text(row.get("lastName") or row.get("last_name"))
+    full = " ".join(part for part in (first, last) if part)
+    display = _normalize_person_text(row.get("name") or row.get("displayName"))
+    email = _normalize_person_text(row.get("email") or row.get("emailAddress"))
+    if query == email:
+        return 1.0
+    if full and query == full:
+        return 1.0
+    if display and query == display:
+        return 1.0
+    # A single name must match a complete first-name or last-name token.
+    if len(query.split()) == 1:
+        tokens = set((first + " " + last + " " + display).split())
+        return 1.0 if query in tokens else 0.0
+    # Permit exact contiguous full-name matches, not approximate edit-distance matches.
+    for candidate in (full, display):
+        if candidate and (candidate.startswith(query + " ") or candidate.endswith(" " + query)):
+            return 1.0
+    return 0.0
+
+
 def t_resolve(a):
     path = ENT.get(a.get("kind"))
     op = op_by_path(path) if path else None
     if not op:
         return err(f"kind must be one of {list(ENT)}")
-    name = str(a.get("name", "")).lower().strip()
+    name = str(a.get("name", "")).strip()
+    kind = a.get("kind")
     query = {}
-    if a.get("kind") == "user":
+    if kind == "user":
         query["includeRoles"] = True
-    elif a.get("kind") == "technician" and path == "/v2/users":
+    elif kind == "technician" and path == "/v2/users":
         query.update({"userType": "TECHNICIAN", "includeRoles": True})
-    scored = []
     rows = fetch(op, path, query)
-    for r in rows:
-        if not isinstance(r, dict):
+    scored = []
+    people_kind = kind in {"user", "end_user", "technician", "contact"}
+    for row in rows:
+        if not isinstance(row, dict):
             continue
-        labels = [
-            str(r.get(k, ""))
-            for k in (
-                "name", "systemName", "dnsName", "displayName", "email", "title",
-                "subject", "hostname", "serialNumber", "productName", "conditionName",
-                "deviceName", "number", "uid",
+        if people_kind:
+            score = _person_name_match(name, row)
+        else:
+            labels = [
+                str(row.get(key, ""))
+                for key in (
+                    "name", "systemName", "dnsName", "displayName", "email", "title",
+                    "subject", "hostname", "serialNumber", "productName", "conditionName",
+                    "deviceName", "number", "uid",
+                )
+            ]
+            labels.append(f'{row.get("firstName", "")} {row.get("lastName", "")}'.strip())
+            score = max(
+                (difflib.SequenceMatcher(None, name.casefold(), label.casefold()).ratio()
+                 + (0.4 if name.casefold() in label.casefold() else 0)
+                 for label in labels if label),
+                default=0,
             )
-        ]
-        labels.append(f'{r.get("firstName", "")} {r.get("lastName", "")}'.strip())
-        best = max((difflib.SequenceMatcher(None, name, l.lower()).ratio() + (0.4 if name in l.lower() else 0)
-                    for l in labels if l), default=0)
-        scored.append((best, r))
-    scored.sort(key=lambda x: -x[0])
-    matched = [(score, row) for score, row in scored if score > 0.45]
-    top = [dict(slim(row), match=round(score, 2)) for score, row in matched[:10]]
+        if score > 0:
+            scored.append((score, row))
+    scored.sort(key=lambda item: -item[0])
+    matched = [(score, row) for score, row in scored if score >= 1.0] if people_kind else [
+        (score, row) for score, row in scored if score > 0.45
+    ]
+    top = [dict(slim(row), match=round(score, 2)) for score, row in matched[:100 if people_kind else 10]]
     result = {
         "matches": top,
         "total_matches": len(matched),
-        "note": "total_matches counts matching records in the retrieved result; matches contains at most 10 examples"
+        "note": "People matches require exact full-name or complete first/last-name token matches; similar spellings are not counted."
+                if people_kind else "total_matches counts matching records in the retrieved result; matches contains at most 10 examples",
     }
     if getattr(rows, "complete", True) is False:
         result["partial"] = True
@@ -1162,6 +1206,67 @@ def recipe_list_technician_names(q):
             "firstName and lastName fields."
         )
     return f"{len(names)} technician(s):\n" + "\n".join(f"{index}. {name}" for index, name in enumerate(names, 1))
+
+
+def recipe_search_people(q):
+    """Search people inventories using the name only, excluding tenant/context words."""
+    text = re.sub(r"\\s+", " ", str(q).strip())
+    match = re.search(
+        r"\\b(?:users?|people|accounts?|persons?)\\b.*?"
+        r"(?:\\bwith\\s+(?:the\\s+)?name\\s+|\\bnamed\\s+|\\bcalled\\s+)(.+?)\\s*$",
+        text, re.I,
+    )
+    if not match:
+        return None
+    name = re.sub(r"\\s+(?:in|at)\\s+(?:ninjaone|the\\s+ninjaone\\s+tenant)\\s*$", "", match.group(1), flags=re.I)
+    name = name.strip(" \\t\\r\\n\\\"'.,!?")
+    if not name or len(name) < 2:
+        return None
+
+    inventories = (
+        ("user", "Console / NinjaOne user"),
+        ("end_user", "End user"),
+        ("technician", "Technician"),
+        ("contact", "Contact"),
+    )
+    found, seen = [], set()
+    partial_notes = []
+    for kind, label in inventories:
+        try:
+            result = json.loads(t_resolve({"kind": kind, "name": name}))
+        except Exception as exc:
+            return f"Could not search the NinjaOne {label.lower()} inventory: {type(exc).__name__}: {exc}"
+        if result.get("error"):
+            return f"Could not search the NinjaOne {label.lower()} inventory: {result['error']}"
+        for row in result.get("matches", []):
+            email = str(row.get("email") or row.get("emailAddress") or "").strip().casefold()
+            identity = (email,) if email else (kind, str(row.get("id") or ""), _normalize_person_text(row_name(row)))
+            if identity in seen:
+                continue
+            seen.add(identity)
+            user_type = str(row.get("userType") or row.get("type") or "").upper()
+            category = "Technician" if user_type == "TECHNICIAN" else (
+                "End user" if user_type in {"END_USER", "ENDUSER"} or kind == "end_user" else label
+            )
+            found.append((category, row))
+        if result.get("partial"):
+            partial_notes.append(result.get("pagination_note") or f"{label} results may be incomplete.")
+
+    if not found:
+        suffix = " Some inventory results may be incomplete." if partial_notes else ""
+        return f'No exact NinjaOne person-name matches found for "{name}".{suffix}'
+    found.sort(key=lambda item: (item[0], row_name(item[1]).casefold()))
+    lines = []
+    for index, (category, row) in enumerate(found, 1):
+        email = row.get("email") or row.get("emailAddress") or "not returned"
+        identifier = row.get("id")
+        lines.append(
+            f"{index}. {row_name(row)} — {category}; Email: {email}; ID: {identifier if identifier is not None else 'not returned'}"
+        )
+    total = f'{len(found)} exact NinjaOne person record(s) matched "{name}".'
+    if partial_notes:
+        total += " Results may be incomplete: " + "; ".join(dict.fromkeys(partial_notes))
+    return total + "\\n" + "\\n".join(lines)
 
 
 def recipe_count_named(q):
@@ -1574,7 +1679,7 @@ def fast_path(q):
             names = [row_name(r) for r in rows[:50]]
             return f"{len(rows)} {label}: " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
