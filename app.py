@@ -93,7 +93,10 @@ _session_lock = asyncio.Lock()
 _logger = logging.getLogger("n1_local_agent")
 _GATEWAY_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("LLM_GATEWAY_DISCOVERY_CACHE_SECONDS", "30")))
 _GATEWAY_ERROR_CACHE_TTL_SECONDS = max(2.0, float(os.getenv("LLM_GATEWAY_ERROR_CACHE_SECONDS", "8")))
-_gateway_discovery_cache: dict[str, Any] = {"at": 0.0, "value": None}
+# Cache entries are valid only for the exact gateway configuration. This prevents
+# one test, environment change, or provider configuration from reusing another
+# gateway's model list. Credentials are represented only by a one-way digest.
+_gateway_discovery_cache: dict[str, Any] = {"at": 0.0, "value": None, "key": None}
 _gateway_discovery_lock = threading.Lock()
 
 
@@ -216,18 +219,39 @@ def _discover_gateway_uncached() -> dict[str, Any]:
 
 
 def discover_gateway(force: bool = False) -> dict[str, Any]:
-    """Return cached gateway discovery; force=True is used by the explicit refresh action."""
+    """Return cached gateway discovery for the active configuration.
+
+    force=True is used by the explicit refresh action. The cache key includes
+    every setting that can change the discovered model list or its capabilities,
+    while hashing the API key so the secret is never retained in the key.
+    """
+    cache_config = {
+        "base_url": normalize_gateway_base_url(os.getenv("LLM_GATEWAY_BASE_URL", "")),
+        "api_key_digest": hashlib.sha256(
+            os.getenv("LLM_GATEWAY_API_KEY", "").strip().encode("utf-8")
+        ).hexdigest(),
+        "model": os.getenv("LLM_GATEWAY_MODEL", "").strip(),
+        "vision_models": sorted(
+            item.strip() for item in os.getenv("LLM_GATEWAY_VISION_MODELS", "").split(",")
+            if item.strip()
+        ),
+        "ca_bundle": gateway_ca_bundle(),
+    }
+    cache_key = hashlib.sha256(
+        json.dumps(cache_config, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     now = time.monotonic()
     with _gateway_discovery_lock:
         cached = _gateway_discovery_cache.get("value")
-        if cached is not None and not force:
+        same_configuration = _gateway_discovery_cache.get("key") == cache_key
+        if cached is not None and same_configuration and not force:
             ttl = (_GATEWAY_CACHE_TTL_SECONDS if cached.get("connected")
                    else _GATEWAY_ERROR_CACHE_TTL_SECONDS)
             if now - _gateway_discovery_cache["at"] < ttl:
                 return {**cached, "models": [dict(item) for item in cached.get("models", [])]}
 
         result = _discover_gateway_uncached()
-        _gateway_discovery_cache.update(at=time.monotonic(), value=result)
+        _gateway_discovery_cache.update(at=time.monotonic(), value=result, key=cache_key)
         return {**result, "models": [dict(item) for item in result.get("models", [])]}
 
 
