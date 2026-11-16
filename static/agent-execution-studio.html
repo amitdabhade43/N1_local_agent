@@ -116,7 +116,7 @@ function renderSteps(){
   el.innerHTML='<div class="step-main" role="button" tabindex="0"><span class="num">'+(s.index+1)+'</span><div><div class="step-title">'+esc(s.title)+'</div><div class="step-meta">'+esc(meta)+'</div></div><span class="status '+statusClass(s.status)+'">'+esc(s.status.toUpperCase())+'</span><span>⌄</span></div><div class="step-detail"><div class="detail-label">Request / arguments</div><pre class="code">'+esc(pretty(s.request??"No request payload reported."))+'</pre><div class="detail-label">Response / result</div><pre class="code">'+esc(pretty(s.response??"No response payload reported."))+'</pre></div>';
   const main=el.querySelector(".step-main");main.addEventListener("click",()=>{state.selected=s.index;renderAll()});main.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();state.selected=s.index;renderAll()}});
   list.append(el);
-  if(s.kind==="approval"){
+  if(s.kind==="approval"&&s.status==="pending"){
    const detail=el.querySelector(".step-detail"),controls=document.createElement("div");
    controls.style.cssText="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px";
    const approve=document.createElement("button");approve.className="btn primary";approve.textContent="Approve and execute";
@@ -228,7 +228,7 @@ function exportLogs(){const payload={session_id:state.sessionId,provider:state.p
 $("sendBtn").onclick=send;$("prompt").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
 $("provider").onchange=()=>{state.provider=$("provider").value;state.model="";loadConfig()};
 $("model").onchange=()=>state.model=$("model").value;
-$("refreshBtn").onclick=()=>loadConfig(true);$("restartBtn").onclick=()=>{if(state.lastPrompt){$("prompt").value=state.lastPrompt;resetRun();$("prompt").value=state.lastPrompt}else resetRun()};
+$("refreshBtn").onclick=()=>loadConfig(true);$("restartBtn").onclick=()=>{const previous=state.lastPrompt;resetRun();if(previous){$("prompt").value=previous;send()}};
 $("newSessionBtn").onclick=async()=>{if(state.sessionId){try{await fetch("/api/session/"+encodeURIComponent(state.sessionId),{method:"DELETE"})}catch{}}state.sessionId=null;resetRun();$("sessionLabel").textContent="New session · Existing backend"};
 $("newRunNav").onclick=()=>$("prompt").focus();$("toolsNav").onclick=loadTools;$("homeBtn").onclick=()=>location.href="/";$("exportBtn").onclick=exportLogs;$("exportNav").onclick=exportLogs;
 $("shareBtn").onclick=async()=>{try{await navigator.clipboard.writeText(location.href);toast("Template URL copied.")}catch{toast("Copy the page URL from your browser.")}};
