@@ -659,22 +659,26 @@ async def run_generic_mcp_read(tools, message: str):
     records = _generic_result_records(data)
     complete = bool(result.get("complete", False))
     total = find_total_field(data)
+    resource = endpoint.split(None, 1)[1].rstrip("/").rsplit("/", 1)[-1]
+    resource = resource.replace("-", " ").replace("_", " ")
+    if not resource or resource.startswith("{"):
+        resource = "records"
     fetched_count = result.get("items_fetched")
     if not isinstance(fetched_count, int) or isinstance(fetched_count, bool):
         fetched_count = len(records)
     count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", message, re.I))
     if count_intent:
         if total is not None:
-            answer = f"{total} records returned by NinjaOne for that request."
+            answer = f"{total} {resource} in NinjaOne."
         elif complete:
-            answer = f"{fetched_count} records returned by NinjaOne for that request."
+            answer = f"{fetched_count} {resource} in NinjaOne."
         else:
-            answer = (f"At least {fetched_count} records were returned by NinjaOne; "
+            answer = (f"At least {fetched_count} {resource} were returned by NinjaOne; "
                       "the complete total is unknown because the result is incomplete.")
     else:
         labels = [_generic_record_label(record) for record in records[:50]]
         if labels:
-            answer = f"{fetched_count} records in the returned result: " + ", ".join(labels)
+            answer = f"{fetched_count} {resource} in the returned result: " + ", ".join(labels)
         else:
             answer = "NinjaOne returned no records for that request."
         if not complete:
