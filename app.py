@@ -542,10 +542,10 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     return None
 
 
-async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None):
+async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
-        return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback, api_key)
+        return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback, api_key, fast_path_checked)
 
     if progress_callback:
         progress_callback({'stage': 'discovery', 'message': 'Connecting to the MCP tool catalog.'})
@@ -760,6 +760,7 @@ async def chat_stream(req: ChatRequest):
                     session_id, model_id, req.message, base_url,
                     progress_callback=lambda item: publish({"type": "progress", **item}),
                     api_key=api_key,
+                    fast_path_checked=os.getenv("AGENT_BACKEND", "mcp").lower() == "native",
                 )
                 _logger.info("chat_complete backend=%s route=agent provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
                 publish({"type": "complete", "session_id": session_id, "provider": provider, "model": req.model,
@@ -800,7 +801,10 @@ async def chat(req: ChatRequest):
         _logger.info("chat_complete backend=%s route=direct provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
         return {"session_id": session_id, "provider": provider, "model": req.model, "answer": answer, "activity": activity}
     model_id, base_url, api_key = await asyncio.to_thread(resolve_model_provider, provider, req.model)
-    answer, activity = await run_agent(session_id, model_id, req.message, base_url, api_key=api_key)
+    answer, activity = await run_agent(
+        session_id, model_id, req.message, base_url, api_key=api_key,
+        fast_path_checked=os.getenv("AGENT_BACKEND", "mcp").lower() == "native",
+    )
     _logger.info("chat_complete backend=%s route=agent provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
     return {"session_id": session_id, "provider": provider, "model": req.model, "answer": answer, "activity": activity}
 
