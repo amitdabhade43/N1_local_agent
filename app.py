@@ -528,7 +528,7 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, f
 
 
 _CONTEXTUAL_FOLLOWUP_RE = re.compile(
-    r"\b(?:those|these|them|they|their|that|it|there|same|above|previous|former|latter|ones)\b"
+    r"\b(?:those|these|them|they|their|that|same|above|previous|former|latter|ones)\b"
     r"|\b(?:what about|how about|and then|also do that|do the same)\b",
     re.I,
 )
