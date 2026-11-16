@@ -46,7 +46,9 @@ async def test_generic_mcp_count_uses_discovery_schema_and_get_result():
     assert [item["tool"] for item in activity if item["kind"] == "call"] == [
         "discover_endpoints", "inspect_endpoint", "execute_endpoint"
     ]
-    tools[0].ainvoke.assert_awaited_once()
+    tools[0].ainvoke.assert_awaited_once_with({
+        "intent": "How many devices?", "candidate_limit": 8,
+    })
     tools[1].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
     tools[2].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
 
@@ -64,6 +66,21 @@ async def test_generic_mcp_count_discloses_incomplete_result():
 
 
 @pytest.mark.asyncio
+async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_total():
+    tools = toolset()
+    tools[1] = FakeTool("inspect_endpoint", {
+        "method": "GET",
+        "parameters": [{"name": "after", "in": "query", "required": False}],
+        "responses": {"200": {"content": {"application/json": {
+            "schema": {"properties": {"pageInfo": {"properties": {"nextCursor": {"type": "string}}}}
+        }}}},
+    })
+    result = await app.run_generic_mcp_read(tools, "How many devices?")
+
+    assert result is None
+    tools[2].ainvoke.assert_not_awaited()
+
+
 async def test_generic_mcp_skips_endpoints_with_required_parameters():
     tools = toolset()
     tools[1] = FakeTool("inspect_endpoint", {
