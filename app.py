@@ -668,19 +668,19 @@ async def run_generic_mcp_read(tools, message: str):
         fetched_count = len(records)
     count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", message, re.I))
     if count_intent:
-        if total is not None:
-            answer = f"{total} {resource} in NinjaOne."
-        elif complete:
-            answer = f"{fetched_count} {resource} in NinjaOne."
+        count_value = total if total is not None else fetched_count
+        record_word = "record" if count_value == 1 else "records"
+        if total is not None or complete:
+            answer = f"NinjaOne returned {count_value} {record_word} for {resource}."
         else:
-            answer = (f"At least {fetched_count} {resource} were returned by NinjaOne; "
+            answer = (f"NinjaOne returned at least {count_value} {record_word} for {resource}; "
                       "the complete total is unknown because the result is incomplete.")
     else:
         labels = [_generic_record_label(record) for record in records[:50]]
         if labels:
-            answer = f"{fetched_count} {resource} in the returned result: " + ", ".join(labels)
+            answer = f"NinjaOne returned {fetched_count} records for {resource}: " + ", ".join(labels)
         else:
-            answer = "NinjaOne returned no records for that request."
+            answer = f"NinjaOne returned no records for {resource}."
         if not complete:
             answer += " The result may be incomplete; use a more specific query or pagination."
         if fetched_count > 50:
