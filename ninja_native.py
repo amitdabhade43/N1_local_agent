@@ -69,6 +69,27 @@ def _ensure():
 
 
 
+_AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)[.!\\s]*$", re.I)
+
+
+def _pending_for_session(session_id):
+    with core._pending_lock:
+        return any(item.get("session_id") == session_id for item in core._pending_actions.values())
+
+
+def _recover_unprepared_mutation(question, history):
+    """A conversational yes may resume preparation, but can never approve a write."""
+    if not _AFFIRMATIVE_REPLY_RE.fullmatch(str(question or "").strip()):
+        return None
+    for item in reversed(history or []):
+        if item.get("role") != "user":
+            continue
+        previous = _text(item.get("content", ""))
+        if core._is_mutation_request(previous):
+            return previous
+    return None
+
+
 def _try_fast_path(session_id, content):
     """Execute only a deterministic read fast path without resolving an LLM provider."""
     core.set_active_session(session_id)
@@ -133,7 +154,22 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             progress({'stage': stage, 'message': message})
     _ensure()
     q = _text(content)
+    hist = _sessions.get(session_id, [])[-6:]
     emit("Checking whether this question can be answered directly.", "understanding")
+    # A typed "yes"/"approved" is never an approval action. If the previous
+    # mutation turn only produced prose and no pending action exists, resume
+    # preparation from that original request so the UI can receive a real card.
+    if _AFFIRMATIVE_REPLY_RE.fullmatch(q.strip()):
+        if _pending_for_session(session_id):
+            return (
+                "There is already a pending NinjaOne approval request. Please use its "
+                "Approve and execute or Reject button; a chat reply cannot approve it.",
+                [],
+            )
+        recovered = _recover_unprepared_mutation(q, hist)
+        if recovered:
+            q = recovered
+            emit("Resuming the previous change request to create its approval card.", "understanding")
     # Device-access grants are routed deterministically so the model cannot stall
     # while narrating a plan. The recipe only prepares a UI approval request.
     write_result = core.recipe_add_device_access(q)
@@ -169,7 +205,6 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
 
     activity = []
-    hist = _sessions.get(session_id, [])[-6:]
     system = core.SYSTEM + core.candidates(q) + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
