@@ -6,6 +6,11 @@ import app
 
 
 class GatewayProviderTests(unittest.TestCase):
+    def setUp(self):
+        # Each test owns its mocked /models response. Do not let a previous
+        # test's cached provider catalog bypass the current mock.
+        app._gateway_discovery_cache.update(at=0.0, value=None, key=None)
+
     def test_normalize_full_chat_completions_url(self):
         self.assertEqual(
             app.normalize_gateway_base_url("https://llm-gateway.example.com/v1/chat/completions"),
