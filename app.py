@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_mcp_adapters.tools import load_mcp_tools
 from pydantic import BaseModel
 
 load_dotenv()
@@ -499,13 +500,18 @@ def _mcp_write_request(tool_name: str, arguments: dict[str, Any]):
 
 
 def _mcp_approval_action(session_id: str, tool: Any, arguments: dict[str, Any],
-                         method: str, path: str, body: Any) -> dict[str, Any]:
+                         method: str, path: str, body: Any,
+                         client_key: str | None = None) -> dict[str, Any]:
     action_id = secrets.token_urlsafe(24)
     summary = getattr(tool, "description", "") or f"Execute {method} {path}"
     action = {
         "action_id": action_id,
         "session_id": session_id,
-        "tool": tool,
+        "tool_name": tool.name,
+        "client_key": client_key,
+        # Stateless tool handles are retained only for callers that do not
+        # supply a client key. Stateful session tools must never outlive a session.
+        "tool": tool if client_key is None else None,
         "arguments": {key: value for key, value in arguments.items() if key != "approval_token"},
         "method": method,
         "path": path,
@@ -537,8 +543,9 @@ def _mcp_approval_action(session_id: str, tool: Any, arguments: dict[str, Any],
     }
 
 
-def wrap_mcp_write_tools(tools):
-    """Wrap MCP write executors so the model can prepare, but never self-approve, writes."""
+def wrap_mcp_write_tools(tools, approval_tools=None, client_key: str | None = None):
+    """Wrap writes; use stateless cached handles for approvals after the chat session closes."""
+    approval_tool_map = {tool.name: tool for tool in (approval_tools or tools)}
     wrapped = []
     for tool in tools:
         if tool.name.rsplit("__", 1)[-1].casefold() not in {"execute_endpoint", "execute_raw_request"}:
@@ -573,7 +580,15 @@ def wrap_mcp_write_tools(tools):
                         "error": "MCP writes are disabled until NINJA_MCP_APPROVAL_SECRET is configured in the Local Agent environment and the MCP server environment.",
                         "executed": False,
                     })
-                action = _mcp_approval_action(session_id, _tool, arguments, method, path, body)
+                approval_tool = approval_tool_map.get(_tool.name)
+                if approval_tool is None:
+                    return json.dumps({
+                        "error": "The approval execution handle is unavailable; no write was prepared.",
+                        "executed": False,
+                    })
+                action = _mcp_approval_action(
+                    session_id, approval_tool, arguments, method, path, body, client_key
+                )
                 return json.dumps(action, ensure_ascii=False, default=str)
             except Exception as exc:
                 _logger.exception("Could not prepare MCP approval request")
@@ -630,6 +645,12 @@ async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[st
         if time.time() > action.get("expires_at", 0):
             _mcp_pending_actions.pop(action_id, None)
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
+        tool = action.get("tool")
+        if tool is None:
+            available_tools = _tools_by_config.get(action.get("client_key") or "", [])
+            tool = next((item for item in available_tools if item.name == action.get("tool_name")), None)
+        if tool is None:
+            return {"ok": False, "error": "The MCP execution connection is no longer available. Prepare the request again."}
         # Consume before execution: repeated clicks cannot submit the write twice.
         _mcp_pending_actions.pop(action_id, None)
 
@@ -637,7 +658,7 @@ async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[st
         token = _mint_mcp_approval_token(action["method"], action["path"], action.get("body"))
         arguments = dict(action["arguments"])
         arguments["approval_token"] = token
-        raw_result = await action["tool"].ainvoke(arguments)
+        raw_result = await tool.ainvoke(arguments)
         result = parse_mcp_result(raw_result)
         if isinstance(result, dict):
             ok = bool(result.get("executed")) and not result.get("error")
@@ -872,8 +893,9 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
     return tool.name, {}, operation, fields
 
 
-async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, fields: list[str] | None = None):
-    tools = await get_tools()
+async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
+                              fields: list[str] | None = None, tools_override=None):
+    tools = tools_override if tools_override is not None else await get_tools()
     tool = next((t for t in tools if t.name == tool_name), None)
     if tool is None:
         raise HTTPException(status_code=502, detail=f"MCP tool not found: {tool_name}")
@@ -1131,7 +1153,13 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
         await _record_mcp_direct_turn(session_id, message_content, result)
         return result
     try:
-        result = await run_generic_mcp_read(tools, message_text)
+        if is_simple_generic_read(message_text):
+            client_key, client = _mcp_connection()
+            async with client.session("ninjaone") as mcp_session:
+                session_tools = await load_mcp_tools(mcp_session)
+                result = await run_generic_mcp_read(session_tools, message_text)
+        else:
+            result = None
         await _record_mcp_direct_turn(session_id, message_content, result)
         return result
     except Exception as exc:
