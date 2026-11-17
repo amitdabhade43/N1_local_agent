@@ -416,15 +416,12 @@ def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
     if not semantic_model and discovery:
         available = discovery.get("models") or []
         semantic_model = next((item.get("id") for item in available if item.get("id")), "")
-    if semantic_base:
-        child_env["NINJA_MCP_LLM_BASE_URL"] = semantic_base.rstrip("/")
-    if semantic_model:
-        child_env["NINJA_MCP_LLM_MODEL"] = semantic_model
+    child_env["NINJA_MCP_LLM_BASE_URL"] = semantic_base.rstrip("/") if semantic_base else ""
+    child_env["NINJA_MCP_LLM_MODEL"] = semantic_model or ""
     semantic_key = os.getenv("NINJA_MCP_LLM_API_KEY", "").strip()
     if not semantic_key and api_key and api_key != "local":
         semantic_key = api_key
-    if semantic_key:
-        child_env["NINJA_MCP_LLM_API_KEY"] = semantic_key
+    child_env["NINJA_MCP_LLM_API_KEY"] = semantic_key
     if not child_env.get("NINJA_MCP_LLM_TIMEOUT"):
         child_env["NINJA_MCP_LLM_TIMEOUT"] = os.getenv("NINJA_MCP_LLM_TIMEOUT", "").strip() or "20"
 
