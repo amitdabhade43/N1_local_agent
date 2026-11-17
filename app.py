@@ -419,7 +419,7 @@ def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
     child_env["NINJA_MCP_LLM_BASE_URL"] = semantic_base.rstrip("/") if semantic_base else ""
     child_env["NINJA_MCP_LLM_MODEL"] = semantic_model or ""
     semantic_key = os.getenv("NINJA_MCP_LLM_API_KEY", "").strip()
-    if not semantic_key and api_key and api_key != "local":
+    if not semantic_key and api_key:
         semantic_key = api_key
     child_env["NINJA_MCP_LLM_API_KEY"] = semantic_key
     if not child_env.get("NINJA_MCP_LLM_TIMEOUT"):
