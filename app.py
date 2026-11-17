@@ -1004,7 +1004,7 @@ async def run_generic_mcp_read(tools, message: str):
     discover = find_tool("discover_endpoints")
     inspect = find_tool("inspect_endpoint")
     execute = find_tool("execute_endpoint")
-    if not (discover and inspect and execute):
+    if not (discover and execute):
         return None
 
     activity = []
@@ -1030,10 +1030,16 @@ async def run_generic_mcp_read(tools, message: str):
     if not isinstance(endpoint, str) or not endpoint.upper().startswith("GET "):
         return None
 
-    inspect_raw = await inspect.ainvoke({"endpoint": endpoint})
-    details = parse_mcp_result(inspect_raw)
-    activity.append({"kind": "call", "tool": "inspect_endpoint", "arguments": {"endpoint": endpoint}})
-    activity.append({"kind": "result", "tool": "inspect_endpoint", "result": str(details)[:2500]})
+    # Newer gateways attach the selected endpoint's OpenAPI detail to the
+    # discovery response. Keep inspect_endpoint as a compatibility fallback.
+    details = discovery.get("selected_details")
+    if not isinstance(details, dict):
+        if inspect is None:
+            return None
+        inspect_raw = await inspect.ainvoke({"endpoint": endpoint})
+        details = parse_mcp_result(inspect_raw)
+        activity.append({"kind": "call", "tool": "inspect_endpoint", "arguments": {"endpoint": endpoint}})
+        activity.append({"kind": "result", "tool": "inspect_endpoint", "result": str(details)[:2500]})
     if not isinstance(details, dict) or details.get("error"):
         return None
     parameters = [item for item in details.get("parameters", []) if isinstance(item, dict)]
