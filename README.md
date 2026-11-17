@@ -76,7 +76,7 @@ python -m pytest -q
 cd ..\N1_local_agent
 ```
 
-   The Local Agent launches the gateway automatically over STDIO; you do not need to start a separate MCP HTTP server.
+   The Local Agent launches the gateway automatically over STDIO; you do not need to start a separate MCP HTTP server. Multi-step agent runs keep one MCP session open across their tool calls, so the gateway can reuse its OAuth token and local semantic/HTTP connection caches. The later approval click opens a fresh MCP call and uses the same signed approval contract.
 3. From the Local Agent project directory run:
 
 ```powershell
