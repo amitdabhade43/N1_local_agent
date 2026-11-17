@@ -1179,6 +1179,13 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     if backend == "native":
         return await ninja_native.try_fast_path(session_id, message_content)
 
+    # Only open an MCP preflight session for the narrow, deterministic simple
+    # read class. Complex/scoped requests go straight to run_agent, which opens
+    # the correctly model-configured session once instead of paying for a
+    # throwaway preflight process followed by the real agent process.
+    if not is_simple_generic_read(message_text):
+        return None
+
     try:
         # Load tools once inside the session that will execute this request.
         # The previous flow called client.get_tools() first and then opened a
