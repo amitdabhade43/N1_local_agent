@@ -44,6 +44,7 @@ class MCPStdioConfigurationTests(unittest.TestCase):
                     "NINJA_BASE_URL": "https://eu.ninjarmm.com",
                     "NINJA_SCOPE": "monitoring management",
                     "NINJA_MCP_APPROVAL_SECRET": "test-approval-secret",
+                    "LLM_GATEWAY_API_KEY": "must-not-be-forwarded",
                 }, clear=False),
             ):
                 key, client = app._mcp_connection(
@@ -66,6 +67,8 @@ class MCPStdioConfigurationTests(unittest.TestCase):
             self.assertEqual(child_env["NINJA_MCP_APPROVAL_SECRET"], "test-approval-secret")
             self.assertEqual(child_env["NINJA_MCP_LLM_BASE_URL"], "http://127.0.0.1:64343/v1")
             self.assertEqual(child_env["NINJA_MCP_LLM_MODEL"], "qwen3-14b-generic-gpu")
+            self.assertNotIn("LLM_GATEWAY_API_KEY", child_env)
+            self.assertNotIn("FOUNDRY_API_KEY", child_env)
 
     def test_management_scope_is_required_for_mcp_writes(self):
         from unittest.mock import patch
@@ -75,6 +78,33 @@ class MCPStdioConfigurationTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"NINJA_SCOPE": "monitoring management"}, clear=False):
             self.assertIsNone(app._mcp_scope_error())
+
+    def test_mcp_approval_token_uses_gateway_canonical_body_contract(self):
+        import base64
+        import hashlib
+        import hmac
+        import json
+        from unittest.mock import patch
+
+        body = {"addDeviceIds": [24, 32], "removeDeviceIds": []}
+        with patch.dict(os.environ, {"NINJA_MCP_APPROVAL_SECRET": "shared-test-secret"}, clear=False):
+            token = app._mint_mcp_approval_token("PATCH", "/v2/user/end-user/42/device-access", body)
+
+        encoded, signature = token.split(".", 1)
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        expected_digest = hashlib.sha256(
+            json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+        expected_signature = hmac.new(
+            b"shared-test-secret", encoded.encode("ascii"), hashlib.sha256
+        ).digest()
+        supplied_signature = base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))
+        self.assertEqual(payload["method"], "PATCH")
+        self.assertEqual(payload["path"], "/v2/user/end-user/42/device-access")
+        self.assertEqual(payload["body_sha256"], expected_digest)
+        self.assertTrue(hmac.compare_digest(expected_signature, supplied_signature))
+        self.assertGreater(payload["exp"], 0)
+        self.assertTrue(payload["jti"])
 
     def test_mcp_write_request_resolves_endpoint_path_parameters(self):
         result = app._mcp_write_request(
