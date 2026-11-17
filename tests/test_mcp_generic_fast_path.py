@@ -102,6 +102,17 @@ async def test_generic_mcp_preflight_runs_before_provider_resolution():
 
 
 @pytest.mark.asyncio
+async def test_complex_mcp_request_skips_throwaway_preflight_session():
+    with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
+        with patch.object(app, "_mcp_connection", side_effect=AssertionError("preflight must be skipped")):
+            result = await app.try_direct_backend_request(
+                "session-complex", "List devices assigned to Rene"
+            )
+
+    assert result is None
+
+
+@pytest.mark.asyncio
 async def test_generic_mcp_count_discloses_incomplete_result():
     tools = toolset({
         "endpoint": "GET /v2/devices", "executed": True, "complete": False,
