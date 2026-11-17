@@ -196,7 +196,7 @@ async def test_generic_mcp_uses_openapi_after_id_cursor_pagination():
     tools[3].ainvoke.assert_awaited_once_with({
         "endpoint": "GET /v2/devices", "cursor_parameter": "after",
         "cursor_field": "id", "page_size_parameter": "pageSize",
-        "page_size": 200, "max_pages": 50,
+        "page_size": 1000, "max_pages": 200,
     })
     tools[2].ainvoke.assert_not_awaited()
 
