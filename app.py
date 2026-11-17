@@ -1087,7 +1087,7 @@ async def run_generic_mcp_read(tools, message: str):
         response_raw = await pagination_tool.ainvoke({
             "endpoint": endpoint, "cursor_parameter": cursor_name,
             "cursor_field": "id", "page_size_parameter": size_name,
-            "page_size": 200, "max_pages": 50,
+            "page_size": 1000, "max_pages": 200,
         })
         execution_tool_name = "execute_paginated_endpoint"
     elif has_cursor or "nextcursor" in response_text:
