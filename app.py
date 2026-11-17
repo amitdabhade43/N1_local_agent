@@ -1308,7 +1308,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
     has_tool_call = any(item.get("kind") == "call" for item in activity)
     lookup_question = bool(re.search(
-        r"\\b(devices?|end[\\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\\b",
+        r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
         re.I,
     ))
