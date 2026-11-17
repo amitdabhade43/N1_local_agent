@@ -9,6 +9,7 @@ import re
 import secrets
 import threading
 import time
+from pathlib import Path
 import requests
 import httpx
 import uuid
@@ -34,7 +35,8 @@ from foundry_discovery import discover_foundry, is_vision_model
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
-MCP_URL = os.getenv("MCP_URL", "http://127.0.0.1:8000/mcp")
+MCP_TRANSPORT = os.getenv("MCP_TRANSPORT", "stdio").strip().lower()
+MCP_URL = os.getenv("MCP_URL", "").strip()
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8080"))
 MAX_HISTORY_MESSAGES = 8
@@ -83,14 +85,13 @@ Rules:
 app = FastAPI(title="NinjaOne Local Expert Agent")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-mcp_client = MultiServerMCPClient({
-    "ninjaone": {
-        "transport": "streamable_http",
-        "url": MCP_URL,
-    }
-})
-
+# MCP clients/tools are cached by connection and semantic-model configuration.
+# STDIO is the default because the NinjaOne API Gateway repository runs as a
+# local MCP subprocess; Streamable HTTP remains available as an explicit option.
+mcp_client = None
+_mcp_clients: dict[str, Any] = {}
 _tools = None
+_tools_by_config: dict[str, list[Any]] = {}
 _tools_lock = asyncio.Lock()
 _agents: dict[str, Any] = {}
 _agents_lock = asyncio.Lock()
@@ -303,18 +304,144 @@ def provider_catalog() -> dict[str, Any]:
     }
 
 
-async def get_tools():
+def _mcp_server_directory() -> Path:
+    configured = os.getenv("NINJA_MCP_SERVER_DIR", "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = Path(__file__).resolve().parent / path
+        return path.resolve()
+    return (Path(__file__).resolve().parent.parent / "NinjaRMM-API-Gateway-MCP").resolve()
+
+
+def _mcp_python_executable(server_dir: Path) -> Path:
+    configured = os.getenv("NINJA_MCP_PYTHON", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    relative = Path(".venv") / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    return (server_dir / relative).resolve()
+
+
+def _mcp_scope_error() -> str | None:
+    raw_scope = os.getenv("NINJA_SCOPE") or os.getenv("NINJAONE_SCOPE") or "monitoring"
+    scopes = {item for item in re.split(r"[\s,]+", raw_scope.strip().lower()) if item}
+    if "management" not in scopes:
+        return (
+            "The configured NinjaOne scope does not include 'management'. "
+            "Enable Management for the NinjaOne OAuth application and set "
+            "NINJA_SCOPE=monitoring management in the shared .env before approving writes."
+        )
+    return None
+
+
+def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
+                    api_key: str | None = None):
+    transport = MCP_TRANSPORT
+    if transport in {"http", "streamable-http"}:
+        transport = "streamable_http"
+    if transport == "streamable_http":
+        if not MCP_URL:
+            raise RuntimeError("MCP_URL must be configured when MCP_TRANSPORT=streamable_http.")
+        key = "http:" + MCP_URL
+        client = _mcp_clients.get(key)
+        if client is None:
+            client = MultiServerMCPClient({
+                "ninjaone": {"transport": "streamable_http", "url": MCP_URL}
+            })
+            _mcp_clients[key] = client
+        return key, client
+
+    if transport != "stdio":
+        raise RuntimeError("MCP_TRANSPORT must be 'stdio' or 'streamable_http'.")
+
+    server_dir = _mcp_server_directory()
+    python_exe = _mcp_python_executable(server_dir)
+    if not server_dir.is_dir():
+        raise RuntimeError(
+            f"NinjaOne MCP repository was not found at {server_dir}. "
+            "Clone amitdabhade43/NinjaRMM-API-Gateway-MCP beside N1_local_agent "
+            "or set NINJA_MCP_SERVER_DIR in .env."
+        )
+    if not python_exe.is_file():
+        raise RuntimeError(
+            f"MCP Python environment was not found at {python_exe}. "
+            "Create the MCP repository's .venv and install it with "
+            "python -m pip install -e \".[dev]\"."
+        )
+
+    child_env = os.environ.copy()
+    # Native and MCP use different variable names. Keep NINJA_SCOPE as the
+    # single source of truth and map it into the gateway's expected names.
+    child_env["NINJAONE_CLIENT_ID"] = os.getenv("NINJA_CLIENT_ID", "").strip()
+    child_env["NINJAONE_CLIENT_SECRET"] = os.getenv("NINJA_CLIENT_SECRET", "").strip()
+    native_base = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").strip()
+    native_host = urlsplit(native_base if "://" in native_base else "https://" + native_base).hostname
+    if not native_host:
+        raise RuntimeError("NINJA_BASE_URL must contain a valid NinjaOne regional hostname.")
+    child_env["NINJAONE_INSTANCE"] = native_host
+    child_env["NINJAONE_SCOPE"] = os.getenv("NINJA_SCOPE", "monitoring").strip()
+    child_env["NINJA_MCP_APPROVAL_SECRET"] = os.getenv("NINJA_MCP_APPROVAL_SECRET", "").strip()
+
+    # Use the same dynamically discovered provider endpoint and selected model
+    # as the main agent. An explicit NINJA_MCP_LLM_* value remains an override.
+    discovery = None
+    if not base_url or not model_id:
+        discovery = discover_foundry()
+    semantic_base = os.getenv("NINJA_MCP_LLM_BASE_URL", "").strip() or base_url
+    if not semantic_base and discovery:
+        semantic_base = discovery.get("base_url") or ""
+    semantic_model = os.getenv("NINJA_MCP_LLM_MODEL", "").strip() or model_id
+    if not semantic_model and discovery:
+        available = discovery.get("models") or []
+        semantic_model = next((item.get("id") for item in available if item.get("id")), "")
+    if semantic_base:
+        child_env["NINJA_MCP_LLM_BASE_URL"] = semantic_base.rstrip("/")
+    if semantic_model:
+        child_env["NINJA_MCP_LLM_MODEL"] = semantic_model
+    semantic_key = os.getenv("NINJA_MCP_LLM_API_KEY", "").strip()
+    if not semantic_key and api_key and api_key != "local":
+        semantic_key = api_key
+    if semantic_key:
+        child_env["NINJA_MCP_LLM_API_KEY"] = semantic_key
+    child_env.setdefault("NINJA_MCP_LLM_TIMEOUT", "20")
+
+    key_material = "|".join((
+        str(server_dir), str(python_exe), semantic_base, semantic_model,
+        hashlib.sha256(semantic_key.encode("utf-8")).hexdigest(),
+    ))
+    key = "stdio:" + hashlib.sha256(key_material.encode("utf-8")).hexdigest()
+    client = _mcp_clients.get(key)
+    if client is None:
+        client = MultiServerMCPClient({
+            "ninjaone": {
+                "transport": "stdio",
+                "command": str(python_exe),
+                "args": ["-m", "ninja_mcp"],
+                "cwd": str(server_dir),
+                "env": child_env,
+            }
+        })
+        _mcp_clients[key] = client
+    return key, client
+
+
+async def get_tools(model_id: str | None = None, base_url: str | None = None,
+                    api_key: str | None = None):
     global _tools
-    async with _tools_lock:
-        if _tools is None:
-            try:
-                _tools = await mcp_client.get_tools()
-            except Exception as exc:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"Could not connect to MCP server {MCP_URL}: {exc}",
-                )
-        return _tools
+    try:
+        key, client = _mcp_connection(model_id, base_url, api_key)
+        async with _tools_lock:
+            if key not in _tools_by_config:
+                _tools_by_config[key] = await client.get_tools()
+            _tools = _tools_by_config[key]
+            return _tools
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not connect to the NinjaOne MCP gateway: {type(exc).__name__}: {exc}",
+        )
 
 
 def _mcp_write_request(tool_name: str, arguments: dict[str, Any]):
@@ -418,6 +545,9 @@ def wrap_mcp_write_tools(tools):
                 if not session_id:
                     return json.dumps({"error": "No active chat session is associated with this approval request.",
                                        "executed": False})
+                scope_error = _mcp_scope_error()
+                if scope_error:
+                    return json.dumps({"error": scope_error, "executed": False}, ensure_ascii=False)
                 if not os.getenv("NINJA_MCP_APPROVAL_SECRET", "").strip():
                     return json.dumps({
                         "error": "MCP writes are disabled until NINJA_MCP_APPROVAL_SECRET is configured in the Local Agent environment and the MCP server environment.",
@@ -468,6 +598,9 @@ def _mint_mcp_approval_token(method: str, path: str, body: Any) -> str:
 
 
 async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[str, Any]:
+    scope_error = _mcp_scope_error()
+    if scope_error:
+        return {"ok": False, "error": scope_error}
     with _mcp_pending_lock:
         action = _mcp_pending_actions.get(action_id)
         if not action:
@@ -1013,7 +1146,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
 
     if progress_callback:
         progress_callback({'stage': 'discovery', 'message': 'Connecting to the MCP tool catalog.'})
-    tools = await get_tools()
+    tools = await get_tools(model_id, base_url, api_key)
     if not tools:
         raise HTTPException(status_code=502, detail="MCP server returned no tools")
 
@@ -1147,7 +1280,8 @@ async def config():
     catalog = await asyncio.to_thread(provider_catalog)
     return {
         **catalog,
-        "mcp_url": MCP_URL,
+        "mcp_url": MCP_URL or str(_mcp_server_directory()),
+        "mcp_transport": MCP_TRANSPORT,
         "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
         "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
     }
@@ -1159,7 +1293,8 @@ async def refresh_foundry():
     catalog = await asyncio.to_thread(provider_catalog)
     return {
         **catalog,
-        "mcp_url": MCP_URL,
+        "mcp_url": MCP_URL or str(_mcp_server_directory()),
+        "mcp_transport": MCP_TRANSPORT,
         "backend": os.getenv("AGENT_BACKEND", "mcp").lower(),
         "ninja_scope": os.getenv("NINJA_SCOPE", "monitoring") if os.getenv("AGENT_BACKEND", "mcp").lower() == "native" else None,
     }
@@ -1373,7 +1508,8 @@ async def health():
         "foundry_base_url": discovery.get("base_url"),
         "foundry_models": len(discovery.get("models", [])),
         "foundry_error": discovery.get("error"),
-        "mcp_url": MCP_URL,
+        "mcp_url": MCP_URL or str(_mcp_server_directory()),
+        "mcp_transport": MCP_TRANSPORT,
         "mcp_tools_loaded": _tools is not None,
     }
 
