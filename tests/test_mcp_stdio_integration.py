@@ -44,6 +44,9 @@ class MCPStdioConfigurationTests(unittest.TestCase):
                     "NINJA_BASE_URL": "https://eu.ninjarmm.com",
                     "NINJA_SCOPE": "monitoring management",
                     "NINJA_MCP_APPROVAL_SECRET": "test-approval-secret",
+                    "NINJA_MCP_LLM_BASE_URL": "",
+                    "NINJA_MCP_LLM_MODEL": "",
+                    "NINJA_MCP_LLM_API_KEY": "",
                     "LLM_GATEWAY_API_KEY": "must-not-be-forwarded",
                 }, clear=False),
             ):
