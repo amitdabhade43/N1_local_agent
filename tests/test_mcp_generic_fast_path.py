@@ -70,12 +70,31 @@ async def test_generic_mcp_supports_namespaced_tool_names():
 @pytest.mark.asyncio
 async def test_generic_mcp_preflight_runs_before_provider_resolution():
     tools = toolset()
+
+    class FakeSessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    class FakeClient:
+        def session(self, server_name):
+            assert server_name == "ninjaone"
+            return FakeSessionContext()
+
     with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
         with patch.object(app, "get_tools", new=AsyncMock(return_value=tools)):
-            with patch.object(app, "detect_direct_tool_request", return_value=None):
-                result = await app.try_direct_backend_request("session-1", "How many devices?")
+            with patch.object(app, "_mcp_connection", return_value=("stdio:test", FakeClient())):
+                with patch.object(app, "load_mcp_tools", new=AsyncMock(return_value=tools)) as load_tools:
+                    with patch.object(app, "detect_direct_tool_request", return_value=None):
+                        result = await app.try_direct_backend_request("session-1", "How many devices?")
 
     assert result[0] == "NinjaOne returned 2 records for devices."
+    load_tools.assert_awaited_once()
+    assert [item["tool"] for item in result[1] if item["kind"] == "call"] == [
+        "discover_endpoints", "inspect_endpoint", "execute_endpoint"
+    ]
 
 
 @pytest.mark.asyncio
