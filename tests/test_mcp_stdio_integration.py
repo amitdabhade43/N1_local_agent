@@ -67,6 +67,7 @@ class MCPStdioConfigurationTests(unittest.TestCase):
             self.assertEqual(child_env["NINJA_MCP_APPROVAL_SECRET"], "test-approval-secret")
             self.assertEqual(child_env["NINJA_MCP_LLM_BASE_URL"], "http://127.0.0.1:64343/v1")
             self.assertEqual(child_env["NINJA_MCP_LLM_MODEL"], "qwen3-14b-generic-gpu")
+            self.assertEqual(child_env["NINJA_MCP_LLM_API_KEY"], "local")
             self.assertNotIn("LLM_GATEWAY_API_KEY", child_env)
             self.assertNotIn("FOUNDRY_API_KEY", child_env)
 
