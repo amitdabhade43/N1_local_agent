@@ -1,7 +1,7 @@
 # NinjaOne Local Expert Agent
 
 Local browser UI for Microsoft Foundry Local with two NinjaOne backends:
-- **MCP mode**: connects to the configured streamable HTTP MCP server.
+- **MCP mode**: launches the local NinjaOne API Gateway as an MCP STDIO subprocess by default. Streamable HTTP remains an optional transport for separately hosted MCP servers.
 - **Native mode**: uses the bundled NinjaOne API v2 OpenAPI specification directly; no MCP server is required.
 
 ## Foundry endpoint and model discovery
@@ -43,10 +43,12 @@ foundry server status
 
 Copy `.env.example` to `.env` and configure:
 - `FOUNDRY_BASE_URL`: optional explicit override; blank enables automatic discovery.
-- `MCP_URL`: streamable HTTP endpoint for MCP mode.
+- `MCP_TRANSPORT`: `stdio` (default, launches the local gateway) or `streamable_http`.
+- `NINJA_MCP_SERVER_DIR`: local path to the separately cloned `NinjaRMM-API-Gateway-MCP` repository; defaults to a sibling folder beside `N1_local_agent`.
+- `NINJA_MCP_PYTHON`: optional explicit path to the MCP repository's virtual-environment Python executable.
+- `MCP_URL`: required only when `MCP_TRANSPORT=streamable_http`.
 - `AGENT_BACKEND`: `mcp` or `native`.
-- `NINJA_BASE_URL`: your NinjaOne regional API host.
-- `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: required for Native mode.
+- `NINJA_BASE_URL`, `NINJA_CLIENT_ID`, `NINJA_CLIENT_SECRET`: shared NinjaOne credentials. The MCP launcher maps them to the gateway's `NINJAONE_*` variable names.
 - `NINJA_TOKEN_URL`: optional token endpoint override; the default is `/oauth/token` on your regional host, with a fallback to the legacy `/ws/oauth/token` endpoint when the default returns 404/405.
 - `NINJA_SCOPE`: NinjaOne OAuth scopes. `monitoring` is read-only; approved write actions require `monitoring management`.
 
@@ -61,8 +63,18 @@ The OAuth app must actually be granted those scopes. Changing `.env` cannot gran
 ## Start
 
 1. Start Foundry Local and load a chat model.
-2. In MCP mode, start your MCP server.
-3. From the project directory run:
+2. For MCP mode, clone `amitdabhade43/NinjaRMM-API-Gateway-MCP` into the sibling folder configured by `NINJA_MCP_SERVER_DIR`, then install its dependencies in its own virtual environment:
+ 
+```powershell
+cd ..\NinjaRMM-API-Gateway-MCP
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m pytest -q
+```
+
+   The Local Agent launches the gateway automatically over STDIO; you do not need to start a separate MCP HTTP server.
+3. From the Local Agent project directory run:
 
 ```powershell
 .\run.ps1
@@ -114,7 +126,28 @@ Person-access reporting follows the fields actually exposed by the API: the agen
 
 ## MCP backend
 
-Set `AGENT_BACKEND=mcp`. The app discovers tools exposed by the configured MCP server. Its available capabilities are limited to the tools that server actually exposes; the current local MCP server may expose fewer operations than the full NinjaOne API specification.
+Set `AGENT_BACKEND=mcp`. With `MCP_TRANSPORT=stdio`, the app launches `python -m ninja_mcp` from the separate gateway repository using that repository's own `.venv`. The default sibling-folder layout is:
+
+```text
+C:\\project2\\
+  N1_local_agent\\
+  NinjaRMM-API-Gateway-MCP\\
+```
+
+The launcher reuses the existing Native `.env` as the source of truth:
+- `NINJA_CLIENT_ID` and `NINJA_CLIENT_SECRET` are mapped to `NINJAONE_CLIENT_ID` and `NINJAONE_CLIENT_SECRET`.
+- `NINJA_BASE_URL` is mapped to the regional `NINJAONE_INSTANCE` hostname.
+- `NINJA_SCOPE` is mapped to `NINJAONE_SCOPE`.
+- The active chat model ID and resolved provider endpoint are passed to the gateway's optional semantic endpoint ranker. The endpoint follows dynamic Foundry discovery; it is not tied to a hardcoded port.
+- Optional `NINJA_MCP_LLM_BASE_URL` and `NINJA_MCP_LLM_MODEL` values override the shared active model configuration.
+
+For approved writes, set `NINJA_SCOPE=monitoring management` and configure `NINJA_MCP_APPROVAL_SECRET` in the Local Agent's untracked `.env`. The same secret is passed only to the trusted MCP subprocess: the Local Agent signs a short-lived token after the user approves, and the gateway verifies its signature, expiry, method, path and canonical request-body digest. The secret is never sent to the model. POST, PUT and PATCH are held for approval; DELETE is blocked. The Local Agent also checks the Management scope before preparing and executing an MCP write. NinjaOne's OAuth application and user role permissions remain authoritative.
+
+The MCP gateway has its own Python environment. Install it once as shown in **Start** above. Do not copy secrets into the gateway repository or commit either repository's `.env` file.
+
+If connecting to an already-hosted MCP server instead, set `MCP_TRANSPORT=streamable_http` and configure `MCP_URL`. The remote server must expose Streamable HTTP transport. The local gateway in `NinjaRMM-API-Gateway-MCP` uses STDIO by default.
+
+The app discovers tools exposed by the gateway. Its available capabilities are limited to the operations that gateway actually exposes; the OpenAPI gateway supports schema-driven GET/POST/PUT/PATCH operations, with DELETE blocked.
 
 ## Notes
 
