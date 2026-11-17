@@ -107,6 +107,104 @@ class MCPStdioConfigurationTests(unittest.TestCase):
         self.assertGreater(payload["exp"], 0)
         self.assertTrue(payload["jti"])
 
+    def test_approved_write_uses_cached_stateless_tool_after_agent_session(self):
+        import asyncio
+        import json
+        import time
+        from unittest.mock import patch
+
+        class FakeTool:
+            name = "execute_endpoint"
+
+            def __init__(self):
+                self.calls = []
+
+            async def ainvoke(self, arguments):
+                self.calls.append(arguments)
+                return json.dumps({"executed": True, "data": {"ok": True}})
+
+        action_id = "unit-test-action"
+        client_key = "stdio:unit-test-client"
+        fake_tool = FakeTool()
+        app._tools_by_config[client_key] = [fake_tool]
+        app._mcp_pending_actions[action_id] = {
+            "action_id": action_id,
+            "session_id": "unit-test-session",
+            "tool": None,
+            "tool_name": "execute_endpoint",
+            "client_key": client_key,
+            "arguments": {
+                "endpoint": "PATCH /v2/devices/{id}",
+                "path_params": {"id": 24},
+                "body": {"enabled": False},
+            },
+            "method": "PATCH",
+            "path": "/v2/devices/24",
+            "body": {"enabled": False},
+            "expires_at": time.time() + 300,
+        }
+
+        try:
+            with patch.dict(os.environ, {
+                "NINJA_SCOPE": "monitoring management",
+                "NINJA_MCP_APPROVAL_SECRET": "unit-test-secret",
+            }, clear=False):
+                result = asyncio.run(app.execute_mcp_pending_action(action_id, "unit-test-session"))
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(len(fake_tool.calls), 1)
+            self.assertIn("approval_token", fake_tool.calls[0])
+            self.assertNotIn(action_id, app._mcp_pending_actions)
+            repeated = asyncio.run(app.execute_mcp_pending_action(action_id, "unit-test-session"))
+            self.assertFalse(repeated["ok"])
+            self.assertEqual(len(fake_tool.calls), 1)
+        finally:
+            app._mcp_pending_actions.pop(action_id, None)
+            app._tools_by_config.pop(client_key, None)
+
+    def test_missing_management_scope_does_not_execute_or_consume_pending_write(self):
+        import asyncio
+        import time
+        from unittest.mock import patch
+
+        class FakeTool:
+            name = "execute_endpoint"
+
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, arguments):
+                self.calls += 1
+                return '{"executed": true}'
+
+        action_id = "scope-blocked-action"
+        client_key = "stdio:scope-test-client"
+        fake_tool = FakeTool()
+        app._tools_by_config[client_key] = [fake_tool]
+        app._mcp_pending_actions[action_id] = {
+            "action_id": action_id,
+            "session_id": "scope-test-session",
+            "tool": None,
+            "tool_name": "execute_endpoint",
+            "client_key": client_key,
+            "arguments": {"endpoint": "PATCH /v2/devices/{id}", "path_params": {"id": 24}},
+            "method": "PATCH",
+            "path": "/v2/devices/24",
+            "body": None,
+            "expires_at": time.time() + 300,
+        }
+
+        try:
+            with patch.dict(os.environ, {"NINJA_SCOPE": "monitoring"}, clear=False):
+                result = asyncio.run(app.execute_mcp_pending_action(action_id, "scope-test-session"))
+            self.assertFalse(result["ok"])
+            self.assertIn("management", result["error"])
+            self.assertEqual(fake_tool.calls, 0)
+            self.assertIn(action_id, app._mcp_pending_actions)
+        finally:
+            app._mcp_pending_actions.pop(action_id, None)
+            app._tools_by_config.pop(client_key, None)
+
     def test_mcp_write_request_resolves_endpoint_path_parameters(self):
         result = app._mcp_write_request(
             "execute_endpoint",
