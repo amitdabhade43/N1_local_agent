@@ -66,11 +66,14 @@ The OAuth app must actually be granted those scopes. Changing `.env` cannot gran
 2. For MCP mode, clone `amitdabhade43/NinjaRMM-API-Gateway-MCP` into the sibling folder configured by `NINJA_MCP_SERVER_DIR`, then install its dependencies in its own virtual environment:
  
 ```powershell
-cd ..\NinjaRMM-API-Gateway-MCP
+cd ..
+git clone https://github.com/amitdabhade43/NinjaRMM-API-Gateway-MCP.git
+cd .\NinjaRMM-API-Gateway-MCP
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev]"
 python -m pytest -q
+cd ..\N1_local_agent
 ```
 
    The Local Agent launches the gateway automatically over STDIO; you do not need to start a separate MCP HTTP server.
