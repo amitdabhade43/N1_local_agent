@@ -165,6 +165,60 @@ class MCPStdioConfigurationTests(unittest.TestCase):
         self.assertTrue(any(item.get("stage") == "llm_agent" for item in activity))
         app._sessions.pop("unit-test-agent-session", None)
 
+    def test_mcp_write_is_only_prepared_until_ui_approval(self):
+        import asyncio
+        import json
+        from unittest.mock import patch
+
+        class ExecuteArgs(app.BaseModel):
+            endpoint: str
+            path_params: dict | None = None
+            query: dict | None = None
+            body: dict | None = None
+            approval_token: str | None = None
+
+        class FakeTool:
+            name = "execute_endpoint"
+            description = "Execute a NinjaOne endpoint"
+            args_schema = ExecuteArgs
+
+            def __init__(self):
+                self.calls = 0
+
+            async def ainvoke(self, arguments):
+                self.calls += 1
+                return '{"executed": true}'
+
+        fake = FakeTool()
+        with patch.dict(os.environ, {
+            "NINJA_SCOPE": "monitoring management",
+            "NINJA_MCP_APPROVAL_SECRET": "unit-test-secret",
+        }, clear=False):
+            context_token = app._mcp_active_session.set("approval-test-session")
+            try:
+                wrapped = app.wrap_mcp_write_tools(
+                    [fake], approval_tools=[fake], client_key="stdio:approval-test"
+                )
+                raw = asyncio.run(wrapped[0].ainvoke({
+                    "endpoint": "PATCH /v2/devices/{id}",
+                    "path_params": {"id": 24},
+                    "body": {"enabled": False},
+                }))
+            finally:
+                app._mcp_active_session.reset(context_token)
+
+        action = json.loads(raw)
+        try:
+            self.assertTrue(action["approval_required"])
+            self.assertEqual(action["method"], "PATCH")
+            self.assertEqual(action["path"], "/v2/devices/24")
+            self.assertEqual(fake.calls, 0)
+            pending = app._mcp_pending_actions[action["action_id"]]
+            self.assertEqual(pending["client_key"], "stdio:approval-test")
+            self.assertIsNone(pending["tool"])
+        finally:
+            app._mcp_pending_actions.pop(action.get("action_id", ""), None)
+
     def test_approved_write_uses_cached_stateless_tool_after_agent_session(self):
         import asyncio
         import json
