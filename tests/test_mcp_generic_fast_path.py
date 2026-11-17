@@ -128,7 +128,7 @@ async def test_generic_mcp_does_not_call_nonempty_result_empty_when_preview_miss
 @pytest.mark.asyncio
 async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_total():
     tools = toolset()
-    tools[0].result["selected_details"] = {
+    tools[0].ainvoke.return_value["selected_details"] = {
         "method": "GET",
         "parameters": [{"name": "after", "in": "query", "required": False}],
         "responses": {
@@ -158,7 +158,7 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
 @pytest.mark.asyncio
 async def test_generic_mcp_skips_endpoints_with_required_parameters():
     tools = toolset()
-    tools[0].result["selected_details"] = {
+    tools[0].ainvoke.return_value["selected_details"] = {
         "method": "GET", "parameters": [{"name": "id", "in": "path", "required": True}],
         "responses": {},
     }
@@ -176,7 +176,7 @@ async def test_generic_mcp_uses_declared_page_parameters():
         "data": [{"id": 1}, {"id": 2}, {"id": 3}],
         "pages_fetched": 1, "items_fetched": 3, "elapsed_ms": 20,
     }))
-    tools[0].result["selected_details"] = {
+    tools[0].ainvoke.return_value["selected_details"] = {
         "method": "GET", "parameters": [
             {"name": "page", "in": "query", "required": False},
             {"name": "pageSize", "in": "query", "required": False},
