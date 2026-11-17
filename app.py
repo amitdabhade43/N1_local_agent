@@ -371,18 +371,38 @@ def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
             "python -m pip install -e \".[dev]\"."
         )
 
-    child_env = os.environ.copy()
+    # Pass only the runtime variables required by the child process; do not
+    # forward unrelated parent-process secrets into the MCP gateway.
+    inherited_runtime = (
+        "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE",
+        "APPDATA", "LOCALAPPDATA", "HOMEDRIVE", "HOMEPATH",
+    )
+    child_env = {name: os.environ[name] for name in inherited_runtime if name in os.environ}
+    child_env["PYTHONIOENCODING"] = "utf-8"
+
     # Native and MCP use different variable names. Keep NINJA_SCOPE as the
     # single source of truth and map it into the gateway's expected names.
-    child_env["NINJAONE_CLIENT_ID"] = os.getenv("NINJA_CLIENT_ID", "").strip()
-    child_env["NINJAONE_CLIENT_SECRET"] = os.getenv("NINJA_CLIENT_SECRET", "").strip()
+    client_id = os.getenv("NINJA_CLIENT_ID", "").strip() or os.getenv("NINJAONE_CLIENT_ID", "").strip()
+    client_secret = os.getenv("NINJA_CLIENT_SECRET", "").strip() or os.getenv("NINJAONE_CLIENT_SECRET", "").strip()
+    if not client_id or not client_secret:
+        raise RuntimeError("Set NINJA_CLIENT_ID and NINJA_CLIENT_SECRET in the shared Local Agent .env.")
+    child_env["NINJAONE_CLIENT_ID"] = client_id
+    child_env["NINJAONE_CLIENT_SECRET"] = client_secret
     native_base = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").strip()
     native_host = urlsplit(native_base if "://" in native_base else "https://" + native_base).hostname
     if not native_host:
         raise RuntimeError("NINJA_BASE_URL must contain a valid NinjaOne regional hostname.")
     child_env["NINJAONE_INSTANCE"] = native_host
-    child_env["NINJAONE_SCOPE"] = os.getenv("NINJA_SCOPE", "monitoring").strip()
+    shared_scope = os.getenv("NINJA_SCOPE", "").strip() or os.getenv("NINJAONE_SCOPE", "monitoring").strip()
+    child_env["NINJAONE_SCOPE"] = shared_scope
     child_env["NINJA_MCP_APPROVAL_SECRET"] = os.getenv("NINJA_MCP_APPROVAL_SECRET", "").strip()
+    for optional_name in (
+        "NINJA_MCP_SPEC", "NINJA_MCP_LOG_LEVEL",
+        "NINJA_MCP_SEMANTIC_CACHE_TTL", "NINJA_MCP_SEMANTIC_FAILURE_CACHE_TTL",
+    ):
+        optional_value = os.getenv(optional_name, "").strip()
+        if optional_value:
+            child_env[optional_name] = optional_value
 
     # Use the same dynamically discovered provider endpoint and selected model
     # as the main agent. An explicit NINJA_MCP_LLM_* value remains an override.
@@ -405,7 +425,8 @@ def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
         semantic_key = api_key
     if semantic_key:
         child_env["NINJA_MCP_LLM_API_KEY"] = semantic_key
-    child_env.setdefault("NINJA_MCP_LLM_TIMEOUT", "20")
+    if not child_env.get("NINJA_MCP_LLM_TIMEOUT"):
+        child_env["NINJA_MCP_LLM_TIMEOUT"] = os.getenv("NINJA_MCP_LLM_TIMEOUT", "").strip() or "20"
 
     key_material = "|".join((
         str(server_dir), str(python_exe), semantic_base, semantic_model,
