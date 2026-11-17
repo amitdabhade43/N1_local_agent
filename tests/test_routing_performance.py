@@ -107,15 +107,30 @@ class DirectRoutingTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_mcp_direct_request_uses_mcp_tool_without_model(self):
         expected = ("There are 4 devices.", [])
+        tools = [object()]
+
+        class FakeSessionContext:
+            async def __aenter__(self):
+                return object()
+
+            async def __aexit__(self, exc_type, exc, traceback):
+                return False
+
+        class FakeClient:
+            def session(self, server_name):
+                self.assert_server_name = server_name
+                return FakeSessionContext()
+
         with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
-            with patch.object(app, "get_tools", new=AsyncMock(return_value=[object()])):
-                with patch.object(app, "detect_direct_tool_request",
-                                  return_value=("list_devices", {}, "count", None)):
-                    with patch.object(app, "run_direct_mcp_tool",
-                                      new=AsyncMock(return_value=expected)) as direct:
-                        result = await app.try_direct_backend_request("session-2", "How many devices?")
+            with patch.object(app, "_mcp_connection", return_value=("stdio:test", FakeClient())):
+                with patch.object(app, "load_mcp_tools", new=AsyncMock(return_value=tools)):
+                    with patch.object(app, "detect_direct_tool_request",
+                                      return_value=("list_devices", {}, "count", None)):
+                        with patch.object(app, "run_direct_mcp_tool",
+                                          new=AsyncMock(return_value=expected)) as direct:
+                            result = await app.try_direct_backend_request("session-2", "How many devices?")
         self.assertEqual(result, expected)
-        direct.assert_awaited_once_with("list_devices", {}, "count", None)
+        direct.assert_awaited_once_with("list_devices", {}, "count", None, tools_override=tools)
 
     async def test_mcp_complex_request_falls_through_to_model_route(self):
         with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
