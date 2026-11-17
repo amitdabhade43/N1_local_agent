@@ -95,7 +95,7 @@ Foundry discovery results are cached for 30 seconds after success and 3 seconds 
 
 Execution activity includes elapsed-time metrics for direct MCP calls, Native model inference and Native NinjaOne tool calls. The server log records total request duration and MCP model-agent duration. These measurements help distinguish model latency from NinjaOne API latency.
 
-**MCP server boundary:** this repository contains the MCP client, routing and UI integration. The configured `MCP_URL` points to a separately hosted MCP server; changes here improve client-side discovery, routing and measurement, but do not change the server's own implementation or internal API pagination.
+**MCP server boundary:** the gateway is a separate repository and Python environment. In the default STDIO mode, this app launches it as a subprocess and passes only the required NinjaOne, approval and semantic-model settings. The gateway owns API discovery, OpenAPI validation, pagination and HTTP execution.
 
 ## Native OpenAPI backend
 
@@ -129,9 +129,9 @@ Person-access reporting follows the fields actually exposed by the API: the agen
 Set `AGENT_BACKEND=mcp`. With `MCP_TRANSPORT=stdio`, the app launches `python -m ninja_mcp` from the separate gateway repository using that repository's own `.venv`. The default sibling-folder layout is:
 
 ```text
-C:\\project2\\
-  N1_local_agent\\
-  NinjaRMM-API-Gateway-MCP\\
+C:\project2\
+  N1_local_agent\
+  NinjaRMM-API-Gateway-MCP\
 ```
 
 The launcher reuses the existing Native `.env` as the source of truth:
