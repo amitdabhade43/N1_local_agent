@@ -156,6 +156,41 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
 
 
 @pytest.mark.asyncio
+async def test_generic_mcp_uses_openapi_after_id_cursor_pagination():
+    tools = toolset()
+    tools[0].ainvoke.return_value["selected_details"] = {
+        "method": "GET",
+        "parameters": [
+            {"name": "pageSize", "in": "query", "required": False, "schema": {"type": "integer"}},
+            {"name": "after", "in": "query", "required": False,
+             "description": "Last Node ID from previous page", "schema": {"type": "integer"}},
+        ],
+        "responses": {
+            "default": {"content": {"application/json": {"schema": {
+                "type": "array", "items": {"type": "object", "properties": {
+                    "id": {"type": "integer"}, "systemName": {"type": "string"}
+                }}
+            }}}}
+        },
+    }
+    tools.append(FakeTool("execute_paginated_endpoint", {
+        "endpoint": "GET /v2/devices", "complete": True,
+        "data": [{"id": 1}, {"id": 2}], "pages_fetched": 1,
+        "items_fetched": 2, "elapsed_ms": 18,
+    }))
+
+    answer, _ = await app.run_generic_mcp_read(tools, "How many devices?")
+
+    assert answer == "NinjaOne returned 2 records for devices."
+    tools[3].ainvoke.assert_awaited_once_with({
+        "endpoint": "GET /v2/devices", "cursor_parameter": "after",
+        "cursor_field": "id", "page_size_parameter": "pageSize",
+        "page_size": 200, "max_pages": 50,
+    })
+    tools[2].ainvoke.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_generic_mcp_skips_endpoints_with_required_parameters():
     tools = toolset()
     tools[0].ainvoke.return_value["selected_details"] = {
