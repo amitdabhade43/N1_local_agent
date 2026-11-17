@@ -1192,12 +1192,6 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         # Native backend receives the same discovered endpoint as MCP mode.
         return await ninja_native.run_native(session_id, model_id, message_content, base_url, progress_callback, api_key, fast_path_checked)
 
-    if progress_callback:
-        progress_callback({'stage': 'discovery', 'message': 'Connecting to the MCP tool catalog.'})
-    tools = await get_tools(model_id, base_url, api_key)
-    if not tools:
-        raise HTTPException(status_code=502, detail="MCP server returned no tools")
-
     message_text = _text_from_content(message_content)
     recovered_request, approval_already_pending = _recover_unprepared_mcp_mutation(session_id, message_text)
     if approval_already_pending:
@@ -1207,47 +1201,71 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             [],
         )
     if recovered_request:
-        # The prior turn produced prose instead of an approval event. Re-submit
-        # the original intent to the tool agent so it can prepare the real action.
+        # A conversational confirmation can resume preparation, but never approve.
         message_text = recovered_request
         message_content = recovered_request
         if progress_callback:
             progress_callback({"stage": "understanding", "message": "Resuming the previous change request to prepare its approval card."})
-    direct_request = detect_direct_tool_request(message_text, tools)
-    if direct_request:
-        tool_name, arguments, operation, fields = direct_request
-        if progress_callback:
-            progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}'})
-        direct_answer, direct_activity = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
-        if progress_callback:
-            progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
-        return direct_answer, direct_activity
 
-    agent = await get_agent(model_id, base_url, tools, api_key)
     if progress_callback:
-        progress_callback({'stage': 'model', 'message': 'Analyzing the request and selecting relevant tools.'})
-    async with _session_lock:
-        history = list(_sessions.get(session_id, []))[-MAX_HISTORY_MESSAGES:]
-        history.append(HumanMessage(content=message_content))
+        progress_callback({"stage": "discovery", "message": "Connecting to the NinjaOne MCP gateway."})
+
+    # Keep one STDIO process/session alive for this complete agent run. This
+    # preserves the gateway's OAuth token, semantic cache and HTTP keep-alive
+    # connections across the several tool calls in a single investigation.
+    client_key, client = _mcp_connection(model_id, base_url, api_key)
+    approval_tools = await get_tools(model_id, base_url, api_key)
+    if not approval_tools:
+        raise HTTPException(status_code=502, detail="MCP server returned no tools")
 
     started = time.perf_counter()
     try:
-        if progress_callback:
-            progress_callback({'stage': 'model', 'message': 'The agent is working through the request.'})
-        session_context_token = _mcp_active_session.set(session_id)
-        try:
-            result = await agent.ainvoke(
-                {"messages": history},
-                config={"recursion_limit": AGENT_RECURSION_LIMIT},
+        async with client.session("ninjaone") as mcp_session:
+            tools = await load_mcp_tools(mcp_session)
+            if not tools:
+                raise RuntimeError("MCP server returned no tools")
+
+            direct_request = detect_direct_tool_request(message_text, tools)
+            if direct_request:
+                tool_name, arguments, operation, fields = direct_request
+                if progress_callback:
+                    progress_callback({"stage": "tool", "message": f"Calling MCP tool: {tool_name}"})
+                direct_answer, direct_activity = await run_direct_mcp_tool(
+                    tool_name, arguments, operation, fields, tools_override=tools
+                )
+                if progress_callback:
+                    progress_callback({"stage": "result", "message": f"Received results from {tool_name}."})
+                return direct_answer, direct_activity
+
+            agent = create_agent(
+                model=get_model(model_id, base_url, api_key),
+                tools=wrap_mcp_write_tools(tools, approval_tools=approval_tools, client_key=client_key),
+                system_prompt=SYSTEM_PROMPT,
             )
-        finally:
-            _mcp_active_session.reset(session_context_token)
+            if progress_callback:
+                progress_callback({"stage": "model", "message": "Analyzing the request and selecting relevant tools."})
+            async with _session_lock:
+                history = list(_sessions.get(session_id, []))[-MAX_HISTORY_MESSAGES:]
+                history.append(HumanMessage(content=message_content))
+
+            if progress_callback:
+                progress_callback({"stage": "model", "message": "The agent is working through the request."})
+            session_context_token = _mcp_active_session.set(session_id)
+            try:
+                result = await agent.ainvoke(
+                    {"messages": history},
+                    config={"recursion_limit": AGENT_RECURSION_LIMIT},
+                )
+            finally:
+                _mcp_active_session.reset(session_context_token)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(
             status_code=502,
             detail=(
                 "Agent/model execution failed. Verify Foundry Local is running, "
-                "the model is loaded, and the endpoint supports tool calling. "
+                "the selected model is loaded, and the MCP gateway environment is valid. "
                 f"Details: {exc}"
             ),
         )
@@ -1290,7 +1308,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
     has_tool_call = any(item.get("kind") == "call" for item in activity)
     lookup_question = bool(re.search(
-        r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
+        r"\\b(devices?|end[\\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\\b",
         message_text,
         re.I,
     ))
@@ -1316,7 +1334,6 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         )
 
     return final_text or "The model returned no text response.", activity
-
 
 @app.get("/")
 async def index():
