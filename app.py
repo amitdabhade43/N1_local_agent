@@ -405,18 +405,11 @@ def _mcp_connection(model_id: str | None = None, base_url: str | None = None,
         if optional_value:
             child_env[optional_name] = optional_value
 
-    # Use the same dynamically discovered provider endpoint and selected model
-    # as the main agent. An explicit NINJA_MCP_LLM_* value remains an override.
-    discovery = None
-    if not base_url or not model_id:
-        discovery = discover_foundry()
-    semantic_base = os.getenv("NINJA_MCP_LLM_BASE_URL", "").strip() or base_url
-    if not semantic_base and discovery:
-        semantic_base = discovery.get("base_url") or ""
-    semantic_model = os.getenv("NINJA_MCP_LLM_MODEL", "").strip() or model_id
-    if not semantic_model and discovery:
-        available = discovery.get("models") or []
-        semantic_model = next((item.get("id") for item in available if item.get("id")), "")
+    # Tool discovery must not trigger Foundry CLI/model discovery. Simple MCP
+    # routes do not need a semantic model; the full agent supplies its already
+    # resolved provider/model when semantic endpoint ranking is required.
+    semantic_base = os.getenv("NINJA_MCP_LLM_BASE_URL", "").strip() or base_url or ""
+    semantic_model = os.getenv("NINJA_MCP_LLM_MODEL", "").strip() or model_id or ""
     child_env["NINJA_MCP_LLM_BASE_URL"] = semantic_base.rstrip("/") if semantic_base else ""
     child_env["NINJA_MCP_LLM_MODEL"] = semantic_model or ""
     semantic_key = os.getenv("NINJA_MCP_LLM_API_KEY", "").strip()
@@ -1145,21 +1138,25 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     if backend == "native":
         return await ninja_native.try_fast_path(session_id, message_content)
 
-    tools = await get_tools()
-    direct_request = detect_direct_tool_request(message_text, tools)
-    if direct_request:
-        tool_name, arguments, operation, fields = direct_request
-        result = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
-        await _record_mcp_direct_turn(session_id, message_content, result)
-        return result
     try:
-        if is_simple_generic_read(message_text):
-            client_key, client = _mcp_connection()
-            async with client.session("ninjaone") as mcp_session:
-                session_tools = await load_mcp_tools(mcp_session)
-                result = await run_generic_mcp_read(session_tools, message_text)
-        else:
-            result = None
+        # Load tools once inside the session that will execute this request.
+        # The previous flow called client.get_tools() first and then opened a
+        # second STDIO session for generic reads, launching the gateway twice.
+        _client_key, client = _mcp_connection()
+        async with client.session("ninjaone") as mcp_session:
+            tools = await load_mcp_tools(mcp_session)
+            if not tools:
+                return None
+            direct_request = detect_direct_tool_request(message_text, tools)
+            if direct_request:
+                tool_name, arguments, operation, fields = direct_request
+                result = await run_direct_mcp_tool(
+                    tool_name, arguments, operation, fields, tools_override=tools
+                )
+            elif is_simple_generic_read(message_text):
+                result = await run_generic_mcp_read(tools, message_text)
+            else:
+                result = None
         await _record_mcp_direct_turn(session_id, message_content, result)
         return result
     except Exception as exc:
