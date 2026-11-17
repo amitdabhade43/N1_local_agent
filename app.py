@@ -1080,7 +1080,7 @@ async def run_generic_mcp_read(tools, message: str):
         cursor_type = (cursor_parameter.get("schema") or {}).get("type")
         if (pagination_tool is None or size_name is None
                 or "last" not in cursor_description
-                or "identifier" not in cursor_description
+                or not re.search(r"\\b(?:id|identifier)\\b", cursor_description)
                 or cursor_type != "integer"
                 or id_schema.get("type") != "integer"):
             return None
