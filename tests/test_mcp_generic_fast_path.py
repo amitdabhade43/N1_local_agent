@@ -19,6 +19,9 @@ def toolset(execute_result=None):
         FakeTool("discover_endpoints", {
             "semantic": {"mode": "fuzzy_fast_path", "selected": [{"endpoint": endpoint}]},
             "candidates": [{"endpoint": endpoint}],
+            "selected_details": {
+                "method": "GET", "endpoint": endpoint, "parameters": [], "responses": {},
+            },
         }),
         FakeTool("inspect_endpoint", {
             "method": "GET", "endpoint": endpoint, "parameters": [], "responses": {},
@@ -48,12 +51,12 @@ async def test_generic_mcp_count_uses_discovery_schema_and_get_result():
 
     assert answer == "NinjaOne returned 2 records for devices."
     assert [item["tool"] for item in activity if item["kind"] == "call"] == [
-        "discover_endpoints", "inspect_endpoint", "execute_endpoint"
+        "discover_endpoints", "execute_endpoint"
     ]
     tools[0].ainvoke.assert_awaited_once_with({
         "intent": "How many devices?", "candidate_limit": 8,
     })
-    tools[1].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
+    tools[1].ainvoke.assert_not_awaited()
     tools[2].ainvoke.assert_awaited_once_with({"endpoint": "GET /v2/devices"})
 
 
@@ -84,16 +87,17 @@ async def test_generic_mcp_preflight_runs_before_provider_resolution():
             return FakeSessionContext()
 
     with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}):
-        with patch.object(app, "get_tools", new=AsyncMock(return_value=tools)):
+        with patch.object(app, "get_tools", new=AsyncMock(return_value=tools)) as get_tools:
             with patch.object(app, "_mcp_connection", return_value=("stdio:test", FakeClient())):
                 with patch.object(app, "load_mcp_tools", new=AsyncMock(return_value=tools)) as load_tools:
                     with patch.object(app, "detect_direct_tool_request", return_value=None):
                         result = await app.try_direct_backend_request("session-1", "How many devices?")
 
     assert result[0] == "NinjaOne returned 2 records for devices."
+    get_tools.assert_not_awaited()
     load_tools.assert_awaited_once()
     assert [item["tool"] for item in result[1] if item["kind"] == "call"] == [
-        "discover_endpoints", "inspect_endpoint", "execute_endpoint"
+        "discover_endpoints", "execute_endpoint"
     ]
 
 
@@ -124,7 +128,7 @@ async def test_generic_mcp_does_not_call_nonempty_result_empty_when_preview_miss
 @pytest.mark.asyncio
 async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_total():
     tools = toolset()
-    tools[1] = FakeTool("inspect_endpoint", {
+    tools[0].result["selected_details"] = {
         "method": "GET",
         "parameters": [{"name": "after", "in": "query", "required": False}],
         "responses": {
@@ -144,7 +148,7 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
                 }
             }
         },
-    })
+    }
     result = await app.run_generic_mcp_read(tools, "How many devices?")
 
     assert result is None
@@ -154,10 +158,10 @@ async def test_generic_mcp_skips_cursor_pagination_instead_of_claiming_partial_t
 @pytest.mark.asyncio
 async def test_generic_mcp_skips_endpoints_with_required_parameters():
     tools = toolset()
-    tools[1] = FakeTool("inspect_endpoint", {
+    tools[0].result["selected_details"] = {
         "method": "GET", "parameters": [{"name": "id", "in": "path", "required": True}],
         "responses": {},
-    })
+    }
     result = await app.run_generic_mcp_read(tools, "How many devices?")
 
     assert result is None
@@ -172,12 +176,12 @@ async def test_generic_mcp_uses_declared_page_parameters():
         "data": [{"id": 1}, {"id": 2}, {"id": 3}],
         "pages_fetched": 1, "items_fetched": 3, "elapsed_ms": 20,
     }))
-    tools[1] = FakeTool("inspect_endpoint", {
+    tools[0].result["selected_details"] = {
         "method": "GET", "parameters": [
             {"name": "page", "in": "query", "required": False},
             {"name": "pageSize", "in": "query", "required": False},
         ], "responses": {},
-    })
+    }
     answer, activity = await app.run_generic_mcp_read(tools, "How many devices?")
 
     assert answer == "NinjaOne returned 3 records for devices."
