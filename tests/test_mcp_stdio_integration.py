@@ -110,6 +110,61 @@ class MCPStdioConfigurationTests(unittest.TestCase):
         self.assertGreater(payload["exp"], 0)
         self.assertTrue(payload["jti"])
 
+    def test_agent_run_reuses_one_mcp_session_for_its_tool_lifecycle(self):
+        import asyncio
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, patch
+
+        class FakeClient:
+            def __init__(self):
+                self.entered = 0
+                self.exited = 0
+
+            @asynccontextmanager
+            async def session(self, server_name):
+                self.assert_server = server_name
+                self.entered += 1
+                try:
+                    yield object()
+                finally:
+                    self.exited += 1
+
+        class FakeAgent:
+            async def ainvoke(self, payload, config=None):
+                return {
+                    "messages": [
+                        SimpleNamespace(type="human", content="Summarize NinjaOne"),
+                        SimpleNamespace(type="ai", content="Completed.", tool_calls=[]),
+                    ]
+                }
+
+        client = FakeClient()
+        tool = SimpleNamespace(name="discover_endpoints", description="Discover endpoints")
+        with (
+            patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}, clear=False),
+            patch.object(app, "_mcp_connection", return_value=("stdio:test-key", client)),
+            patch.object(app, "get_tools", new=AsyncMock(return_value=[tool])),
+            patch.object(app, "load_mcp_tools", new=AsyncMock(return_value=[tool])),
+            patch.object(app, "get_model", return_value=object()),
+            patch.object(app, "create_agent", return_value=FakeAgent()),
+        ):
+            answer, activity = asyncio.run(
+                app.run_agent(
+                    "unit-test-agent-session",
+                    "test-model",
+                    "Summarize NinjaOne",
+                    "http://127.0.0.1:64343/v1",
+                    api_key="local",
+                )
+            )
+
+        self.assertEqual(answer, "Completed.")
+        self.assertEqual(client.entered, 1)
+        self.assertEqual(client.exited, 1)
+        self.assertEqual(client.assert_server, "ninjaone")
+        self.assertTrue(any(item.get("stage") == "llm_agent" for item in activity))
+        app._sessions.pop("unit-test-agent-session", None)
+
     def test_approved_write_uses_cached_stateless_tool_after_agent_session(self):
         import asyncio
         import json
