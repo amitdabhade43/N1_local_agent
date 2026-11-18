@@ -1508,32 +1508,32 @@ def recipe_add_device_access(q):
         # Accept conversational variants such as "add X to Y for device access",
         # while retaining the existing explicit access-list forms.
         match = re.search(
-            r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?(?:device\\s+)?"
-            r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+to\\s+"
-            r"(?P<user>.+?)\\s+(?:for\\s+)?(?:the\\s+)?device\\s+access"
-            r"(?:\\s+list)?\\s*$",
+            r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
+            r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+to\s+"
+            r"(?P<user>.+?)\s+(?:for\s+)?(?:the\s+)?device\s+access"
+            r"(?:\s+list)?\s*$",
             text, re.I,
         )
         if match:
             device_label, user_label = match.group("device"), match.group("user")
         else:
             match = re.search(
-                r"\\b(?:add|grant|give|provide)\\s+(.+?)\\s+(?:device\\s+)?access\\s+(?:to|for)\\s+(.+?)\\s*$",
+                r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
                 text, re.I,
             )
             if match:
                 device_label, user_label = match.group(1), match.group(2)
             else:
                 match = re.search(
-                    r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?device\\s+(.+?)\\s+to\\s+(.+?)"
-                    r"(?:'s)?\\s+(?:device\\s+)?access(?:\\s+list)?\\s*$",
+                    r"\b(?:add|grant|give|provide)\s+(?:the\s+)?device\s+(.+?)\s+to\s+(.+?)"
+                    r"(?:'s)?\s+(?:device\s+)?access(?:\s+list)?\s*$",
                     text, re.I,
                 )
                 if not match:
                     return None
                 device_label, user_label = match.group(1), match.group(2)
 
-        device_label = device_label.strip().strip("\\\\'").strip('"')
+        device_label = device_label.strip().strip("\\'").strip('"')
         user_label = user_label.strip().strip(" .")
         email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
         email = email_match.group(1).strip().lower() if email_match else ""
