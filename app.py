@@ -42,7 +42,24 @@ HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8080"))
 MAX_HISTORY_MESSAGES = 8
 MAX_STORED_MESSAGES = 12
-AGENT_RECURSION_LIMIT = 8
+DEFAULT_AGENT_RECURSION_LIMIT = 32
+MIN_AGENT_RECURSION_LIMIT = 8
+MAX_AGENT_RECURSION_LIMIT = 64
+
+
+def _agent_recursion_limit() -> int:
+    """Allow enough bounded tool/model cycles for multi-step MCP investigations."""
+    raw_value = os.getenv("AGENT_RECURSION_LIMIT", str(DEFAULT_AGENT_RECURSION_LIMIT))
+    try:
+        requested = int(raw_value)
+    except (TypeError, ValueError):
+        _logger.warning(
+            "Invalid AGENT_RECURSION_LIMIT=%r; using default %s",
+            raw_value,
+            DEFAULT_AGENT_RECURSION_LIMIT,
+        )
+        return DEFAULT_AGENT_RECURSION_LIMIT
+    return max(MIN_AGENT_RECURSION_LIMIT, min(requested, MAX_AGENT_RECURSION_LIMIT))
 
 SYSTEM_PROMPT = """You are NinjaOne Expert Agent, an advanced IT operations analyst.
 Use connected NinjaOne MCP tools to retrieve current information and investigate issues.
@@ -1299,39 +1316,21 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             try:
                 result = await agent.ainvoke(
                     {"messages": history},
-                    config={"recursion_limit": AGENT_RECURSION_LIMIT},
+                    config={"recursion_limit": _agent_recursion_limit()},
                 )
             finally:
                 _mcp_active_session.reset(session_context_token)
     except HTTPException:
         raise
     except Exception as exc:
-        # TEMPORARY DIAGNOSTICS: expose the underlying ExceptionGroup cause and
-        # retain the complete traceback in the Local Agent terminal. Remove
-        # this block after the failure has been reproduced and diagnosed.
-        _logger.exception(
-            "MCP agent execution failed: model=%s transport=%s",
-            model_id,
-            MCP_TRANSPORT,
-        )
-
-        def _exception_tree(error, depth=0):
-            lines = ["  " * depth + f"{type(error).__name__}: {error}"]
-            nested = getattr(error, "exceptions", None)
-            if isinstance(nested, (tuple, list)):
-                for child in nested:
-                    lines.extend(_exception_tree(child, depth + 1))
-            return lines
-
-        root_cause = "\\n".join(_exception_tree(exc))
         raise HTTPException(
             status_code=502,
             detail=(
-                "Temporary MCP diagnostics: agent execution failed. "
-                "The complete traceback is in the Local Agent terminal. "
-                f"Underlying exception: {root_cause}"
+                "Agent/model execution failed. Verify Foundry Local is running, "
+                "the selected model is loaded, and the MCP gateway environment is valid. "
+                f"Details: {exc}"
             ),
-        ) from exc
+        )
 
     inference_elapsed = time.perf_counter() - started
     _logger.info("mcp_agent_complete model=%s elapsed_ms=%.1f", model_id, inference_elapsed * 1000)
