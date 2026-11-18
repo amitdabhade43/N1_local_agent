@@ -984,6 +984,67 @@ def row_name(r):
     full = f'{r.get("firstName", "")} {r.get("lastName", "")}'.strip()
     return str(r.get("name") or r.get("systemName") or full or r.get("email") or r.get("id"))
 
+def _detail_value(value, limit=8):
+    """Render an API field as readable text without inventing its meaning."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return "Yes" if value else "No"
+    if isinstance(value, dict):
+        preferred = ("name", "displayName", "systemName", "id", "value", "version")
+        parts = [f"{key}: {value[key]}" for key in preferred if value.get(key) not in (None, "")]
+        return "; ".join(parts) if parts else f"{len(value)} field(s) returned"
+    if isinstance(value, list):
+        if not value:
+            return "None"
+        if all(not isinstance(item, (dict, list)) for item in value):
+            shown = ", ".join(str(item) for item in value[:limit])
+            return shown + (f" … (+{len(value) - limit} more)" if len(value) > limit else "")
+        return f"{len(value)} item(s)"
+    return str(value)
+
+
+def format_record_summary(record, title="Record", max_fields=40):
+    """Group returned record fields into readable facts, preserving source values."""
+    if not isinstance(record, dict):
+        return f"{title}: {_detail_value(record) or 'No details returned'}"
+    groups = (
+        ("Identity", re.compile(r"(?:^|_)(?:id|name|hostname|system|display|serial|uid|email)", re.I)),
+        ("Status and activity", re.compile(r"(?:status|state|offline|online|last|contact|checkin|seen|health)", re.I)),
+        ("Organization and management", re.compile(r"(?:org|organization|location|group|policy|role|site)", re.I)),
+        ("System and hardware", re.compile(r"(?:os|operating|version|model|manufacturer|vendor|cpu|processor|memory|ram|disk|volume|ip|mac|hardware|architecture)", re.I)),
+    )
+    rendered, used = [], set()
+    for label, pattern in groups:
+        fields = []
+        for key, value in record.items():
+            if key in used or not pattern.search(key):
+                continue
+            text_value = _detail_value(value)
+            if text_value is not None:
+                display_key = re.sub(r"(?<!^)(?=[A-Z])", " ", key).replace("_", " ").strip()
+                fields.append(f"- {display_key}: {text_value}")
+                used.add(key)
+        if fields:
+            rendered.append(f"**{label}**\n" + "\n".join(fields))
+    other = []
+    for key, value in record.items():
+        if key in used:
+            continue
+        text_value = _detail_value(value)
+        if text_value is not None:
+            display_key = re.sub(r"(?<!^)(?=[A-Z])", " ", key).replace("_", " ").strip()
+            other.append(f"- {display_key}: {text_value}")
+            used.add(key)
+        if len(used) >= max_fields:
+            break
+    if other:
+        rendered.append("**Other returned details**\n" + "\n".join(other))
+    omitted = [key for key in record if key not in used and record.get(key) not in (None, "")]
+    if omitted:
+        rendered.append(f"{len(omitted)} additional field(s) omitted to keep the summary readable: " + ", ".join(omitted[:12]))
+    return f"**{title}**\n" + ("\n\n".join(rendered) if rendered else "No populated fields were returned.")
+
 
 GREET = re.compile(r"^\s*(hi+|hello+|hey+|yo|good (morning|afternoon|evening)|thanks?|thank you|ok(ay)?|help|what can you do)\W*$", re.I)
 HELP = ('Hi! I can investigate NinjaOne data and prepare approved changes (delete actions are disabled), for example: "how many devices do we have?", '
@@ -1790,9 +1851,9 @@ def recipe_device_details(q):
         return f'NinjaOne returned no device details for "{identifier}" (device ID {device_id}).'
 
     return (
-        f'NinjaOne system details for {row_name(device)} (device ID {device_id}) '
-        f'from GET {path.replace("{id}", str(device_id))}:\n'
-        + json.dumps(rows[0], indent=2, default=str)
+        f'NinjaOne returned system details for {row_name(device)} (device ID {device_id}) '
+        f'from GET {path.replace("{id}", str(device_id))}.\n\n'
+        + format_record_summary(rows[0], title="System summary")
     )
 
 
