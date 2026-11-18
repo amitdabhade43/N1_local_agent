@@ -1563,13 +1563,21 @@ def recipe_add_device_access(q):
                 )
 
         for kind, result in people_results:
-            if result.get("partial"):
+            result_matches = result.get("matches") or []
+            if result.get("partial") or (
+                result.get("total_matches") is not None
+                and int(result.get("total_matches") or 0) > len(result_matches)
+            ):
+                detail = result.get("pagination_note") or (
+                    f'{result.get("total_matches")} matching records exist, but only '
+                    f'{len(result_matches)} candidate records were returned.'
+                )
                 return (
                     f'I cannot safely identify "{user_label}" because the {kind.replace("_", " ")} '
-                    f'inventory search is incomplete. {result.get("pagination_note", "")} '
+                    f'inventory search is incomplete. {detail} '
                     "No person was selected and no change was prepared."
                 )
-            for row in (result.get("matches") or []):
+            for row in result_matches:
                 if email:
                     matched = str(row.get("email", "")).strip().lower() == email
                 else:
