@@ -1491,7 +1491,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     # data-read result is required before the model may report live findings.
     has_tool_call = _has_mcp_tool_execution(activity)
     has_read_result = _has_mcp_data_read_result(activity)
-    count_question = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", message_text, re.I))
+    count_question = bool(re.search(r"\b(?:how many|count|number of|total)\b", message_text, re.I))
     has_complete_count_evidence = _has_complete_mcp_count_evidence(activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|contacts?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
