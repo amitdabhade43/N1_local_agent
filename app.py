@@ -69,6 +69,11 @@ Execution strategy:
 - For fuzzy, multi-condition, cross-resource or investigative requests, use the model to select MCP tools and reason over their actual results.
 - Plan only genuinely multi-step tasks. Do not produce a plan for simple lookups or narrate internal reasoning.
 - Verify filters, totals, pagination and requested fields against tool results before answering.
+- Evidence requirement: a discovery or endpoint-description result is NOT evidence that NinjaOne records were retrieved. Before reporting live findings, confirm that at least one data-read execution tool returned a successful result (for example execute_endpoint, execute_paginated_endpoint, call, or raw_call).
+- Treat tool errors, empty/malformed payloads, explicit execution failures, and incomplete pagination as limitations. Never turn them into a successful lookup or an exact total.
+- Exact-count rule: report an exact count only when the tool result explicitly establishes completeness or supplies an authoritative total for the requested filter. Otherwise say "at least" and explain why the total is unknown.
+- Filter-verification rule: verify that the returned records actually satisfy every requested filter. Do not infer a match from a name, email, ID, organization, role, or device relationship that is absent from the returned fields.
+- Evidence discipline: base each factual statement on returned NinjaOne fields. If a field needed to answer is missing, say it could not be verified. Do not fill gaps with assumptions or plausible values.
 - Retry only transient read failures when a retry is safe; do not repeat a potentially successful write after a timeout without checking its outcome.
 - Keep answers concise for simple questions and tailor tables/lists/selected fields to the requested deliverable.
 - If the previous assistant turn asked the user to choose between matching entities, treat the next reply as that clarification. Use conversation history to resolve the selected entity and complete the original request; never ask the user for internal operation IDs or endpoint names.
@@ -104,6 +109,7 @@ Rules:
 - Paginate the unified people endpoint completely using its documented pageSize and anchorNaturalId parameters. Continue from the last returned naturalId/identifier according to the tool schema until no further page is available. If that cursor cannot safely be driven, use the documented category-specific list endpoints and their supported pagination; never claim an exact total from a partial page.
 - Match name fragments case-insensitively across firstName, lastName, and full/display name (and email only when relevant). Deduplicate only by stable record identity (uid, or userType plus id); do not merge different person categories just because their names match.
 - For a name search, report each match's category, full name, ID, and email when present. For a count request, give per-category counts and a total only when all categories are complete; otherwise label counts as minimums and state which category/page is incomplete. If multiple people match, show them rather than assuming they are the same person.
+- Ambiguity gate: before preparing any write involving a person, device, organization, or other entity, require an unambiguous match. If multiple records match and the user has not supplied a distinguishing ID or other unique attribute, stop and ask which record they mean; never select the first or most likely match.
 - Do not repeat identical tool calls.
 """
 
@@ -926,17 +932,40 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
     elapsed = time.perf_counter() - started
     activity = [
         {"kind": "call", "tool": tool_name, "arguments": arguments},
-        {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]},
+        {"kind": "result", "tool": tool_name, "result": json.dumps(parsed, ensure_ascii=False, default=str)[:4000]},
         {"kind": "metric", "stage": "mcp_tool", "elapsed_ms": round(elapsed * 1000, 1)},
     ]
+
+    if isinstance(parsed, dict) and (
+        parsed.get("error") or parsed.get("isError") is True
+        or parsed.get("success") is False or parsed.get("executed") is False
+        or str(parsed.get("status", "")).casefold() in {"error", "failed", "failure"}
+        or (isinstance(parsed.get("status_code"), int) and parsed.get("status_code") >= 400)
+    ):
+        detail = parsed.get("error") or parsed.get("message") or parsed.get("detail") or "the API reported an unsuccessful read"
+        return f"NinjaOne could not complete the read: {detail}", activity
+    if isinstance(parsed, str) and re.search(
+        r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
+    ):
+        return f"NinjaOne could not complete the read: {parsed.strip()}", activity
 
     noun = tool_name.replace("list_", "")
     if operation == "count":
         count = find_total_field(parsed)
-        if count is None:
-            count = count_records(parsed)
-        answer = (f"There are {count} {noun} in the result returned by NinjaOne." if count is not None
-                  else f"NinjaOne returned data for {noun}, but I couldn't reliably determine the count.")
+        complete = isinstance(parsed, dict) and parsed.get("complete") is True
+        if count is not None:
+            answer = f"NinjaOne reports {count} {noun} in the result."
+        elif complete:
+            count = len(records)
+            answer = f"NinjaOne returned {count} {noun} in the complete result."
+        elif records or isinstance(parsed, list):
+            count = len(records)
+            answer = (
+                f"NinjaOne returned at least {count} {noun} in the retrieved data; "
+                "the response did not confirm a complete total."
+            )
+        else:
+            answer = f"NinjaOne returned data for {noun}, but I couldn't reliably determine the count."
     elif operation == "fields" and fields:
         lines = []
         for record in records:
@@ -1293,6 +1322,58 @@ def _has_mcp_tool_execution(activity: list[dict[str, Any]]) -> bool:
     )
 
 
+def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
+    """Require a successful NinjaOne data-read result, not endpoint discovery alone."""
+    read_tools = {
+        "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    }
+    for item in activity:
+        if not isinstance(item, dict) or item.get("kind") != "result":
+            continue
+        tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
+        if tool_name not in read_tools:
+            continue
+        raw_result = item.get("result")
+        if raw_result in (None, ""):
+            continue
+        if item.get("read_success") is True:
+            return True
+        if item.get("read_success") is False:
+            continue
+        parsed = parse_mcp_result(raw_result)
+        if isinstance(parsed, dict):
+            if (parsed.get("error") or parsed.get("isError") is True
+                    or parsed.get("success") is False
+                    or parsed.get("executed") is False):
+                continue
+        elif isinstance(parsed, str) and re.search(
+            r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
+        ):
+            continue
+        return True
+    return False
+
+
+def _has_complete_mcp_count_evidence(activity: list[dict[str, Any]]) -> bool:
+    """Exact counts require an explicit complete flag or authoritative total."""
+    read_tools = {
+        "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    }
+    for item in activity:
+        if not isinstance(item, dict) or item.get("kind") != "result":
+            continue
+        tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
+        if tool_name not in read_tools:
+            continue
+        if item.get("complete") is True or item.get("authoritative_total") is not None:
+            return True
+        parsed = parse_mcp_result(item.get("result"))
+        if isinstance(parsed, dict):
+            if parsed.get("complete") is True or find_total_field(parsed) is not None:
+                return True
+    return False
+
+
 _AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\s*[.!]?$", re.I)
 
 
@@ -1421,20 +1502,47 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
         elif getattr(msg, "type", "") == "tool":
             tool_result = getattr(msg, "content", "")
+            parsed_tool_result = parse_mcp_result(tool_result)
+            try:
+                evidence_text = json.dumps(parsed_tool_result, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                evidence_text = str(parsed_tool_result)
+            read_success = parsed_tool_result not in (None, "", {}) and not (
+                isinstance(parsed_tool_result, dict) and (
+                    parsed_tool_result.get("error")
+                    or parsed_tool_result.get("isError") is True
+                    or parsed_tool_result.get("success") is False
+                    or parsed_tool_result.get("executed") is False
+                    or str(parsed_tool_result.get("status", "")).casefold() in {"error", "failed", "failure"}
+                    or (isinstance(parsed_tool_result.get("status_code"), int)
+                        and parsed_tool_result.get("status_code") >= 400)
+                )
+            ) and not (
+                isinstance(parsed_tool_result, str) and re.search(
+                    r"^\s*(?:error|exception|failed|failure)\b",
+                    parsed_tool_result, re.I
+                )
+            )
             activity.append({
                 "kind": "result",
                 "tool": getattr(msg, "name", "tool"),
-                "result": str(tool_result)[:2500],
+                "result": evidence_text[:2500],
+                "read_success": read_success,
+                "complete": parsed_tool_result.get("complete") is True
+                    if isinstance(parsed_tool_result, dict) else False,
+                "authoritative_total": find_total_field(parsed_tool_result),
             })
-            parsed_tool_result = parse_mcp_result(tool_result)
             if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
                 activity.append({
                     "kind": "approval_required",
                     "action": parsed_tool_result,
                 })
-    # A tool result is definitive evidence of execution even if the model adapter
-    # omitted or normalized the corresponding AI tool-call metadata.
+    # Discovery/inspection proves endpoint selection only. A successful
+    # data-read result is required before the model may report live findings.
     has_tool_call = _has_mcp_tool_execution(activity)
+    has_read_result = _has_mcp_data_read_result(activity)
+    count_question = bool(re.search(r"\b(?:how many|count|number of|total)\b", message_text, re.I))
+    has_complete_count_evidence = _has_complete_mcp_count_evidence(activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|contacts?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
@@ -1454,11 +1562,25 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             "No write was executed and no change was made. Please retry with the target "
             "record and requested change clearly identified."
         )
-    elif lookup_question and not has_tool_call:
+    elif lookup_question and not has_read_result:
+        if has_tool_call:
+            final_text = (
+                "I could not verify a NinjaOne data result for that request. "
+                "MCP endpoint discovery or inspection may have run, but no successful "
+                "record-read result was received. I will not report unverified data. "
+                "Please retry or narrow the request."
+            )
+        else:
+            final_text = (
+                "I couldn't execute a NinjaOne lookup for that request. "
+                "No MCP tool was called, so I won't report unverified data. "
+                "Please retry or simplify the question."
+            )
+    elif lookup_question and count_question and has_read_result and not has_complete_count_evidence:
         final_text = (
-            "I couldn't execute a NinjaOne lookup for that request. "
-            "No MCP tool was called, so I won't report unverified data. "
-            "Please retry or simplify the question."
+            "NinjaOne data was retrieved, but the response did not establish a complete "
+            "result or provide an authoritative total. I cannot verify an exact count; "
+            "please treat any number in the preliminary response as unconfirmed."
         )
 
     return final_text or "The model returned no text response.", activity
