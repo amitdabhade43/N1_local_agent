@@ -192,3 +192,26 @@ def test_exact_email_still_selects_the_end_user_when_other_names_are_similar():
     assert result["approval_required"] is True
     assert call.call_count == 1
     assert call.call_args.args[0]["path_params"] == {"id": 31}
+
+
+
+def test_people_inventory_api_error_fails_closed():
+    end_user = person(31, "Rene", "Piuk", "rene.piuk@example.com")
+
+    def resolve(args):
+        if args["kind"] == "end_user":
+            return json.dumps({"matches": [end_user]})
+        if args["kind"] == "user":
+            return json.dumps({"error": "403 Forbidden"})
+        return json.dumps({"matches": []})
+
+    with patch.object(core, "t_resolve", side_effect=resolve), \
+         patch.object(core, "t_call") as call:
+        result = core.recipe_add_device_access(
+            "add VM-6804B761 to rene for device access"
+        )
+
+    assert "403 Forbidden" in result
+    assert "identity search is incomplete" in result
+    assert "No change was prepared" in result
+    call.assert_not_called()
