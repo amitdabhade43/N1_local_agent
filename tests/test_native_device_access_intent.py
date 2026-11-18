@@ -186,7 +186,7 @@ def test_exact_email_still_selects_the_end_user_when_other_names_are_similar():
              [end_user], {"user": [console_user]}
          )), patch.object(core, "t_call", return_value=approval()) as call:
         result = json.loads(core.recipe_add_device_access(
-            "add VM-6804B761 to rene.piuk@example.com for device access"
+            "add VM-6804B761 to <rene.piuk@example.com> for device access"
         ))
 
     assert result["approval_required"] is True
