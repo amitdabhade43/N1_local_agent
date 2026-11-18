@@ -128,7 +128,7 @@ def _resolve_device_access_clarification(question, history):
     candidates = []
     for line in assistant_text.splitlines():
         match = re.match(
-            r"^\s*(\d+)\.\s+(.+?)(?:\s+<([^<>]+)>)?(?:\s+\(end-user ID\s+(\d+)\))?\s*$",
+            r"^\s*(\d+)\.\s+(.+?)(?:\s+<([^<>]+)>)?(?:\s+\((?:end-user|console user|technician|contact)(?: ID \d+)?\))?\s*$",
             line,
         )
         if match:
