@@ -1319,10 +1319,28 @@ def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
                     or parsed.get("executed") is False):
                 continue
         elif isinstance(parsed, str) and re.search(
-            r"^\\s*(?:error|exception|failed|failure)\\b", parsed, re.I
+            r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
         ):
             continue
         return True
+    return False
+
+
+def _has_complete_mcp_count_evidence(activity: list[dict[str, Any]]) -> bool:
+    """Exact counts require an explicit complete flag or authoritative total."""
+    read_tools = {
+        "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    }
+    for item in activity:
+        if not isinstance(item, dict) or item.get("kind") != "result":
+            continue
+        tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
+        if tool_name not in read_tools:
+            continue
+        parsed = parse_mcp_result(item.get("result"))
+        if isinstance(parsed, dict):
+            if parsed.get("complete") is True or find_total_field(parsed) is not None:
+                return True
     return False
 
 
@@ -1469,6 +1487,8 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     # data-read result is required before the model may report live findings.
     has_tool_call = _has_mcp_tool_execution(activity)
     has_read_result = _has_mcp_data_read_result(activity)
+    count_question = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", message_text, re.I))
+    has_complete_count_evidence = _has_complete_mcp_count_evidence(activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|contacts?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
@@ -1502,6 +1522,12 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 "No MCP tool was called, so I won't report unverified data. "
                 "Please retry or simplify the question."
             )
+    elif lookup_question and count_question and has_read_result and not has_complete_count_evidence:
+        final_text = (
+            "NinjaOne data was retrieved, but the response did not establish a complete "
+            "result or provide an authoritative total. I cannot verify an exact count; "
+            "please treat any number in the preliminary response as unconfirmed."
+        )
 
     return final_text or "The model returned no text response.", activity
 
