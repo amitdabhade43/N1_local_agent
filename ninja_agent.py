@@ -1768,7 +1768,7 @@ def recipe_device_details(q):
     if not match:
         return None
 
-    identifier = match.group(1).strip().strip("\"\'")
+    identifier = match.group(1).strip().strip(chr(34) + chr(39))
     if not identifier:
         return "Please provide a device name or identifier."
 
