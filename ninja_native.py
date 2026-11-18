@@ -319,8 +319,8 @@ _CLARIFICATION_GUIDANCE = (
     "details. Keep the original requested device/action in context when relevant. Never "
     "substitute an end-user record for a console user or technician merely because names or "
     "emails overlap. The documented device-access PATCH supports end-user records only; "
-    "do not prepare a write for another record type. Do not ask for operation IDs or endpoint "
-    "names; those are internal. If a genuinely ambiguous new lookup remains, ask one concise "
+    "do not prepare a write for another record type. Do not ask the user for operation IDs "
+    "or endpoint names; those are internal. If a genuinely ambiguous new lookup remains, ask one concise "
     "question that lets the user disambiguate it."
 )
 
