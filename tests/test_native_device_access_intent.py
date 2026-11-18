@@ -83,7 +83,7 @@ def test_first_name_matching_multiple_end_users_requires_clarification():
             "add VM-6804B761 to rene for device access"
         )
 
-    assert "Multiple end-user records matched" in result
+    assert "Multiple NinjaOne people records matched" in result
     assert "1. Rene Piuk <rene.piuk@example.com>" in result
     assert "2. Rene Other <rene.other@example.com>" in result
     assert "Which user should receive the device access" in result
@@ -166,7 +166,7 @@ def test_incomplete_people_inventory_fails_closed_even_with_one_end_user_match()
             })
         return json.dumps({"matches": []})
 
-    with patch.object(core, "t_resolve", side_effect=resolve), \\
+    with patch.object(core, "t_resolve", side_effect=resolve), \
          patch.object(core, "t_call") as call:
         result = core.recipe_add_device_access(
             "add VM-6804B761 to rene for device access"
@@ -181,7 +181,7 @@ def test_incomplete_people_inventory_fails_closed_even_with_one_end_user_match()
 def test_exact_email_still_selects_the_end_user_when_other_names_are_similar():
     end_user = person(31, "Rene", "Piuk", "rene.piuk@example.com")
     console_user = person(88, "Rene", "Piuk", "rene.console@example.com")
-    with patch.object(core, "OPS", {OPERATION["id"]: OPERATION}), \\
+    with patch.object(core, "OPS", {OPERATION["id"]: OPERATION}), \
          patch.object(core, "t_resolve", side_effect=resolver_for(
              [end_user], {"user": [console_user]}
          )), patch.object(core, "t_call", return_value=approval()) as call:
