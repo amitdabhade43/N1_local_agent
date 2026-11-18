@@ -69,6 +69,11 @@ Execution strategy:
 - For fuzzy, multi-condition, cross-resource or investigative requests, use the model to select MCP tools and reason over their actual results.
 - Plan only genuinely multi-step tasks. Do not produce a plan for simple lookups or narrate internal reasoning.
 - Verify filters, totals, pagination and requested fields against tool results before answering.
+- Evidence requirement: a discovery or endpoint-description result is NOT evidence that NinjaOne records were retrieved. Before reporting live findings, confirm that at least one data-read execution tool returned a successful result (for example execute_endpoint, execute_paginated_endpoint, call, or raw_call).
+- Treat tool errors, empty/malformed payloads, explicit execution failures, and incomplete pagination as limitations. Never turn them into a successful lookup or an exact total.
+- Exact-count rule: report an exact count only when the tool result explicitly establishes completeness or supplies an authoritative total for the requested filter. Otherwise say "at least" and explain why the total is unknown.
+- Filter-verification rule: verify that the returned records actually satisfy every requested filter. Do not infer a match from a name, email, ID, organization, role, or device relationship that is absent from the returned fields.
+- Evidence discipline: base each factual statement on returned NinjaOne fields. If a field needed to answer is missing, say it could not be verified. Do not fill gaps with assumptions or plausible values.
 - Retry only transient read failures when a retry is safe; do not repeat a potentially successful write after a timeout without checking its outcome.
 - Keep answers concise for simple questions and tailor tables/lists/selected fields to the requested deliverable.
 - If the previous assistant turn asked the user to choose between matching entities, treat the next reply as that clarification. Use conversation history to resolve the selected entity and complete the original request; never ask the user for internal operation IDs or endpoint names.
@@ -1293,6 +1298,34 @@ def _has_mcp_tool_execution(activity: list[dict[str, Any]]) -> bool:
     )
 
 
+def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
+    """Require a successful NinjaOne data-read result, not endpoint discovery alone."""
+    read_tools = {
+        "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    }
+    for item in activity:
+        if not isinstance(item, dict) or item.get("kind") != "result":
+            continue
+        tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
+        if tool_name not in read_tools:
+            continue
+        raw_result = item.get("result")
+        if raw_result in (None, ""):
+            continue
+        parsed = parse_mcp_result(raw_result)
+        if isinstance(parsed, dict):
+            if (parsed.get("error") or parsed.get("isError") is True
+                    or parsed.get("success") is False
+                    or parsed.get("executed") is False):
+                continue
+        elif isinstance(parsed, str) and re.search(
+            r"^\\s*(?:error|exception|failed|failure)\\b", parsed, re.I
+        ):
+            continue
+        return True
+    return False
+
+
 _AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\s*[.!]?$", re.I)
 
 
@@ -1432,9 +1465,10 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                     "kind": "approval_required",
                     "action": parsed_tool_result,
                 })
-    # A tool result is definitive evidence of execution even if the model adapter
-    # omitted or normalized the corresponding AI tool-call metadata.
+    # Discovery/inspection proves endpoint selection only. A successful
+    # data-read result is required before the model may report live findings.
     has_tool_call = _has_mcp_tool_execution(activity)
+    has_read_result = _has_mcp_data_read_result(activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|contacts?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
@@ -1454,12 +1488,20 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             "No write was executed and no change was made. Please retry with the target "
             "record and requested change clearly identified."
         )
-    elif lookup_question and not has_tool_call:
-        final_text = (
-            "I couldn't execute a NinjaOne lookup for that request. "
-            "No MCP tool was called, so I won't report unverified data. "
-            "Please retry or simplify the question."
-        )
+    elif lookup_question and not has_read_result:
+        if has_tool_call:
+            final_text = (
+                "I could not verify a NinjaOne data result for that request. "
+                "MCP endpoint discovery or inspection may have run, but no successful "
+                "record-read result was received. I will not report unverified data. "
+                "Please retry or narrow the request."
+            )
+        else:
+            final_text = (
+                "I couldn't execute a NinjaOne lookup for that request. "
+                "No MCP tool was called, so I won't report unverified data. "
+                "Please retry or simplify the question."
+            )
 
     return final_text or "The model returned no text response.", activity
 
