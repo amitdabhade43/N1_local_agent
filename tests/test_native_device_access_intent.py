@@ -132,6 +132,30 @@ def test_single_end_user_is_not_auto_selected_when_other_people_categories_match
     call.assert_not_called()
 
 
+def test_first_name_search_includes_token_inside_compound_pc_admin_name():
+    regular_end_user = person(144, "Rene", "Piuk", "ing.rene.piuk@gmail.com")
+    pc_admin_end_user = person(31, "PC Admin", "Rene Piuk", "admin_pr@hoerbiger.com")
+    console_user = person(144, "PC Admin", "Rene Piuk", "ing.rene.piuk@gmail.com")
+    technician = person(2, "Rene", "Piuk", "rene.piuk@hoerbiger.com")
+    technician["userType"] = "TECHNICIAN"
+
+    with patch.object(core, "t_resolve", side_effect=resolver_for(
+        [regular_end_user, pc_admin_end_user],
+        {"user": [console_user], "technician": [technician]},
+    )), patch.object(core, "t_call") as call:
+        result = core.recipe_add_device_access(
+            "Add VM-6804B761 to Rene for device access"
+        )
+
+    assert "Multiple NinjaOne people records matched" in result
+    assert "(end-user ID 144)" in result
+    assert "PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)" in result
+    assert "(technician ID 2)" in result
+    assert "(console user ID 144)" in result
+    assert result.count("PC Admin Rene Piuk <admin_pr@hoerbiger.com>") == 1
+    call.assert_not_called()
+
+
 def test_technician_duplicate_returned_by_user_and_technician_search_is_deduplicated():
     end_user = person(31, "Rene", "Piuk", "rene.piuk@example.com")
     technician = person(89, "Rene", "Piuk", "rene.tech@example.com")
