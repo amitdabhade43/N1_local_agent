@@ -144,7 +144,18 @@ function addActivity(parent,activity){
    };
    controls.append(approve,reject,status);row.append(controls);details.append(row);return;
   }
-  const b=document.createElement('b');b.textContent=item.kind==='call'?'CALL ':'RESULT ';b.textContent+=item.tool||'tool';row.append(b);
+  const b=document.createElement('b');
+  if(item.kind==='metric'){
+   b.textContent='METRIC · '+(item.stage||'execution');
+   row.append(b);
+   const pre=document.createElement('pre');
+   const values={};
+   if(item.elapsed_ms!==undefined)values.elapsed_ms=item.elapsed_ms;
+   if(item.api_elapsed_ms!==undefined)values.api_elapsed_ms=item.api_elapsed_ms;
+   pre.textContent=JSON.stringify(values,null,2);
+   row.append(pre);details.append(row);return;
+  }
+  b.textContent=item.kind==='call'?'CALL ':'RESULT ';b.textContent+=item.tool||'tool';row.append(b);
   const pre=document.createElement('pre');pre.textContent=item.kind==='call'?JSON.stringify(item.arguments||{},null,2):(item.result||'');
   row.append(pre);details.append(row);
  });
