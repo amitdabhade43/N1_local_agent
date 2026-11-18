@@ -149,8 +149,8 @@ def _resolve_device_access_clarification(question, history):
     # device-access PATCH is end-user-only, so fail safely when that console
     # candidate is present.
     pc_admin = re.match(
-        r"^(?:i\\s+want\\s+to\\s+add\\s+(?:it\\s+)?(?:in|to)\\s+)?"
-        r"(?:the\\s+)?pc\\s+admin\\s+(.+?)\\s*[.!?]*$",
+        r"^(?:i\s+want\s+to\s+add\s+(?:it\s+)?(?:in|to)\s+)?"
+        r"(?:the\s+)?pc\s+admin\s+(.+?)\s*[.!?]*$",
         clarification_reply,
         re.I,
     )
@@ -175,10 +175,10 @@ def _resolve_device_access_clarification(question, history):
     # search for a person, change the target, or reject the candidate list should
     # return to normal Native routing instead of repeating the old choice prompt.
     if re.search(
-        r"\\b(?:check|show|find|search|lookup|look\\s+up|details|who\\s+is|"
-        r"tell\\s+me\\s+about|i\\s+want|i'd\\s+like|not\\s+in\\s+the\\s+list|"
-        r"not\\s+in\\s+list|not\\s+listed|none\\s+of\\s+these|another\\s+user|"
-        r"different\\s+user|cancel|start\\s+over)\\b",
+        r"\b(?:check|show|find|search|lookup|look\s+up|details|who\s+is|"
+        r"tell\s+me\s+about|i\s+want|i'd\s+like|not\s+in\s+the\s+list|"
+        r"not\s+in\s+list|not\s+listed|none\s+of\s+these|another\s+user|"
+        r"different\s+user|cancel|start\s+over)\b",
         clarification_reply,
         re.I,
     ):
