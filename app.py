@@ -1333,8 +1333,13 @@ def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
 
     def visit(node: Any) -> None:
         if isinstance(node, dict):
-            status_value = str(node.get("status", "")).casefold()
-            if (markers.intersection(node)
+            status_raw = node.get("status_code", node.get("status"))
+            status_value = str(status_raw or "").casefold()
+            http_error = (
+                isinstance(status_raw, int) and not isinstance(status_raw, bool)
+                and status_raw >= 400
+            )
+            if (markers.intersection(node) or http_error
                     or status_value in {"error", "failed", "failure"}):
                 found.append(node)
                 return
