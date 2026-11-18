@@ -108,14 +108,14 @@ def _resolve_device_access_clarification(question, history):
         return None, None
     if "Which user should receive the device access" not in assistant_text:
         return None, None
-    if not re.search(r"\\b(?:add|grant|give|provide)\\b", original_request, re.I):
+    if not re.search(r"\b(?:add|grant|give|provide)\b", original_request, re.I):
         return None, None
 
     # Recover the requested device from the original, supported conversational form.
     request_match = re.search(
-        r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?(?:device\\s+)?"
-        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+to\\s+.+?\\s+"
-        r"(?:for\\s+)?(?:the\\s+)?device\\s+access(?:\\s+list)?\\s*$",
+        r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
+        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+to\s+.+?\s+"
+        r"(?:for\s+)?(?:the\s+)?device\s+access(?:\s+list)?\s*$",
         original_request.strip(), re.I,
     )
     if not request_match:
@@ -125,7 +125,7 @@ def _resolve_device_access_clarification(question, history):
     candidates = []
     for line in assistant_text.splitlines():
         match = re.match(
-            r"^\\s*(\\d+)\\.\\s+(.+?)(?:\\s+<([^<>]+)>)?(?:\\s+\\(end-user ID\\s+(\\d+)\\))?\\s*$",
+            r"^\s*(\d+)\.\s+(.+?)(?:\s+<([^<>]+)>)?(?:\s+\(end-user ID\s+(\d+)\))?\s*$",
             line,
         )
         if match:
@@ -150,7 +150,7 @@ def _resolve_device_access_clarification(question, history):
         ]
 
     if len(selected) != 1:
-        choices = "\\n".join(
+        choices = "\n".join(
             f'{item["number"]}. {item["name"]}' + (f' <{item["email"]}>' if item["email"] else "")
             for item in candidates
         )
@@ -158,7 +158,7 @@ def _resolve_device_access_clarification(question, history):
             prompt = "That reply still matches more than one user. Please choose a unique option number or email address."
         else:
             prompt = "I couldn't match that reply to one listed user. Please choose a valid option number, full name, or email address."
-        return None, f"{prompt}\\n{choices}\\nNo change has been prepared."
+        return None, f"{prompt}\n{choices}\nNo change has been prepared."
 
     user = selected[0]
     target = user["name"]
