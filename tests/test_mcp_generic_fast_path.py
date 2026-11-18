@@ -368,6 +368,8 @@ def test_people_name_search_prompt_requires_all_categories_and_pagination():
     assert "TECHNICIAN, END_USER, and CONTACT" in prompt
     assert "searchCriteria" in prompt
     assert "Paginate the unified people endpoint completely" in prompt
+    assert "If `GET /v2/ticketing/app-user-contact` fails with 403" in prompt
+    assert "never send `searchCriteria`, `pageSize`, or cursor parameters" in prompt
     assert "stable record identity" in prompt
     assert "Evidence requirement:" in prompt
     assert "Exact-count rule:" in prompt
