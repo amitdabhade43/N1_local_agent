@@ -1510,7 +1510,7 @@ def recipe_add_device_access(q):
         match = re.search(
             r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
             r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+to\s+"
-            r"(?P<user>.+?)\s+(?:for\s+)?(?:the\s+)?device\s+access"
+            r"(?P<user>.+?)\s+(?:for\s+)?(?:the\s+)?(?:device\s+)?access"
             r"(?:\s+list)?\s*$",
             text, re.I,
         )
