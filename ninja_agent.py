@@ -1573,7 +1573,7 @@ def recipe_add_device_access(q):
                 error_detail = result.get("error") if isinstance(result, dict) else "invalid API response"
                 return (
                     f'I could not verify the {kind.replace("_", " ")} inventory for "{user_label}": '
-                    f'{error_detail}. The identity search is incomplete, so no person was selected '
+                    f'{error_detail}. The identity search is incomplete. '
                     "No person was selected. No change was prepared."
                 )
             result_matches = result.get("matches") or []
