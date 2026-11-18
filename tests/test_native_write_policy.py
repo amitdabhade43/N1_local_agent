@@ -11,6 +11,7 @@ def test_create_end_user_is_a_mutation_and_required_field_question_is_preserved(
 def test_explicit_delete_intent_is_blocked_but_revoke_access_is_not_a_delete():
     assert ninja_native._is_delete_request("delete end user 123")
     assert ninja_native._is_delete_request("permanently remove this user")
+    assert ninja_native._is_delete_request("remove end user 123")
     assert not ninja_native._is_delete_request("revoke this end user's device access")
     assert not ninja_native._is_delete_request("remove the user from this role")
 
