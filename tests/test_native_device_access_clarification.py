@@ -21,6 +21,30 @@ def history():
     ]
 
 
+def test_person_detail_lookup_can_exit_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification(
+        "check PC Admin Rene Piuk user details", history()
+    )
+    assert request is None
+    assert clarification is None
+
+
+def test_user_not_in_list_can_exit_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification(
+        "user not in list", history()
+    )
+    assert request is None
+    assert clarification is None
+
+
+def test_alternative_target_request_can_exit_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification(
+        "i want to add in PC Admin Rene Piuk", history()
+    )
+    assert request is None
+    assert clarification is None
+
+
 def test_selection_by_number_reconstructs_original_device_access_request():
     request, clarification = native._resolve_device_access_clarification("1", history())
     assert clarification is None
