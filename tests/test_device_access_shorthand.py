@@ -1,6 +1,7 @@
 import json
 
-import ninja_agent\nimport ninja_native
+import ninja_agent
+import ninja_native
 
 
 def test_shorthand_device_access_request_lists_ambiguous_rene_records(monkeypatch):
@@ -79,11 +80,11 @@ def test_shorthand_access_clarification_selection_recovers_original_device():
             "role": "assistant",
             "content": (
                 'Multiple NinjaOne people records matched "rene". '
-                'Which user should receive the device access for "VM-6804B761"?\\n'
-                "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\\n"
-                "2. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)\\n"
-                "3. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\\n"
-                "4. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)\\n"
+                'Which user should receive the device access for "VM-6804B761"?\n'
+                "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\n"
+                "2. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)\n"
+                "3. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\n"
+                "4. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)\n"
                 "Reply with the option number, full name, or email address. No change has been prepared."
             ),
         },
