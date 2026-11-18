@@ -66,6 +66,28 @@ def test_alternative_target_request_can_exit_device_access_clarification():
     assert clarification is None
 
 
+def test_unrelated_count_question_exits_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification(
+        "how many user name with rene", history()
+    )
+    assert request is None
+    assert clarification is None
+
+
+def test_greeting_exits_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification("hi", history())
+    assert request is None
+    assert clarification is None
+
+
+def test_no_change_message_exits_device_access_clarification():
+    request, clarification = native._resolve_device_access_clarification(
+        "No change has been required", history()
+    )
+    assert request is None
+    assert clarification is None
+
+
 def test_selection_by_number_reconstructs_original_device_access_request():
     request, clarification = native._resolve_device_access_clarification("1", history())
     assert clarification is None
