@@ -969,7 +969,11 @@ def is_contextual_followup(message: str) -> bool:
 
 
 _SIMPLE_GENERIC_READ_RE = re.compile(
-    r"\b(?:how many|count|number of|total|list|show|display|get|fetch|what are|which are)\b",
+    r"\b(?:how many|count|number of|total|list|show|display|get|fetch|what are|which are|as per (?:the )?record|according to (?:the )?record)\b",
+    re.I,
+)
+_ROLE_COUNT_RE = re.compile(
+    r"\b(?:how many|count|number of|total|as per (?:the )?record|according to (?:the )?record)\b",
     re.I,
 )
 _COMPLEX_GENERIC_READ_RE = re.compile(
@@ -980,8 +984,27 @@ _COMPLEX_GENERIC_READ_RE = re.compile(
 )
 
 
+def _extract_technician_role_count_request(message: str) -> str | None:
+    """Return the explicitly requested technician role for a deterministic count."""
+    text = re.sub(r"\s+", " ", (message or "").strip())
+    if not _ROLE_COUNT_RE.search(text) or not re.search(r"\btechnicians?\b", text, re.I):
+        return None
+    quoted = re.search(r"""["']([^"']{2,100})["']""", text)
+    if quoted:
+        return quoted.group(1).strip()
+    match = re.search(
+        r"\b(?:with|have|has)\s+(?:the\s+)?(.{2,100}?)\s+role\b",
+        text, re.I,
+    )
+    if match:
+        return match.group(1).strip(" .,:;")
+    return None
+
+
 def is_simple_generic_read(message: str) -> bool:
     text = re.sub(r"\s+", " ", (message or "").strip())
+    if _extract_technician_role_count_request(text):
+        return not is_contextual_followup(text)
     return bool(text and _SIMPLE_GENERIC_READ_RE.search(text)
                 and not _COMPLEX_GENERIC_READ_RE.search(text)
                 and not is_contextual_followup(text))
@@ -1026,8 +1049,10 @@ async def run_generic_mcp_read(tools, message: str):
 
     activity = []
     discovery_started = time.perf_counter()
+    role_count = _extract_technician_role_count_request(message)
+    discovery_intent = "List all technicians" if role_count else message
     discovery_raw = await discover.ainvoke({
-        "intent": message, "candidate_limit": 8,
+        "intent": discovery_intent, "candidate_limit": 8,
     })
     discovery = parse_mcp_result(discovery_raw)
     activity.append({"kind": "call", "tool": "discover_endpoints",
@@ -1146,7 +1171,31 @@ async def run_generic_mcp_read(tools, message: str):
     if not isinstance(fetched_count, int) or isinstance(fetched_count, bool):
         fetched_count = len(records)
     count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", message, re.I))
-    if count_intent:
+    if role_count:
+        if "technician" not in resource.casefold():
+            return None
+        normalized_role = re.sub(r"\s+", " ", role_count).casefold()
+        matched_count = sum(
+            1 for record in records
+            if any(
+                re.sub(r"\s+", " ", str(role)).strip().casefold() == normalized_role
+                for role in (record.get("roles") or [])
+                if isinstance(role, (str, int, float))
+            )
+        )
+        if complete:
+            answer = (
+                f"{matched_count} technicians have the role "
+                f'"{role_count}" according to the complete NinjaOne result '
+                f"({fetched_count} technicians checked)."
+            )
+        else:
+            answer = (
+                f"At least {matched_count} technicians in the returned data have the role "
+                f'"{role_count}", but I cannot confirm the complete total because '
+                "the NinjaOne result is incomplete."
+            )
+    elif count_intent:
         count_value = total if total is not None else fetched_count
         record_word = "record" if count_value == 1 else "records"
         if total is not None or complete:
@@ -1368,7 +1417,9 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                     "kind": "approval_required",
                     "action": parsed_tool_result,
                 })
-    has_tool_call = any(item.get("kind") == "call" for item in activity)
+    # A tool result is definitive evidence of execution even if the model adapter
+    # omitted or normalized the corresponding AI tool-call metadata.
+    has_tool_call = any(item.get("kind") in {"call", "result"} for item in activity)
     lookup_question = bool(re.search(
         r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
