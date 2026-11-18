@@ -1600,8 +1600,13 @@ def recipe_add_device_access(q):
                         or (
                             len(user_name.split()) == 1
                             and user_name.casefold() in {
-                                str(row.get("firstName", "")).strip().casefold(),
-                                str(row.get("lastName", "")).strip().casefold(),
+                                token.casefold()
+                                for token in re.findall(
+                                    r"[A-Za-z0-9]+",
+                                    " ".join(str(row.get(key) or "") for key in (
+                                        "firstName", "lastName", "name", "displayName"
+                                    )),
+                                )
                             }
                         )
                     )
