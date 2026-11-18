@@ -90,12 +90,99 @@ def _recover_unprepared_mutation(question, history):
     return None
 
 
+def _resolve_device_access_clarification(question, history):
+    """Resolve a numbered/name/email reply to a prior device-access user clarification."""
+    assistant_text = ""
+    original_request = ""
+    for item in reversed(history or []):
+        role = item.get("role")
+        content = _text(item.get("content", ""))
+        if role == "assistant" and not assistant_text:
+            assistant_text = content
+        elif role == "user" and not original_request:
+            original_request = content
+        if assistant_text and original_request:
+            break
+
+    if not assistant_text or not original_request:
+        return None, None
+    if "Which user should receive the device access" not in assistant_text:
+        return None, None
+    if not re.search(r"\\b(?:add|grant|give|provide)\\b", original_request, re.I):
+        return None, None
+
+    # Recover the requested device from the original, supported conversational form.
+    request_match = re.search(
+        r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?(?:device\\s+)?"
+        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+to\\s+.+?\\s+"
+        r"(?:for\\s+)?(?:the\\s+)?device\\s+access(?:\\s+list)?\\s*$",
+        original_request.strip(), re.I,
+    )
+    if not request_match:
+        return None, None
+    device = request_match.group("device")
+
+    candidates = []
+    for line in assistant_text.splitlines():
+        match = re.match(
+            r"^\\s*(\\d+)\\.\\s+(.+?)(?:\\s+<([^<>]+)>)?(?:\\s+\\(end-user ID\\s+(\\d+)\\))?\\s*$",
+            line,
+        )
+        if match:
+            candidates.append({
+                "number": int(match.group(1)),
+                "name": match.group(2).strip(),
+                "email": (match.group(3) or "").strip(),
+            })
+    if not candidates:
+        return None, None
+
+    reply = str(question or "").strip().strip(" .")
+    selected = []
+    if reply.isdigit():
+        selected = [item for item in candidates if item["number"] == int(reply)]
+    else:
+        folded = reply.casefold()
+        selected = [
+            item for item in candidates
+            if folded == item["name"].casefold()
+            or (item["email"] and folded == item["email"].casefold())
+        ]
+
+    if len(selected) != 1:
+        choices = "\\n".join(
+            f'{item["number"]}. {item["name"]}' + (f' <{item["email"]}>' if item["email"] else "")
+            for item in candidates
+        )
+        if selected:
+            prompt = "That reply still matches more than one user. Please choose a unique option number or email address."
+        else:
+            prompt = "I couldn't match that reply to one listed user. Please choose a valid option number, full name, or email address."
+        return None, f"{prompt}\\n{choices}\\nNo change has been prepared."
+
+    user = selected[0]
+    target = user["name"]
+    if user["email"]:
+        target += f' <{user["email"]}>'
+    return f"add {device} to {target} for device access", None
+
+
 def _try_fast_path(session_id, content):
     """Execute only a deterministic read fast path without resolving an LLM provider."""
     core.set_active_session(session_id)
     try:
         _ensure()
         question = _text(content)
+        resumed_question, clarification = _resolve_device_access_clarification(
+            question, _sessions.get(session_id, [])
+        )
+        if clarification:
+            return clarification, [
+                {"kind": "call", "tool": "clarify_device_access_user", "arguments": {"reply": question}},
+                {"kind": "result", "tool": "clarify_device_access_user", "result": clarification},
+            ]
+        if resumed_question:
+            question = resumed_question
         # Supported write recipes must run before provider/model discovery. They
         # resolve targets and call the normal spec-validated write preparation
         # path, which creates a real pending action for the UI approval card.
