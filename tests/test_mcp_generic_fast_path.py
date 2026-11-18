@@ -543,3 +543,60 @@ def test_failed_read_in_multi_call_lookup_is_detected():
          "read_success": False},
     ]
     assert app._has_mcp_read_failure(activity)
+
+
+def test_nested_mcp_content_wrapper_preserves_complete_read_evidence():
+    wrapped = [{
+        "type": "text",
+        "text": '{"endpoint":"GET /v2/users","executed":true,'
+                '"complete":true,"truncated":false,"data":[{"id":1}]}',
+    }]
+    assert app._mcp_result_is_success(wrapped)
+    assert app._mcp_result_is_complete(wrapped)
+    assert app._mcp_result_authoritative_total(wrapped) is None
+
+
+def test_nested_mcp_content_wrapper_detects_http_403_as_read_failure():
+    wrapped = [{
+        "type": "text",
+        "text": '{"error":"GET /v2/ticketing/app-user-contact failed (403)",'
+                '"status":403,"body":{"errorMessage":{"code":'
+                '"Ninja Ticketing Integration is not enabled"}},"executed":true}',
+    }]
+    assert app._mcp_result_is_error(wrapped)
+    assert not app._mcp_result_is_success(wrapped)
+    assert not app._mcp_result_is_complete(wrapped)
+    activity = [{
+        "kind": "result",
+        "tool": "execute_endpoint",
+        "result": __import__("json").dumps(wrapped),
+        "read_success": False,
+        "complete": False,
+        "authoritative_total": None,
+    }]
+    assert app._has_mcp_read_failure(activity)
+    assert not app._has_mcp_data_read_result(activity)
+    assert not app._has_complete_mcp_count_evidence(activity)
+
+
+def test_mixed_success_and_403_reads_are_not_treated_as_complete_count():
+    successful = [{
+        "type": "text",
+        "text": '{"endpoint":"GET /v2/users","executed":true,'
+                '"complete":true,"data":[{"id":1}]}',
+    }]
+    failed = [{
+        "type": "text",
+        "text": '{"error":"failed (403)","status":403,"executed":true}',
+    }]
+    activity = [
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": __import__("json").dumps(successful),
+         "read_success": True, "complete": True},
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": __import__("json").dumps(failed),
+         "read_success": False, "complete": False},
+    ]
+    assert app._has_mcp_data_read_result(activity)
+    assert app._has_mcp_read_failure(activity)
+    assert not app._has_complete_mcp_count_evidence(activity)
