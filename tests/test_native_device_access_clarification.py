@@ -89,3 +89,24 @@ def test_selection_resumes_recipe_and_returns_approval_without_llm():
         )
     finally:
         native._sessions.pop(session_id, None)
+
+
+
+def test_selection_parser_accepts_cross_category_candidate_labels():
+    turns = [
+        {"role": "user", "content": "add VM-6804B761 to rene for device access"},
+        {"role": "assistant", "content": (
+            'Multiple NinjaOne people records matched "rene". '
+            'Which person did you mean for device access to "VM-6804B761"?\\n'
+            "1. Rene Piuk <rene.piuk@example.com> (end-user ID 31)\\n"
+            "2. Rene Console <rene.console@example.com> (console user ID 88)\\n"
+            "3. Rene Tech <rene.tech@example.com> (technician ID 89)\\n"
+            "Reply with the option number, full name, or email address. "
+            "No change has been prepared."
+        )},
+    ]
+    request, clarification = native._resolve_device_access_clarification("2", turns)
+    assert clarification is None
+    assert request == (
+        "add VM-6804B761 to Rene Console <rene.console@example.com> for device access"
+    )
