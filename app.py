@@ -1472,12 +1472,16 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
         elif getattr(msg, "type", "") == "tool":
             tool_result = getattr(msg, "content", "")
+            parsed_tool_result = parse_mcp_result(tool_result)
+            try:
+                evidence_text = json.dumps(parsed_tool_result, ensure_ascii=False, default=str)
+            except (TypeError, ValueError):
+                evidence_text = str(parsed_tool_result)
             activity.append({
                 "kind": "result",
                 "tool": getattr(msg, "name", "tool"),
-                "result": str(tool_result)[:2500],
+                "result": evidence_text[:2500],
             })
-            parsed_tool_result = parse_mcp_result(tool_result)
             if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
                 activity.append({
                     "kind": "approval_required",
