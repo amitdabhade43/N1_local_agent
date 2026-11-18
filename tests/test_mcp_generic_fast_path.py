@@ -498,3 +498,20 @@ async def test_direct_mcp_error_payload_is_never_reported_as_zero_records():
     )
     assert "could not complete the read" in answer
     assert "0 users" not in answer
+
+
+def test_mcp_read_evidence_metadata_survives_truncated_result_previews():
+    assert app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": "' + ("x" * 2600),
+         "read_success": True, "complete": True, "authoritative_total": 9},
+    ])
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": "' + ("x" * 2600),
+         "read_success": True, "complete": True, "authoritative_total": 9},
+    ])
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": []}', "read_success": False},
+    ])
