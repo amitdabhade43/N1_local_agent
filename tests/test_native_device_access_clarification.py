@@ -50,9 +50,9 @@ def test_valid_selection_still_works_after_an_invalid_clarification_reply():
         {"role": "user", "content": "Rene"},
         {"role": "assistant", "content": (
             "I couldn't match that reply to one listed user. "
-            'Which user should receive the device access for "VM-6804B761"?\\n'
-            "1. Rene Piuk <rene.piuk@example.com>\\n"
-            "2. Rene Other <rene.other@example.com>\\n"
+            'Which user should receive the device access for "VM-6804B761"?\n'
+            "1. Rene Piuk <rene.piuk@example.com>\n"
+            "2. Rene Other <rene.other@example.com>\n"
             "No change has been prepared."
         )},
     ]
