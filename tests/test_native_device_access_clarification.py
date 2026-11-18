@@ -34,9 +34,9 @@ def test_pc_admin_target_is_not_substituted_with_same_name_end_user():
         {"role": "user", "content": "add VM-6804B761 to rene for device access"},
         {"role": "assistant", "content": (
             'Multiple NinjaOne people records matched "rene". '
-            'Which user should receive the device access for "VM-6804B761"?\\n'
-            "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\\n"
-            "2. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\\n"
+            'Which user should receive the device access for "VM-6804B761"?\n'
+            "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\n"
+            "2. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\n"
             "3. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)"
         )},
     ]
