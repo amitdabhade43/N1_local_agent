@@ -1867,17 +1867,17 @@ def recipe_device_details(q):
 
 def recipe_device_summary(q):
     """Build a descriptive, read-only device summary from verified API records."""
-    text = re.sub(r"\\s+", " ", (q or "").strip().rstrip("?.! "))
+    text = re.sub(r"\s+", " ", (q or "").strip().rstrip("?.! "))
     patterns = (
-        r"\\b(?:descriptive\\s+)?(?:summary|overview|report)\\s+(?:of|for|about)\\s+(?:the\\s+)?(?:device|computer|machine|endpoint)\\s+(.+)$",
-        r"\\b(?:device|computer|machine|endpoint)\\s+(?:summary|overview|report)\\s+(?:of|for|about)\\s+(.+)$",
+        r"\b(?:descriptive\s+)?(?:summary|overview|report)\s+(?:of|for|about)\s+(?:the\s+)?(?:device|computer|machine|endpoint)\s+(.+)$",
+        r"\b(?:device|computer|machine|endpoint)\s+(?:summary|overview|report)\s+(?:of|for|about)\s+(.+)$",
     )
     match = next((re.search(pattern, text, re.I) for pattern in patterns
                   if re.search(pattern, text, re.I)), None)
     if not match:
         return None
 
-    identifier = match.group(1).strip().strip("\\\"'")
+    identifier = match.group(1).strip().strip("\\"'")
     if not identifier:
         return "Please provide a device name or identifier."
 
@@ -1893,7 +1893,7 @@ def recipe_device_summary(q):
         ("/v2/device/{id}/network-interfaces", "Network interfaces"),
         ("/v2/device/{id}/volumes", "Storage volumes"),
     )
-    device_id_match = re.search(r"\\(device ID (\\d+)\\)", details)
+    device_id_match = re.search(r"\(device ID (\d+)\)", details)
     if not device_id_match:
         return details
     device_id = int(device_id_match.group(2))
@@ -1901,7 +1901,7 @@ def recipe_device_summary(q):
     for path_template, label in subresources:
         operation = op_by_path(path_template)
         if not operation:
-            sections.append(f"**{label}**\\nNot available: GET {path_template} is not present in the loaded API specification.")
+            sections.append(f"**{label}**\nNot available: GET {path_template} is not present in the loaded API specification.")
             continue
         result_text = t_call({
             "operation_id": operation["id"],
@@ -1910,24 +1910,24 @@ def recipe_device_summary(q):
         try:
             result = json.loads(result_text)
         except (TypeError, ValueError):
-            sections.append(f"**{label}**\\nNot available: NinjaOne returned an unreadable response.")
+            sections.append(f"**{label}**\nNot available: NinjaOne returned an unreadable response.")
             continue
         if result.get("error"):
-            sections.append(f"**{label}**\\nNot retrieved: {result.get('error')}.")
+            sections.append(f"**{label}**\nNot retrieved: {result.get('error')}.")
             continue
         rows = result.get("rows") or []
         if not rows:
-            sections.append(f"**{label}**\\nNo records returned.")
+            sections.append(f"**{label}**\nNo records returned.")
             continue
         rendered = [format_record_summary(row, title=f"{label[:-1] if label.endswith('s') else label} {index}")
                     for index, row in enumerate(rows, 1) if isinstance(row, dict)]
-        sections.append(f"**{label}**\\n" + ("\\n\\n".join(rendered) if rendered else "No readable records returned."))
+        sections.append(f"**{label}**\n" + ("\n\n".join(rendered) if rendered else "No readable records returned."))
 
     sections.append(
         "This summary is based on the device detail and hardware/network endpoints listed above. "
         "It does not establish a complete health assessment; unavailable endpoints are identified individually."
     )
-    return "\\n\\n".join(sections)
+    return "\n\n".join(sections)
 
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
