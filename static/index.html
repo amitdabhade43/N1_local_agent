@@ -119,7 +119,7 @@ function approvalSummary(action){
  const additions=Array.isArray(body.addDeviceIds)?body.addDeviceIds:[];
  const removals=Array.isArray(body.removeDeviceIds)?body.removeDeviceIds:[];
  if(path.includes('/device-access')&&(additions.length||removals.length)){
-  const target=path.match(/\\/end-user\\/(\\d+)\\/device-access/i);
+  const target=path.match(/\/end-user\/(\d+)\/device-access/i);
   const changes=[];
   if(additions.length)changes.push('Add device ID'+(additions.length===1?'':'s')+' '+additions.join(', '));
   if(removals.length)changes.push('Remove device ID'+(removals.length===1?'':'s')+' '+removals.join(', '));
