@@ -1538,7 +1538,7 @@ def recipe_add_device_access(q):
         email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
         email = email_match.group(1).strip().lower() if email_match else ""
         user_name = re.sub(r"<[^<>]*>", "", user_label).strip(" \t<>")
-        if not device_label or not user_name:
+        if not device_label or (not user_name and not email):
             return "Please provide both a device name and an end-user name."
         try:
             lookup = email or user_name
@@ -1549,18 +1549,24 @@ def recipe_add_device_access(q):
         # /v2/users also contains technicians, so normalize that overlap by stable ID.
         people_records = []
         people_results = [("end_user", user_result)]
-        for kind in ("user", "technician", "contact"):
-            try:
-                people_results.append((
-                    kind,
-                    json.loads(t_resolve({"kind": kind, "name": lookup})),
-                ))
-            except Exception as exc:
-                return (
-                    f'Could not verify all NinjaOne people records for "{user_label}": '
-                    f'{type(exc).__name__}: {exc}. The search is incomplete, so no person '
-                    "will be selected and no change was prepared."
-                )
+
+        # Cross-category disambiguation is essential for shorthand/first-name
+        # requests (for example, "Rene"). An explicit email or full name is an
+        # identity-qualified request; keep that fast path to the end-user record
+        # and avoid redundant API calls.
+        if not email and len(user_name.split()) == 1:
+            for kind in ("user", "technician", "contact"):
+                try:
+                    people_results.append((
+                        kind,
+                        json.loads(t_resolve({"kind": kind, "name": lookup})),
+                    ))
+                except Exception as exc:
+                    return (
+                        f'Could not verify all NinjaOne people records for "{user_label}": '
+                        f'{type(exc).__name__}: {exc}. The search is incomplete, so no person '
+                        "will be selected and no change was prepared."
+                    )
 
         for kind, result in people_results:
             if not isinstance(result, dict) or result.get("error"):
