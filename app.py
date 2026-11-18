@@ -942,7 +942,7 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
         detail = parsed.get("error") or parsed.get("message") or parsed.get("detail") or "the API reported an unsuccessful read"
         return f"NinjaOne could not complete the read: {detail}", activity
     if isinstance(parsed, str) and re.search(
-        r"^\\s*(?:error|exception|failed|failure)\\b", parsed, re.I
+        r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
     ):
         return f"NinjaOne could not complete the read: {parsed.strip()}", activity
 
