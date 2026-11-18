@@ -120,10 +120,10 @@ def _resolve_device_access_clarification(question, history):
     # The original request and candidate list remain in history as useful context.
     clarification_reply = str(question or "").strip()
     if re.search(
-        r"\\b(?:check|show|find|search|lookup|look\\s+up|details|who\\s+is|"
-        r"tell\\s+me\\s+about|i\\s+want|i'd\\s+like|not\\s+in\\s+the\\s+list|"
-        r"not\\s+in\\s+list|not\\s+listed|none\\s+of\\s+these|another\\s+user|"
-        r"different\\s+user|cancel|start\\s+over)\\b",
+        r"\b(?:check|show|find|search|lookup|look\s+up|details|who\s+is|"
+        r"tell\s+me\s+about|i\s+want|i'd\s+like|not\s+in\s+the\s+list|"
+        r"not\s+in\s+list|not\s+listed|none\s+of\s+these|another\s+user|"
+        r"different\s+user|cancel|start\s+over)\\b",
         clarification_reply,
         re.I,
     ):
@@ -279,7 +279,7 @@ def _has_pending_clarification(history):
 
 
 _CLARIFICATION_GUIDANCE = (
-    "\\n\\nCONVERSATION CLARIFICATION: Your previous answer asked the user to choose "
+    "\n\nCONVERSATION CLARIFICATION: Your previous answer asked the user to choose "
     "between matching NinjaOne entities. First determine whether the current message is "
     "actually selecting one of those candidates. A number, exact listed full name, or exact "
     "listed email may select a candidate. If the user names a different person, says the "
