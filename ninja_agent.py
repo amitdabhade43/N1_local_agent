@@ -1595,7 +1595,7 @@ def recipe_add_device_access(q):
             return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
         if len(exact_users) != 1:
             choices = []
-            for index, row in enumerate(exact_users[:10], 1):
+            for index, row in enumerate(exact_users, 1):
                 name = row_name(row) or "Unnamed end user"
                 email_value = str(row.get("email") or "").strip()
                 record_id = row.get("id")
@@ -1605,9 +1605,6 @@ def recipe_add_device_access(q):
                 if record_id is not None:
                     details += f" (end-user ID {record_id})"
                 choices.append(f"{index}. {details}")
-            remaining = len(exact_users) - len(choices)
-            if remaining > 0:
-                choices.append(f"...and {remaining} more matching records")
             return (
                 f'Multiple end-user records matched "{user_label}". Which user should receive '
                 f'the device access for "{device_label}"?\n'
