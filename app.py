@@ -1118,7 +1118,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         action = approval_events[-1].get("action", {})
         final_text = (
             f"Prepared {action.get('method', 'write')} {action.get('path', '')}. "
-            "It has NOT been executed. Review the exact request in the approval panel "
+            "It has NOT been executed. Review the approval card shown directly in this chat "
             "and choose Approve and execute or Reject."
         )
     elif ninja_native._is_mutation_request(message_text):
