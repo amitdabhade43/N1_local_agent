@@ -369,6 +369,8 @@ def test_people_name_search_prompt_requires_all_categories_and_pagination():
     assert "searchCriteria" in prompt
     assert "Paginate the unified people endpoint completely" in prompt
     assert "stable record identity" in prompt
+    assert "Ambiguity gate" in prompt
+    assert "never select the first or most likely match" in prompt
 
 
 def test_activity_metric_is_not_mistaken_for_mcp_tool_execution():
