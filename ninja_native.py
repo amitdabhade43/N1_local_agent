@@ -50,6 +50,32 @@ def _is_mutation_request(content):
         text,
     ))
 
+_DELETE_INTENT_RE = re.compile(
+    r"\b(?:delete|erase|destroy|purge)\b|\bpermanently\s+remove\b",
+    re.I,
+)
+
+
+def _is_delete_request(content):
+    """Identify explicit destructive user intent; 'remove access' remains a valid non-delete change."""
+    return bool(_DELETE_INTENT_RE.search(str(content or "")))
+
+
+def _is_action_clarification(content):
+    """Recognize a useful follow-up asking for required mutation details."""
+    text = re.sub(r"\s+", " ", str(content or "").strip().lower())
+    asks = re.search(
+        r"\b(?:please\s+provide|provide\s+(?:the|your)|tell\s+me|"
+        r"what\s+(?:is|are)|which|i\s+need|missing|required)\b",
+        text,
+    )
+    names_field = re.search(
+        r"\b(?:first[\s_-]?name|last[\s_-]?name|email(?:\s+address)?|"
+        r"organization(?:\s+(?:name|id))?|phone|manager|invitation|portal\s+access)\b",
+        text,
+    )
+    return bool(asks and names_field)
+
 
 def _text(content):
     if isinstance(content, str):
@@ -365,6 +391,19 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     q = _text(content)
     hist = _sessions.get(session_id, [])[-6:]
     emit("Checking whether this question can be answered directly.", "understanding")
+    if _is_delete_request(q):
+        refusal = (
+            "I can't delete NinjaOne records or perform destructive delete actions. "
+            "Delete requests are disabled by policy. I can still help with supported "
+            "non-delete changes, such as updating a record or revoking access, when the "
+            "API provides a safe operation and you approve the exact request."
+        )
+        _sessions[session_id] = (hist + [
+            {"role": "user", "content": q},
+            {"role": "assistant", "content": refusal},
+        ])[-12:]
+        return refusal, [{"kind": "policy", "stage": "blocked_delete",
+                          "message": "Delete requests are blocked; no NinjaOne API operation was called."}]
     # A typed "yes"/"approved" is never an approval action. If the previous
     # mutation turn only produced prose and no pending action exists, resume
     # preparation from that original request so the UI can receive a real card.
@@ -464,7 +503,11 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             # returned an approval_required action. Never let a prose-only plan
             # masquerade as a prepared write, even after read/resolve tool calls.
             has_approval_action = any(item.get("kind") == "approval_required" for item in activity)
-            mutation_without_approval = _is_mutation_request(q) and not has_approval_action
+            mutation_without_approval = (
+                _is_mutation_request(q)
+                and not has_approval_action
+                and not _is_action_clarification(txt)
+            )
             bad = tool_intent or mutation_without_approval or (
                 not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
             )
@@ -500,11 +543,15 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     approval_events = [item for item in activity if item.get("kind") == "approval_required"]
-    if _is_mutation_request(q) and not approval_events:
+    if (
+        _is_mutation_request(q)
+        and not approval_events
+        and not _is_action_clarification(answer)
+    ):
         answer = (
-            "I could not create a real NinjaOne approval request for this change. "
-            "No write was executed and no change was made. Please retry with the target "
-            "record and requested change clearly identified."
+            "I could not prepare this NinjaOne change yet. No write was executed. "
+            "I can help complete it: please provide any missing required details, or "
+            "tell me the target record and the exact change you want."
         )
     if approval_events:
         action = approval_events[-1].get("action", {})
