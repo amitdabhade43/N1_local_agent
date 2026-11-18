@@ -1877,7 +1877,7 @@ def recipe_device_summary(q):
     if not match:
         return None
 
-    identifier = match.group(1).strip().strip("\\"'")
+    identifier = match.group(1).strip().strip(chr(34) + chr(39))
     if not identifier:
         return "Please provide a device name or identifier."
 
@@ -1896,7 +1896,7 @@ def recipe_device_summary(q):
     device_id_match = re.search(r"\(device ID (\d+)\)", details)
     if not device_id_match:
         return details
-    device_id = int(device_id_match.group(2))
+    device_id = int(device_id_match.group(1))
 
     for path_template, label in subresources:
         operation = op_by_path(path_template)
