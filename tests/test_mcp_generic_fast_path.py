@@ -607,3 +607,9 @@ def test_ordinary_record_status_is_not_mistaken_for_mcp_envelope():
     assert app._mcp_result_envelopes(records) == []
     assert not app._mcp_result_is_error(records)
     assert not app._mcp_result_is_complete(records)
+
+
+def test_numeric_http_status_without_error_text_is_still_a_failure():
+    wrapped = [{"type": "text", "text": '{"status":403,"executed":true}'}]
+    assert app._mcp_result_is_error(wrapped)
+    assert not app._mcp_result_is_complete(wrapped)
