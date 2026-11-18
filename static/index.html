@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>NinjaOne Local Expert Agent</title>
 <style>
-:root{color-scheme:dark;--bg:#0b1220;--panel:#111b2d;--panel2:#172338;--line:#26354c;--text:#e8eef8;--muted:#9eacc2;--accent:#65a8ff;--green:#72d6a1;--aside-bg:#0e1727;--composer-bg:#0e1727;--user-bg:#173354;--progress-bg:#0e1727;--approval-bg:#211d15;--approval-line:#8a6b32;--approval-text:#ffd58a;--approval-detail-line:#51442e;--approval-reject-bg:#35232a;--approval-reject-line:#70414b}\n:root[data-theme="light"]{color-scheme:light;--bg:#f3f6fb;--panel:#ffffff;--panel2:#edf2f8;--line:#d7e0ec;--text:#172235;--muted:#627188;--accent:#2468c7;--green:#18794e;--aside-bg:#e9eff7;--composer-bg:#f8fafd;--user-bg:#e3efff;--progress-bg:#f8fafd;--approval-bg:#fff8e9;--approval-line:#d6ad58;--approval-text:#805500;--approval-detail-line:#ead8b3;--approval-reject-bg:#fff0f0;--approval-reject-line:#d6a4a4}
+:root{color-scheme:dark;--bg:#0b1220;--panel:#111b2d;--panel2:#172338;--line:#26354c;--text:#e8eef8;--muted:#9eacc2;--accent:#65a8ff;--green:#72d6a1;--aside-bg:#0e1727;--composer-bg:#0e1727;--user-bg:#173354;--progress-bg:#0e1727;--approval-bg:#211d15;--approval-line:#8a6b32;--approval-text:#ffd58a;--approval-detail-line:#51442e;--approval-reject-bg:#35232a;--approval-reject-line:#70414b}
+:root[data-theme="light"]{color-scheme:light;--bg:#f3f6fb;--panel:#ffffff;--panel2:#edf2f8;--line:#d7e0ec;--text:#172235;--muted:#627188;--accent:#2468c7;--green:#18794e;--aside-bg:#e9eff7;--composer-bg:#f8fafd;--user-bg:#e3efff;--progress-bg:#f8fafd;--approval-bg:#fff8e9;--approval-line:#d6ad58;--approval-text:#805500;--approval-detail-line:#ead8b3;--approval-reject-bg:#fff0f0;--approval-reject-line:#d6a4a4}
 *{box-sizing:border-box}
 html,body{width:100%;height:100%;margin:0;overflow:hidden}
 body{background:var(--bg);color:var(--text);font:14px/1.5 Segoe UI,Arial,sans-serif}
@@ -47,6 +48,7 @@ header{flex:0 0 auto;padding:16px 22px;border-bottom:1px solid var(--line);displ
 small{color:var(--muted)}
 @media(max-width:760px){.app{grid-template-columns:minmax(0,1fr)}aside{display:none}.app.sidebar-visible aside{display:flex;position:absolute;z-index:20;inset:0 auto 0 0;width:min(300px,85vw);box-shadow:0 0 0 9999px #0007}header{padding:12px}header button{padding:8px}header .sub{max-width:32vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#chat{padding:12px}.composer{padding:12px}.msg{max-width:100%}}
 @media(max-height:560px){header{padding:8px 12px}.composer{padding:8px 12px}#chat{padding:12px;gap:10px}}
+:root[data-theme="light"] .primary{background:#1d4f8d;border-color:#2c6cb5;color:#fff}:root[data-theme="light"] .approval-endpoint{color:#52647c}:root[data-theme="light"] .approval-details summary,:root[data-theme="light"] .approval-result summary{color:#40516a}:root[data-theme="light"] .approval-details pre,:root[data-theme="light"] .approval-result pre{color:#40516a}:root[data-theme="light"] .approval-warning{color:#9d2929;background:#fff4f4}:root[data-theme="light"] .approval-pill.success{color:#18794e}:root[data-theme="light"] .approval-pill.rejected{color:#52627a}:root[data-theme="light"] .approval-pill.failed{color:#a32626}
 </style>
 </head>
 <body>
