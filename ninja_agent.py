@@ -1645,7 +1645,7 @@ def recipe_add_device_access(q):
                 choices.append(f"{index}. {details}")
             return (
                 f'Multiple NinjaOne people records matched "{user_label}". '
-                f'Which person did you mean for device access to "{device_label}"?\n'
+                f'Which user should receive the device access for "{device_label}"?\n'
                 + "\n".join(choices)
                 + "\nReply with the option number, full name, or email address. "
                 "Only an end-user record supports this device-access operation. "
