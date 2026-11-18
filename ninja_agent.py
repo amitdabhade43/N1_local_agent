@@ -1563,6 +1563,13 @@ def recipe_add_device_access(q):
                 )
 
         for kind, result in people_results:
+            if not isinstance(result, dict) or result.get("error"):
+                error_detail = result.get("error") if isinstance(result, dict) else "invalid API response"
+                return (
+                    f'I could not verify the {kind.replace("_", " ")} inventory for "{user_label}": '
+                    f'{error_detail}. The identity search is incomplete, so no person was selected '
+                    "and no change was prepared."
+                )
             result_matches = result.get("matches") or []
             if result.get("partial") or (
                 result.get("total_matches") is not None
