@@ -1545,74 +1545,114 @@ def recipe_add_device_access(q):
             user_result = json.loads(t_resolve({"kind": "end_user", "name": lookup}))
         except Exception as exc:
             return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
-        resolved_users = user_result.get("matches") or []
-        if email:
-            exact_users = [
-                row for row in resolved_users
-                if str(row.get("email", "")).strip().lower() == email
-            ]
-        else:
-            requested_name = normalized(user_name)
-            exact_users = [
-                row for row in resolved_users
-                if normalized(row_name(row)) == requested_name
-                or (
-                    len(user_name.split()) == 1
-                    and user_name.casefold() in {
-                        str(row.get("firstName", "")).strip().casefold(),
-                        str(row.get("lastName", "")).strip().casefold(),
-                    }
-                )
-            ]
-        if not exact_users:
-            # Device-access PATCH is documented for end-user records only.
-            # Check other people categories to explain a record-type mismatch.
-            other_matches = []
-            for kind in ("user", "technician", "contact"):
-                try:
-                    other_matches.extend(
-                        (kind, row) for row in
-                        (json.loads(t_resolve({"kind": kind, "name": lookup})).get("matches") or [])
-                    )
-                except Exception:
-                    continue
-            if other_matches:
-                choices = ", ".join(
-                    f'{row_name(row)} ({kind.replace("_", " ")})'
-                    for kind, row in other_matches[:6]
-                )
+        # Resolve the requested identity across every NinjaOne people inventory.
+        # /v2/users also contains technicians, so normalize that overlap by stable ID.
+        people_records = []
+        people_results = [("end_user", user_result)]
+        for kind in ("user", "technician", "contact"):
+            try:
+                people_results.append((
+                    kind,
+                    json.loads(t_resolve({"kind": kind, "name": lookup})),
+                ))
+            except Exception as exc:
                 return (
-                    f'No end-user record matched "{user_label}". I found other people records: '
-                    f'{choices}. The documented direct device-access PATCH supports end-user records only; '
-                    "please identify an end-user record. No change was prepared."
+                    f'Could not verify all NinjaOne people records for "{user_label}": '
+                    f'{type(exc).__name__}: {exc}. The search is incomplete, so no person '
+                    "will be selected and no change was prepared."
                 )
-            if resolved_users:
-                choices = ", ".join(
-                    row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
-                    for row in resolved_users[:6]
+
+        for kind, result in people_results:
+            if result.get("partial"):
+                return (
+                    f'I cannot safely identify "{user_label}" because the {kind.replace("_", " ")} '
+                    f'inventory search is incomplete. {result.get("pagination_note", "")} '
+                    "No person was selected and no change was prepared."
                 )
-                return f'No exact end-user match for "{user_label}". Closest results: {choices}. No change was prepared.'
-            return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
-        if len(exact_users) != 1:
+            for row in (result.get("matches") or []):
+                if email:
+                    matched = str(row.get("email", "")).strip().lower() == email
+                else:
+                    requested_name = normalized(user_name)
+                    matched = (
+                        normalized(row_name(row)) == requested_name
+                        or (
+                            len(user_name.split()) == 1
+                            and user_name.casefold() in {
+                                str(row.get("firstName", "")).strip().casefold(),
+                                str(row.get("lastName", "")).strip().casefold(),
+                            }
+                        )
+                    )
+                if not matched:
+                    continue
+
+                if kind == "end_user":
+                    category = "end-user"
+                elif kind == "contact":
+                    category = "contact"
+                elif kind == "technician" or str(row.get("userType", "")).upper() == "TECHNICIAN":
+                    category = "technician"
+                else:
+                    category = "console user"
+
+                record_id = row.get("id")
+                email_value = str(row.get("email") or "").strip().lower()
+                identity = (
+                    (category, str(record_id)) if record_id is not None
+                    else (category, email_value or normalized(row_name(row)))
+                )
+                existing = next((item for item in people_records if item["identity"] == identity), None)
+                if existing:
+                    # Prefer the richer row when the same /v2/users technician appears
+                    # through both user and technician resolver paths.
+                    if len(row) > len(existing["row"]):
+                        existing["row"] = row
+                    continue
+                people_records.append({
+                    "identity": identity,
+                    "category": category,
+                    "row": row,
+                })
+
+        if not people_records:
+            return f'No exact NinjaOne people record matched "{user_label}". No change was prepared.'
+
+        # A first-name match may legitimately identify several distinct records,
+        # including records that cannot receive this end-user-only PATCH. Show all.
+        if len(people_records) > 1:
             choices = []
-            for index, row in enumerate(exact_users, 1):
-                name = row_name(row) or "Unnamed end user"
+            for index, item in enumerate(people_records, 1):
+                row = item["row"]
+                name = row_name(row) or "Unnamed person"
                 email_value = str(row.get("email") or "").strip()
                 record_id = row.get("id")
-                details = f"{name}"
+                details = name
                 if email_value:
                     details += f" <{email_value}>"
                 if record_id is not None:
-                    details += f" (end-user ID {record_id})"
+                    details += f' ({item["category"]} ID {record_id})'
+                else:
+                    details += f' ({item["category"]})'
                 choices.append(f"{index}. {details}")
             return (
-                f'Multiple end-user records matched "{user_label}". Which user should receive '
-                f'the device access for "{device_label}"?\n'
+                f'Multiple NinjaOne people records matched "{user_label}". '
+                f'Which person did you mean for device access to "{device_label}"?\n'
                 + "\n".join(choices)
                 + "\nReply with the option number, full name, or email address. "
+                "Only an end-user record supports this device-access operation. "
                 "No change has been prepared; I will prepare the approval only after you choose one."
             )
-        user = exact_users[0]
+
+        selected = people_records[0]
+        if selected["category"] != "end-user":
+            row = selected["row"]
+            return (
+                f'Matched {row_name(row)} as a NinjaOne {selected["category"]} record, '
+                "not an end-user record. The documented direct device-access PATCH supports "
+                "end-user records only. No change was prepared."
+            )
+        user = selected["row"]
         try:
             devices = exact_device_rows(device_label)
         except Exception as exc:
