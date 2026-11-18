@@ -51,7 +51,9 @@ def _is_mutation_request(content):
     ))
 
 _DELETE_INTENT_RE = re.compile(
-    r"\b(?:delete|erase|destroy|purge)\b|\bpermanently\s+remove\b",
+    r"\b(?:delete|erase|destroy|purge)\b|\bpermanently\s+remove\b|"
+    r"\bremove\s+(?:the\s+)?(?:end[\s-]?user|user|technician|device|organization|contact|record)\b"
+    r"(?!\s+(?:from|off|access|role|group|list)\b)",
     re.I,
 )
 
