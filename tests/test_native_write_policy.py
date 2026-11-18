@@ -31,3 +31,25 @@ def test_delete_request_returns_before_any_model_or_api_call(monkeypatch):
     assert "can't delete" in answer.lower()
     assert activity[0]["stage"] == "blocked_delete"
     assert ninja_native._sessions["delete-policy-test"][-1]["content"] == answer
+
+
+
+def test_create_end_user_without_email_asks_for_required_details(monkeypatch):
+    monkeypatch.setattr(
+        ninja_native,
+        "_ensure",
+        lambda: (_ for _ in ()).throw(AssertionError("API catalog must not load yet")),
+    )
+    ninja_native._sessions.pop("create-end-user-test", None)
+
+    answer, activity = ninja_native._run_inner(
+        "create-end-user-test",
+        "unused-model",
+        "I want to create an end user, can you help me?",
+        "http://127.0.0.1:1",
+    )
+
+    assert "first name, last name, and email address" in answer.lower()
+    assert "nothing will be created until you approve" in answer.lower()
+    assert activity[0]["stage"] == "missing_required_fields"
+    assert ninja_native._sessions["create-end-user-test"][-1]["content"] == answer
