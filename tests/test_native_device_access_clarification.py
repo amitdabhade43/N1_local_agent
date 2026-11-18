@@ -44,6 +44,29 @@ def test_non_unique_or_invalid_reply_asks_again_without_preparing_write():
     assert "No change has been prepared" in clarification
 
 
+
+def test_valid_selection_still_works_after_an_invalid_clarification_reply():
+    turns = history() + [
+        {"role": "user", "content": "Rene"},
+        {"role": "assistant", "content": (
+            "I couldn't match that reply to one listed user. "
+            'Which user should receive the device access for "VM-6804B761"?\\n'
+            "1. Rene Piuk <rene.piuk@example.com>\\n"
+            "2. Rene Other <rene.other@example.com>\\n"
+            "No change has been prepared."
+        )},
+    ]
+    request, clarification = native._resolve_device_access_clarification("2", turns)
+    assert clarification is None
+    assert request == "add VM-6804B761 to Rene Other <rene.other@example.com> for device access"
+
+
+def test_selection_by_full_name_is_supported():
+    request, clarification = native._resolve_device_access_clarification("Rene Piuk", history())
+    assert clarification is None
+    assert request == "add VM-6804B761 to Rene Piuk <rene.piuk@example.com> for device access"
+
+
 def test_selection_resumes_recipe_and_returns_approval_without_llm():
     session_id = "test-device-access-choice"
     native._sessions[session_id] = history()
