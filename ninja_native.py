@@ -100,7 +100,7 @@ def _resolve_device_access_clarification(question, history):
     request_pattern = (
         r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
         r"[A-Za-z0-9][A-Za-z0-9._-]*\s+to\s+.+?\s+"
-        r"(?:for\s+)?(?:the\s+)?device\s+access(?:\s+list)?\s*$"
+        r"(?:for\s+)?(?:the\s+)?(?:device\s+)?access(?:\s+list)?\s*$"
     )
     original_request = next(
         (_text(item.get("content", "")) for item in reversed(history or [])
