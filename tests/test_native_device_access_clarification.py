@@ -97,10 +97,10 @@ def test_selection_parser_accepts_cross_category_candidate_labels():
         {"role": "user", "content": "add VM-6804B761 to rene for device access"},
         {"role": "assistant", "content": (
             'Multiple NinjaOne people records matched "rene". '
-            'Which person did you mean for device access to "VM-6804B761"?\\n'
-            "1. Rene Piuk <rene.piuk@example.com> (end-user ID 31)\\n"
-            "2. Rene Console <rene.console@example.com> (console user ID 88)\\n"
-            "3. Rene Tech <rene.tech@example.com> (technician ID 89)\\n"
+            'Which person did you mean for device access to "VM-6804B761"?\n'
+            "1. Rene Piuk <rene.piuk@example.com> (end-user ID 31)\n"
+            "2. Rene Console <rene.console@example.com> (console user ID 88)\n"
+            "3. Rene Tech <rene.tech@example.com> (technician ID 89)\n"
             "Reply with the option number, full name, or email address. "
             "No change has been prepared."
         )},
