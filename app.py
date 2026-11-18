@@ -1065,7 +1065,7 @@ async def run_generic_mcp_read(tools, message: str):
     if not isinstance(semantic, dict):
         return None
     selected = semantic.get("selected")
-    if semantic.get("mode") != "fuzzy_fast_path" or not isinstance(selected, list) or not selected:
+    if semantic.get("mode") not in {"fuzzy_fast_path", "fuzzy_fallback"} or not isinstance(selected, list) or not selected:
         return None
     first = selected[0]
     endpoint = first.get("endpoint") if isinstance(first, dict) else first
