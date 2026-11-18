@@ -99,6 +99,11 @@ Rules:
 - For simple inventory questions, use the most relevant tool and answer directly.
 - When a NinjaOne tool is available, never tell the user to access the system themselves or claim you cannot retrieve data. Call the tool.
 - For requests for names, emails, or selected fields, return only the requested fields from tool results.
+- Person-name lookup rule: when a user asks to find, check, list, count, or recheck people by a name or name fragment (for example, "check users with name Rene" or "how many users contain Rene"), you MUST call NinjaOne MCP tools. Never answer that no tool was called without first attempting the lookup.
+- Search across all person categories: technicians (console users), end users, and contacts. Prefer the unified GET /v2/ticketing/app-user-contact operation (getAllUserAndContacts), whose searchCriteria parameter searches first name, last name, or email. Query each userType separately: TECHNICIAN, END_USER, and CONTACT. Do not search only /v2/users or only one category.
+- Paginate the unified people endpoint completely using its documented pageSize and anchorNaturalId parameters. Continue from the last returned naturalId/identifier according to the tool schema until no further page is available. If that cursor cannot safely be driven, use the documented category-specific list endpoints and their supported pagination; never claim an exact total from a partial page.
+- Match name fragments case-insensitively across firstName, lastName, and full/display name (and email only when relevant). Deduplicate only by stable record identity (uid, or userType plus id); do not merge different person categories just because their names match.
+- For a name search, report each match's category, full name, ID, and email when present. For a count request, give per-category counts and a total only when all categories are complete; otherwise label counts as minimums and state which category/page is incomplete. If multiple people match, show them rather than assuming they are the same person.
 - Do not repeat identical tool calls.
 """
 
@@ -1278,6 +1283,16 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
         return None
 
 
+def _has_mcp_tool_execution(activity: list[dict[str, Any]]) -> bool:
+    """Only actual tool calls/results prove execution; timing metrics do not."""
+    return any(
+        isinstance(item, dict)
+        and item.get("kind") in {"call", "result"}
+        and bool(item.get("tool"))
+        for item in activity
+    )
+
+
 _AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\s*[.!]?$", re.I)
 
 
@@ -1419,9 +1434,9 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
     # A tool result is definitive evidence of execution even if the model adapter
     # omitted or normalized the corresponding AI tool-call metadata.
-    has_tool_call = any(item.get("kind") in {"call", "result"} for item in activity)
+    has_tool_call = _has_mcp_tool_execution(activity)
     lookup_question = bool(re.search(
-        r"\b(devices?|end[\s-]?users?|users?|technicians?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
+        r"\b(devices?|end[\s-]?users?|users?|technicians?|contacts?|organizations?|orgs?|roles?|alerts?|polic(?:y|ies)|patches|software|applications?|activities|groups?|locations?)\b",
         message_text,
         re.I,
     ))
