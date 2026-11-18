@@ -1322,6 +1322,80 @@ def _has_mcp_tool_execution(activity: list[dict[str, Any]]) -> bool:
     )
 
 
+def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
+    """Find NinjaOne execution envelopes inside MCP text-content/list wrappers."""
+    parsed = parse_mcp_result(value)
+    markers = {
+        "endpoint", "executed", "complete", "truncated", "pagination",
+        "error", "isError", "success", "status", "status_code",
+    }
+    found: list[dict[str, Any]] = []
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            if markers.intersection(node):
+                found.append(node)
+                return
+            if node.get("type") == "text" and "text" in node:
+                visit(node["text"])
+                return
+            for key in ("content", "result"):
+                if key in node:
+                    visit(node[key])
+        elif isinstance(node, list):
+            for item in node:
+                visit(item)
+
+    visit(parsed)
+    return found
+
+
+def _mcp_result_is_error(value: Any) -> bool:
+    """Recognize API/tool errors even when nested in MCP content blocks."""
+    for envelope in _mcp_result_envelopes(value):
+        if (envelope.get("error") or envelope.get("isError") is True
+                or envelope.get("success") is False
+                or envelope.get("executed") is False
+                or str(envelope.get("status", "")).casefold() in {"error", "failed", "failure"}
+                or (isinstance(envelope.get("status_code"), int)
+                    and envelope.get("status_code") >= 400)):
+            return True
+    parsed = parse_mcp_result(value)
+    return isinstance(parsed, str) and bool(re.search(
+        r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
+    ))
+
+
+def _mcp_result_is_complete(value: Any) -> bool:
+    """Completeness must be explicit on every execution envelope in the result."""
+    envelopes = _mcp_result_envelopes(value)
+    if not envelopes or _mcp_result_is_error(value):
+        return False
+    return all(
+        envelope.get("complete") is True or find_total_field(envelope) is not None
+        for envelope in envelopes
+    )
+
+
+def _mcp_result_authoritative_total(value: Any) -> int | None:
+    for envelope in _mcp_result_envelopes(value):
+        total = find_total_field(envelope)
+        if total is not None:
+            return total
+    return None
+
+
+def _mcp_result_is_success(value: Any) -> bool:
+    parsed = parse_mcp_result(value)
+    if parsed in (None, "", {}):
+        return False
+    if _mcp_result_is_error(parsed):
+        return False
+    if isinstance(parsed, str) and not parsed.strip():
+        return False
+    return True
+
+
 def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
     """Require a successful NinjaOne data-read result, not endpoint discovery alone."""
     read_tools = {
@@ -1338,19 +1412,10 @@ def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
             continue
         if item.get("read_success") is True:
             return True
-        if item.get("read_success") is False:
+        if item.get("read_success") is False or _mcp_result_is_error(raw_result):
             continue
-        parsed = parse_mcp_result(raw_result)
-        if isinstance(parsed, dict):
-            if (parsed.get("error") or parsed.get("isError") is True
-                    or parsed.get("success") is False
-                    or parsed.get("executed") is False):
-                continue
-        elif isinstance(parsed, str) and re.search(
-            r"^\s*(?:error|exception|failed|failure)\b", parsed, re.I
-        ):
-            continue
-        return True
+        if _mcp_result_is_success(raw_result):
+            return True
     return False
 
 
@@ -1369,17 +1434,12 @@ def _has_complete_mcp_count_evidence(activity: list[dict[str, Any]]) -> bool:
         return False
 
     for item in read_results:
-        if item.get("read_success") is False:
+        raw_result = item.get("result")
+        if item.get("read_success") is False or _mcp_result_is_error(raw_result):
             return False
         if item.get("complete") is True or item.get("authoritative_total") is not None:
             continue
-        parsed = parse_mcp_result(item.get("result"))
-        if not isinstance(parsed, dict):
-            return False
-        if (parsed.get("error") or parsed.get("isError") is True
-                or parsed.get("success") is False or parsed.get("executed") is False):
-            return False
-        if parsed.get("complete") is not True and find_total_field(parsed) is None:
+        if not _mcp_result_is_complete(raw_result):
             return False
     return True
 
@@ -1393,7 +1453,10 @@ def _has_mcp_read_failure(activity: list[dict[str, Any]]) -> bool:
         isinstance(item, dict)
         and item.get("kind") == "result"
         and str(item.get("tool") or "").casefold().rsplit("__", 1)[-1] in read_tools
-        and item.get("read_success") is False
+        and (
+            item.get("read_success") is False
+            or _mcp_result_is_error(item.get("result"))
+        )
         for item in activity
     )
 
@@ -1531,30 +1594,14 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 evidence_text = json.dumps(parsed_tool_result, ensure_ascii=False, default=str)
             except (TypeError, ValueError):
                 evidence_text = str(parsed_tool_result)
-            read_success = parsed_tool_result not in (None, "", {}) and not (
-                isinstance(parsed_tool_result, dict) and (
-                    parsed_tool_result.get("error")
-                    or parsed_tool_result.get("isError") is True
-                    or parsed_tool_result.get("success") is False
-                    or parsed_tool_result.get("executed") is False
-                    or str(parsed_tool_result.get("status", "")).casefold() in {"error", "failed", "failure"}
-                    or (isinstance(parsed_tool_result.get("status_code"), int)
-                        and parsed_tool_result.get("status_code") >= 400)
-                )
-            ) and not (
-                isinstance(parsed_tool_result, str) and re.search(
-                    r"^\s*(?:error|exception|failed|failure)\b",
-                    parsed_tool_result, re.I
-                )
-            )
+            read_success = _mcp_result_is_success(parsed_tool_result)
             activity.append({
                 "kind": "result",
                 "tool": getattr(msg, "name", "tool"),
                 "result": evidence_text[:2500],
                 "read_success": read_success,
-                "complete": parsed_tool_result.get("complete") is True
-                    if isinstance(parsed_tool_result, dict) else False,
-                "authoritative_total": find_total_field(parsed_tool_result),
+                "complete": _mcp_result_is_complete(parsed_tool_result),
+                "authoritative_total": _mcp_result_authoritative_total(parsed_tool_result),
             })
             if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
                 activity.append({
