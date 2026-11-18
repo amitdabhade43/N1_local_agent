@@ -1574,7 +1574,7 @@ def recipe_add_device_access(q):
                 return (
                     f'I could not verify the {kind.replace("_", " ")} inventory for "{user_label}": '
                     f'{error_detail}. The identity search is incomplete, so no person was selected '
-                    "and no change was prepared."
+                    "No person was selected. No change was prepared."
                 )
             result_matches = result.get("matches") or []
             if result.get("partial") or (
@@ -1588,7 +1588,7 @@ def recipe_add_device_access(q):
                 return (
                     f'I cannot safely identify "{user_label}" because the {kind.replace("_", " ")} '
                     f'inventory search is incomplete. {detail} '
-                    "No person was selected and no change was prepared."
+                    "No person was selected. No change was prepared."
                 )
             for row in result_matches:
                 if email:
