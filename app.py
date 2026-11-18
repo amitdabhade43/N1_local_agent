@@ -931,17 +931,38 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
     elapsed = time.perf_counter() - started
     activity = [
         {"kind": "call", "tool": tool_name, "arguments": arguments},
-        {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]},
+        {"kind": "result", "tool": tool_name, "result": json.dumps(parsed, ensure_ascii=False, default=str)[:4000]},
         {"kind": "metric", "stage": "mcp_tool", "elapsed_ms": round(elapsed * 1000, 1)},
     ]
+
+    if isinstance(parsed, dict) and (
+        parsed.get("error") or parsed.get("isError") is True
+        or parsed.get("success") is False or parsed.get("executed") is False
+    ):
+        detail = parsed.get("error") or parsed.get("message") or parsed.get("detail") or "the API reported an unsuccessful read"
+        return f"NinjaOne could not complete the read: {detail}", activity
+    if isinstance(parsed, str) and re.search(
+        r"^\\s*(?:error|exception|failed|failure)\\b", parsed, re.I
+    ):
+        return f"NinjaOne could not complete the read: {parsed.strip()}", activity
 
     noun = tool_name.replace("list_", "")
     if operation == "count":
         count = find_total_field(parsed)
-        if count is None:
-            count = count_records(parsed)
-        answer = (f"There are {count} {noun} in the result returned by NinjaOne." if count is not None
-                  else f"NinjaOne returned data for {noun}, but I couldn't reliably determine the count.")
+        complete = isinstance(parsed, dict) and parsed.get("complete") is True
+        if count is not None:
+            answer = f"NinjaOne reports {count} {noun} in the result."
+        elif complete:
+            count = len(records)
+            answer = f"NinjaOne returned {count} {noun} in the complete result."
+        elif records or isinstance(parsed, list):
+            count = len(records)
+            answer = (
+                f"NinjaOne returned at least {count} {noun} in the retrieved data; "
+                "the response did not confirm a complete total."
+            )
+        else:
+            answer = f"NinjaOne returned data for {noun}, but I couldn't reliably determine the count."
     elif operation == "fields" and fields:
         lines = []
         for record in records:
