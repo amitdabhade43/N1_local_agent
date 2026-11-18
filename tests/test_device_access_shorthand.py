@@ -50,10 +50,12 @@ def test_explicit_device_access_wording_still_matches(monkeypatch):
 
     def fake_resolve(arguments):
         calls.append(arguments["kind"])
-        return json.dumps({"matches": [
-            {"id": 31, "firstName": "PC Admin", "lastName": "Rene Piuk",
-             "email": "admin_pr@hoerbiger.com"}
-        ]})
+        rows = (
+            [{"id": 31, "firstName": "PC Admin", "lastName": "Rene Piuk",
+              "email": "admin_pr@hoerbiger.com"}]
+            if arguments["kind"] == "end_user" else []
+        )
+        return json.dumps({"matches": rows})
 
     monkeypatch.setattr(ninja_agent, "t_resolve", fake_resolve)
     monkeypatch.setattr(
