@@ -45,6 +45,7 @@ def test_pc_admin_target_is_not_substituted_with_same_name_end_user():
     )
     assert request is None
     assert "console-user record" in clarification
+    assert "does not establish that its role is PC Admin" in clarification
     assert "supports end-user records only" in clarification
     assert "No change was prepared" in clarification
 
