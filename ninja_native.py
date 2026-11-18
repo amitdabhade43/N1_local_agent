@@ -114,20 +114,7 @@ def _resolve_device_access_clarification(question, history):
     if "Which user should receive the device access" not in assistant_text:
         return None, None
 
-    # A clarification is not a lock on the conversation. If the user asks to
-    # inspect/search for another identity, changes the requested target, or says
-    # the right person is not listed, hand the turn back to normal Native routing.
-    # The original request and candidate list remain in history as useful context.
     clarification_reply = str(question or "").strip()
-    if re.search(
-        r"\b(?:check|show|find|search|lookup|look\s+up|details|who\s+is|"
-        r"tell\s+me\s+about|i\s+want|i'd\s+like|not\s+in\s+the\s+list|"
-        r"not\s+in\s+list|not\s+listed|none\s+of\s+these|another\s+user|"
-        r"different\s+user|cancel|start\s+over)\b",
-        clarification_reply,
-        re.I,
-    ):
-        return None, None
 
     # Recover the requested device from the original, supported conversational form.
     request_match = re.search(
@@ -143,7 +130,8 @@ def _resolve_device_access_clarification(question, history):
     candidates = []
     for line in assistant_text.splitlines():
         match = re.match(
-            r"^\s*(\d+)\.\s+(.+?)(?:\s+<([^<>]+)>)?(?:\s+\((?:end-user|console user|technician|contact)(?: ID \d+)?\))?\s*$",
+            r"^\s*(\d+)\.\s+(.+?)(?:\s+<([^<>]+)>)?"
+            r"(?:\s+\((?P<category>end-user|console user|technician|contact)(?: ID \d+)?\))?\s*$",
             line,
         )
         if match:
@@ -151,8 +139,49 @@ def _resolve_device_access_clarification(question, history):
                 "number": int(match.group(1)),
                 "name": match.group(2).strip(),
                 "email": (match.group(3) or "").strip(),
+                "category": (match.group("category") or "").strip(),
             })
     if not candidates:
+        return None, None
+
+    # "PC Admin <name>" is a request to target a console-user identity, not
+    # permission to substitute a same-name end-user record. The documented
+    # device-access PATCH is end-user-only, so fail safely when that console
+    # candidate is present.
+    pc_admin = re.match(
+        r"^(?:i\\s+want\\s+to\\s+add\\s+(?:it\\s+)?(?:in|to)\\s+)?"
+        r"(?:the\\s+)?pc\\s+admin\\s+(.+?)\\s*[.!?]*$",
+        clarification_reply,
+        re.I,
+    )
+    if pc_admin:
+        requested_name = pc_admin.group(1).strip().casefold()
+        console_matches = [
+            item for item in candidates
+            if item.get("category") == "console user"
+            and item["name"].casefold() == requested_name
+        ]
+        if len(console_matches) == 1:
+            item = console_matches[0]
+            identity = item["name"] + (f' <{item["email"]}>' if item["email"] else "")
+            return None, (
+                f'I identified {identity} as the listed console-user record, not an end-user '
+                "selection. The documented device-access PATCH supports end-user records only, "
+                "so I cannot add device access to the PC Admin console-user record. "
+                "No change was prepared."
+            )
+
+    # A clarification is not a lock on the conversation. Requests to inspect or
+    # search for a person, change the target, or reject the candidate list should
+    # return to normal Native routing instead of repeating the old choice prompt.
+    if re.search(
+        r"\\b(?:check|show|find|search|lookup|look\\s+up|details|who\\s+is|"
+        r"tell\\s+me\\s+about|i\\s+want|i'd\\s+like|not\\s+in\\s+the\\s+list|"
+        r"not\\s+in\\s+list|not\\s+listed|none\\s+of\\s+these|another\\s+user|"
+        r"different\\s+user|cancel|start\\s+over)\\b",
+        clarification_reply,
+        re.I,
+    ):
         return None, None
 
     reply = str(question or "").strip().strip(" .")
