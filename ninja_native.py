@@ -316,7 +316,7 @@ _CLARIFICATION_GUIDANCE = (
     "correct person is not listed, asks to inspect/search for a person, or changes the target, "
     "do NOT repeat the old choice prompt. Search the newly named identity in the appropriate "
     "NinjaOne people inventories and report the exact record type, ID, email and available "
-    "details. Keep the original requested device/action in context when relevant. Never "
+    "details. Keep the original requested device/action in context when relevant, and use a valid candidate selection to finish the original request when the selected record type supports it. If it does not, explain the limitation without preparing a write. Never "
     "substitute an end-user record for a console user or technician merely because names or "
     "emails overlap. The documented device-access PATCH supports end-user records only; "
     "do not prepare a write for another record type. Do not ask the user for operation IDs "
