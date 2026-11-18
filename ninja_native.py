@@ -194,12 +194,12 @@ def _resolve_device_access_clarification(question, history):
     if (
         not reply.isdigit()
         and re.search(
-            r"\\b(?:how|what|why|when|where|who|which|"
+            r"\b(?:how|what|why|when|where|who|which|"
             r"count|number|many|total|list|search|find|check|show|details|"
-            r"cancel|stop|nevermind|never\\s+mind|"
-            r"hi|hello|hey|thanks|thank\\s+you|"
-            r"no\\s+change|not\\s+required|not\\s+needed|"
-            r"start\\s+over|new\\s+request)\\b",
+            r"cancel|stop|nevermind|never\s+mind|"
+            r"hi|hello|hey|thanks|thank\s+you|"
+            r"no\s+change|not\s+required|not\s+needed|"
+            r"start\s+over|new\s+request)\b",
             reply,
             re.I,
         )
