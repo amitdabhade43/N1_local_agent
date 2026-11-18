@@ -84,9 +84,11 @@ def test_first_name_matching_multiple_end_users_requires_clarification():
         )
 
     assert "Multiple end-user records matched" in result
-    assert "Rene Piuk" in result
-    assert "Rene Other" in result
-    assert "No change was prepared" in result
+    assert "1. Rene Piuk <rene.piuk@example.com>" in result
+    assert "2. Rene Other <rene.other@example.com>" in result
+    assert "Which user should receive the device access" in result
+    assert "Reply with the option number, full name, or email address" in result
+    assert "No change has been prepared" in result
     call.assert_not_called()
 
 
