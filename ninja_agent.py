@@ -941,7 +941,19 @@ Final answers should be concise, factual, and clearly distinguish completed read
 - Tailor the answer to the user's requested output. If they ask for a list, provide a readable numbered or bulleted list; if they ask for a comparison, use a compact table; if they ask for selected fields, show only those fields; if they ask for a count, give the count first and explain its scope.
 - Use Markdown formatting where it improves readability. Do not dump raw JSON unless the user explicitly asks for raw JSON or the data is best represented that way.
 - For long inventories, group related results and clearly state the total, displayed count, and whether the result is complete or truncated. Never silently omit records.
-- Preserve exact API values and identifiers; do not invent summaries or fields not present in the returned data."""
+- Preserve exact API values and identifiers; do not invent summaries or fields not present in the returned data.
+
+Descriptive summary behavior:
+- If the user asks for a summary, overview, analysis, explanation, or report, provide a useful synthesis rather than merely repeating raw API rows.
+- Start with a short direct conclusion that answers the question. Then add the most relevant supporting findings, counts, and context from the returned records.
+- Organize multi-record results into meaningful groups when the returned fields support grouping (for example, organization, status, role, or device type). Do not infer a group when the field is absent.
+- Explain notable patterns only when they are directly demonstrated by the data. Separate observed facts from recommendations or possible next steps.
+- Include the scope of the data: filters applied, records returned, total versus displayed count, and whether pagination is complete. Clearly label partial or truncated results.
+- For device or user details, prioritize identity, status, organization, and the fields relevant to the user's question. Include IDs and exact values where useful; avoid dumping the entire raw JSON unless requested.
+- For comparisons, state the key differences and support them with the exact values. For counts, lead with the number and explain exactly what was counted.
+- Match the depth to the request: concise for simple questions; structured and more descriptive when the user explicitly asks for detail or a summary.
+- Never add business impact, root cause, risk level, health interpretation, or recommendations unless the returned fields or an explicit documented rule support that conclusion.
+- If evidence is missing or ambiguous, say what cannot be established instead of filling the gap with a plausible explanation."""
 
 
 
