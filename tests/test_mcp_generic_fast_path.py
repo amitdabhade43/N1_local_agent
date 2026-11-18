@@ -600,3 +600,10 @@ def test_mixed_success_and_403_reads_are_not_treated_as_complete_count():
     assert app._has_mcp_data_read_result(activity)
     assert app._has_mcp_read_failure(activity)
     assert not app._has_complete_mcp_count_evidence(activity)
+
+
+def test_ordinary_record_status_is_not_mistaken_for_mcp_envelope():
+    records = [{"id": 1, "status": "ACTIVE"}, {"id": 2, "status": "DISABLED"}]
+    assert app._mcp_result_envelopes(records) == []
+    assert not app._mcp_result_is_error(records)
+    assert not app._mcp_result_is_complete(records)
