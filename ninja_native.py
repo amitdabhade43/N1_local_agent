@@ -92,23 +92,26 @@ def _recover_unprepared_mutation(question, history):
 
 def _resolve_device_access_clarification(question, history):
     """Resolve a numbered/name/email reply to a prior device-access user clarification."""
-    assistant_text = ""
-    original_request = ""
-    for item in reversed(history or []):
-        role = item.get("role")
-        content = _text(item.get("content", ""))
-        if role == "assistant" and not assistant_text:
-            assistant_text = content
-        elif role == "user" and not original_request:
-            original_request = content
-        if assistant_text and original_request:
-            break
+    assistant_text = next(
+        (_text(item.get("content", "")) for item in reversed(history or [])
+         if item.get("role") == "assistant"),
+        "",
+    )
+    request_pattern = (
+        r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
+        r"[A-Za-z0-9][A-Za-z0-9._-]*\s+to\s+.+?\s+"
+        r"(?:for\s+)?(?:the\s+)?device\s+access(?:\s+list)?\s*$"
+    )
+    original_request = next(
+        (_text(item.get("content", "")) for item in reversed(history or [])
+         if item.get("role") == "user"
+         and re.search(request_pattern, _text(item.get("content", "")), re.I)),
+        "",
+    )
 
     if not assistant_text or not original_request:
         return None, None
     if "Which user should receive the device access" not in assistant_text:
-        return None, None
-    if not re.search(r"\b(?:add|grant|give|provide)\b", original_request, re.I):
         return None, None
 
     # Recover the requested device from the original, supported conversational form.
@@ -158,7 +161,10 @@ def _resolve_device_access_clarification(question, history):
             prompt = "That reply still matches more than one user. Please choose a unique option number or email address."
         else:
             prompt = "I couldn't match that reply to one listed user. Please choose a valid option number, full name, or email address."
-        return None, f"{prompt}\n{choices}\nNo change has been prepared."
+        return None, (
+            f"{prompt}\nWhich user should receive the device access for \"{device}\"?\n"
+            f"{choices}\nNo change has been prepared."
+        )
 
     user = selected[0]
     target = user["name"]
