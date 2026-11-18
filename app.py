@@ -109,6 +109,7 @@ Rules:
 - Paginate the unified people endpoint completely using its documented pageSize and anchorNaturalId parameters. Continue from the last returned naturalId/identifier according to the tool schema until no further page is available. If that cursor cannot safely be driven, use the documented category-specific list endpoints and their supported pagination; never claim an exact total from a partial page.
 - Match name fragments case-insensitively across firstName, lastName, and full/display name (and email only when relevant). Deduplicate only by stable record identity (uid, or userType plus id); do not merge different person categories just because their names match.
 - For a name search, report each match's category, full name, ID, and email when present. For a count request, give per-category counts and a total only when all categories are complete; otherwise label counts as minimums and state which category/page is incomplete. If multiple people match, show them rather than assuming they are the same person.
+- Ambiguity gate: before preparing any write involving a person, device, organization, or other entity, require an unambiguous match. If multiple records match and the user has not supplied a distinguishing ID or other unique attribute, stop and ask which record they mean; never select the first or most likely match.
 - Do not repeat identical tool calls.
 """
 
