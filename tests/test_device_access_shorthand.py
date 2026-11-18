@@ -1,6 +1,6 @@
 import json
 
-import ninja_agent
+import ninja_agent\nimport ninja_native
 
 
 def test_shorthand_device_access_request_lists_ambiguous_rene_records(monkeypatch):
@@ -70,3 +70,29 @@ def test_explicit_device_access_wording_still_matches(monkeypatch):
     # The first resolver result is the only end-user identity. The recipe proceeds
     # to exact device lookup, which is deliberately not reached in this fixture.
     assert "Could not resolve the device" in result or "No exact device match" in result
+
+
+def test_shorthand_access_clarification_selection_recovers_original_device():
+    history = [
+        {"role": "user", "content": "add VM-6804B761 to rene access"},
+        {
+            "role": "assistant",
+            "content": (
+                'Multiple NinjaOne people records matched "rene". '
+                'Which user should receive the device access for "VM-6804B761"?\\n'
+                "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\\n"
+                "2. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)\\n"
+                "3. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\\n"
+                "4. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)\\n"
+                "Reply with the option number, full name, or email address. No change has been prepared."
+            ),
+        },
+    ]
+
+    resumed, clarification = ninja_native._resolve_device_access_clarification("2", history)
+
+    assert clarification is None
+    assert resumed == (
+        "add VM-6804B761 to PC Admin Rene Piuk "
+        "<admin_pr@hoerbiger.com> for device access"
+    )
