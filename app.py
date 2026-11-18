@@ -42,7 +42,24 @@ HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", "8080"))
 MAX_HISTORY_MESSAGES = 8
 MAX_STORED_MESSAGES = 12
-AGENT_RECURSION_LIMIT = 8
+DEFAULT_AGENT_RECURSION_LIMIT = 32
+MIN_AGENT_RECURSION_LIMIT = 8
+MAX_AGENT_RECURSION_LIMIT = 64
+
+
+def _agent_recursion_limit() -> int:
+    """Allow enough bounded tool/model cycles for multi-step MCP investigations."""
+    raw_value = os.getenv("AGENT_RECURSION_LIMIT", str(DEFAULT_AGENT_RECURSION_LIMIT))
+    try:
+        requested = int(raw_value)
+    except (TypeError, ValueError):
+        _logger.warning(
+            "Invalid AGENT_RECURSION_LIMIT=%r; using default %s",
+            raw_value,
+            DEFAULT_AGENT_RECURSION_LIMIT,
+        )
+        return DEFAULT_AGENT_RECURSION_LIMIT
+    return max(MIN_AGENT_RECURSION_LIMIT, min(requested, MAX_AGENT_RECURSION_LIMIT))
 
 SYSTEM_PROMPT = """You are NinjaOne Expert Agent, an advanced IT operations analyst.
 Use connected NinjaOne MCP tools to retrieve current information and investigate issues.
@@ -1299,7 +1316,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             try:
                 result = await agent.ainvoke(
                     {"messages": history},
-                    config={"recursion_limit": AGENT_RECURSION_LIMIT},
+                    config={"recursion_limit": _agent_recursion_limit()},
                 )
             finally:
                 _mcp_active_session.reset(session_context_token)
