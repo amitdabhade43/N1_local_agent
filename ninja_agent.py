@@ -1864,6 +1864,71 @@ def recipe_device_details(q):
     )
 
 
+
+def recipe_device_summary(q):
+    """Build a descriptive, read-only device summary from verified API records."""
+    text = re.sub(r"\\s+", " ", (q or "").strip().rstrip("?.! "))
+    patterns = (
+        r"\\b(?:descriptive\\s+)?(?:summary|overview|report)\\s+(?:of|for|about)\\s+(?:the\\s+)?(?:device|computer|machine|endpoint)\\s+(.+)$",
+        r"\\b(?:device|computer|machine|endpoint)\\s+(?:summary|overview|report)\\s+(?:of|for|about)\\s+(.+)$",
+    )
+    match = next((re.search(pattern, text, re.I) for pattern in patterns
+                  if re.search(pattern, text, re.I)), None)
+    if not match:
+        return None
+
+    identifier = match.group(1).strip().strip("\\\"'")
+    if not identifier:
+        return "Please provide a device name or identifier."
+
+    # Reuse the exact-match and numeric-ID verification in the established details recipe.
+    details = recipe_device_details(f"device details for {identifier}")
+    if not details or not details.startswith("NinjaOne system details for "):
+        return details
+
+    sections = [details]
+    subresources = (
+        ("/v2/device/{id}/processors", "Processors"),
+        ("/v2/device/{id}/disks", "Disk drives"),
+        ("/v2/device/{id}/network-interfaces", "Network interfaces"),
+        ("/v2/device/{id}/volumes", "Storage volumes"),
+    )
+    device_id_match = re.search(r"\\(device ID (\\d+)\\)", details)
+    if not device_id_match:
+        return details
+    device_id = int(device_id_match.group(2))
+
+    for path_template, label in subresources:
+        operation = op_by_path(path_template)
+        if not operation:
+            sections.append(f"**{label}**\\nNot available: GET {path_template} is not present in the loaded API specification.")
+            continue
+        result_text = t_call({
+            "operation_id": operation["id"],
+            "path_params": {"id": device_id},
+        })
+        try:
+            result = json.loads(result_text)
+        except (TypeError, ValueError):
+            sections.append(f"**{label}**\\nNot available: NinjaOne returned an unreadable response.")
+            continue
+        if result.get("error"):
+            sections.append(f"**{label}**\\nNot retrieved: {result.get('error')}.")
+            continue
+        rows = result.get("rows") or []
+        if not rows:
+            sections.append(f"**{label}**\\nNo records returned.")
+            continue
+        rendered = [format_record_summary(row, title=f"{label[:-1] if label.endswith('s') else label} {index}")
+                    for index, row in enumerate(rows, 1) if isinstance(row, dict)]
+        sections.append(f"**{label}**\\n" + ("\\n\\n".join(rendered) if rendered else "No readable records returned."))
+
+    sections.append(
+        "This summary is based on the device detail and hardware/network endpoints listed above. "
+        "It does not establish a complete health assessment; unavailable endpoints are identified individually."
+    )
+    return "\\n\\n".join(sections)
+
 def recipe_devices_in(q):
     m = re.search(r"\b(?:device|machine|computer|endpoint)s?\s+(?:in|of|at|under|for)\s+(?:the\s+)?"
                   r"(?:organization\s+|org\s+|client\s+)?(.+?)\s*[?.!]*$", q.lower())
@@ -1947,7 +2012,7 @@ def fast_path(q):
             heading = f"{len(rows)} {label} in the returned result"
             return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_count_device_prefix, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
