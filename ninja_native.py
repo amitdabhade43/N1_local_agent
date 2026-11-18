@@ -165,10 +165,11 @@ def _resolve_device_access_clarification(question, history):
             item = console_matches[0]
             identity = item["name"] + (f' <{item["email"]}>' if item["email"] else "")
             return None, (
-                f'I identified {identity} as the listed console-user record, not an end-user '
-                "selection. The documented device-access PATCH supports end-user records only, "
-                "so I cannot add device access to the PC Admin console-user record. "
-                "No change was prepared."
+                f'I found a matching console-user record for {identity}, but this candidate list '
+                "does not establish that its role is PC Admin. The documented device-access PATCH "
+                "supports end-user records only, so I will not substitute the same-name or "
+                "same-email end-user record or prepare a change. I can inspect the console-user "
+                "details first. No change was prepared."
             )
 
     # A clarification is not a lock on the conversation. Requests to inspect or
