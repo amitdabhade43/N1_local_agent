@@ -387,7 +387,6 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     def emit(message, stage='working'):
         if progress:
             progress({'stage': stage, 'message': message})
-    _ensure()
     q = _text(content)
     hist = _sessions.get(session_id, [])[-6:]
     emit("Checking whether this question can be answered directly.", "understanding")
@@ -404,6 +403,30 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         ])[-12:]
         return refusal, [{"kind": "policy", "stage": "blocked_delete",
                           "message": "Delete requests are blocked; no NinjaOne API operation was called."}]
+    if (
+        re.search(
+            r"\b(?:create|register|invite)\b.{0,50}\bend[\s-]?users?\b|"
+            r"\badd\s+(?:a\s+|an\s+|new\s+)?end[\s-]?users?\b",
+            q,
+            re.I,
+        )
+        and not re.search(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", q, re.I)
+    ):
+        clarification = (
+            "Absolutely—I can help create the end user in NinjaOne. "
+            "Please provide the **first name, last name, and email address** (these are required). "
+            "You can also include the organization name or ID, phone number, whether to enable "
+            "full portal access, and whether to send an invitation. "
+            "I’ll validate the details and show you the exact API request for approval; "
+            "nothing will be created until you approve it."
+        )
+        _sessions[session_id] = (hist + [
+            {"role": "user", "content": q},
+            {"role": "assistant", "content": clarification},
+        ])[-12:]
+        return clarification, [{"kind": "clarification", "stage": "missing_required_fields",
+                                "message": "Requested first name, last name and email before preparing the create-end-user request."}]
+    _ensure()
     # A typed "yes"/"approved" is never an approval action. If the previous
     # mutation turn only produced prose and no pending action exists, resume
     # preparation from that original request so the UI can receive a real card.
@@ -509,7 +532,9 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 and not _is_action_clarification(txt)
             )
             bad = tool_intent or mutation_without_approval or (
-                not called and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
+                not called
+                and not _is_action_clarification(txt)
+                and bool(core.PLAN.search(txt) or core.BADCALL.search(txt) or lookup_intent)
             )
             if bad and not nudged:
                 nudged = True
