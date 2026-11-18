@@ -1505,24 +1505,35 @@ def recipe_add_device_access(q):
             return "More than one exact end-user/device interpretation matched. Please clarify the end-user and device names. No change was prepared."
         user_label, user, device_labels, devices = partitions[0]
     else:
-        # Retain the existing single-device natural-language forms.
+        # Accept conversational variants such as "add X to Y for device access",
+        # while retaining the existing explicit access-list forms.
         match = re.search(
-            r"\b(?:add|grant|give|provide)\s+(.+?)\s+(?:device\s+)?access\s+(?:to|for)\s+(.+?)\s*$",
+            r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?(?:device\\s+)?"
+            r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+to\\s+"
+            r"(?P<user>.+?)\\s+(?:for\\s+)?(?:the\\s+)?device\\s+access"
+            r"(?:\\s+list)?\\s*$",
             text, re.I,
         )
         if match:
-            device_label, user_label = match.group(1), match.group(2)
+            device_label, user_label = match.group("device"), match.group("user")
         else:
             match = re.search(
-                r"\b(?:add|grant|give|provide)\s+(?:the\s+)?device\s+(.+?)\s+to\s+(.+?)"
-                r"(?:'s)?\s+(?:device\s+)?access(?:\s+list)?\s*$",
+                r"\\b(?:add|grant|give|provide)\\s+(.+?)\\s+(?:device\\s+)?access\\s+(?:to|for)\\s+(.+?)\\s*$",
                 text, re.I,
             )
-            if not match:
-                return None
-            device_label, user_label = match.group(1), match.group(2)
+            if match:
+                device_label, user_label = match.group(1), match.group(2)
+            else:
+                match = re.search(
+                    r"\\b(?:add|grant|give|provide)\\s+(?:the\\s+)?device\\s+(.+?)\\s+to\\s+(.+?)"
+                    r"(?:'s)?\\s+(?:device\\s+)?access(?:\\s+list)?\\s*$",
+                    text, re.I,
+                )
+                if not match:
+                    return None
+                device_label, user_label = match.group(1), match.group(2)
 
-        device_label = device_label.strip().strip("\\'").strip('"')
+        device_label = device_label.strip().strip("\\\\'").strip('"')
         user_label = user_label.strip().strip(" .")
         email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
         email = email_match.group(1).strip().lower() if email_match else ""
@@ -1534,17 +1545,63 @@ def recipe_add_device_access(q):
             user_result = json.loads(t_resolve({"kind": "end_user", "name": lookup}))
         except Exception as exc:
             return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
-        exact_users = [
-            row for row in (user_result.get("matches") or [])
-            if (email and str(row.get("email", "")).strip().lower() == email)
-            or (not email and normalized(row_name(row)) == normalized(user_name))
-        ]
+        resolved_users = user_result.get("matches") or []
+        if email:
+            exact_users = [
+                row for row in resolved_users
+                if str(row.get("email", "")).strip().lower() == email
+            ]
+        else:
+            requested_name = normalized(user_name)
+            exact_users = [
+                row for row in resolved_users
+                if normalized(row_name(row)) == requested_name
+                or (
+                    len(user_name.split()) == 1
+                    and user_name.casefold() in {
+                        str(row.get("firstName", "")).strip().casefold(),
+                        str(row.get("lastName", "")).strip().casefold(),
+                    }
+                )
+            ]
         if not exact_users:
-            if user_result.get("matches"):
-                return f'No exact end-user match for "{user_label}". Closest result: {row_name(user_result["matches"][0])}. No change was prepared.'
+            # Device-access PATCH is documented for end-user records only.
+            # Check other people categories to explain a record-type mismatch.
+            other_matches = []
+            for kind in ("user", "technician", "contact"):
+                try:
+                    other_matches.extend(
+                        (kind, row) for row in
+                        (json.loads(t_resolve({"kind": kind, "name": lookup})).get("matches") or [])
+                    )
+                except Exception:
+                    continue
+            if other_matches:
+                choices = ", ".join(
+                    f'{row_name(row)} ({kind.replace("_", " ")})'
+                    for kind, row in other_matches[:6]
+                )
+                return (
+                    f'No end-user record matched "{user_label}". I found other people records: '
+                    f'{choices}. The documented direct device-access PATCH supports end-user records only; '
+                    "please identify an end-user record. No change was prepared."
+                )
+            if resolved_users:
+                choices = ", ".join(
+                    row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
+                    for row in resolved_users[:6]
+                )
+                return f'No exact end-user match for "{user_label}". Closest results: {choices}. No change was prepared.'
             return f'No NinjaOne end-user record matched "{user_label}". No change was prepared.'
         if len(exact_users) != 1:
-            return f'Multiple exact end-user records matched "{user_label}". Please clarify before changing access.'
+            choices = ", ".join(
+                row_name(row) + (f' <{row["email"]}>' if row.get("email") else "")
+                for row in exact_users[:10]
+            )
+            return (
+                f'Multiple end-user records matched "{user_label}": {choices}. '
+                "Please specify the full name or email address before changing access. No change was prepared."
+            )
         user = exact_users[0]
         try:
             devices = exact_device_rows(device_label)
