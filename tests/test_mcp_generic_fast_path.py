@@ -290,3 +290,73 @@ def test_native_affirmative_reply_does_not_recover_non_mutation():
 def test_native_affirmative_reply_does_not_match_arbitrary_text():
     history = [{"role": "user", "content": "Add device 2QN9BY3 to PC Admin Rene Piuk device access list"}]
     assert ninja_native._recover_unprepared_mutation("yes, please do this", history) is None
+
+
+@pytest.mark.parametrize("question", [
+    'As per record, how many technicians have the "IT Support Technician" role?',
+    'As per record its 78 technicians have the "IT Support Technician" role',
+])
+def test_technician_role_count_is_a_deterministic_generic_read(question):
+    assert app._extract_technician_role_count_request(question) == "IT Support Technician"
+    assert app.is_simple_generic_read(question)
+
+
+@pytest.mark.asyncio
+async def test_generic_mcp_counts_exact_technician_role_only_from_complete_result():
+    endpoint = "GET /v2/user/technicians"
+    records = [
+        {"id": 1, "roles": ["IT Support Technician"]},
+        {"id": 2, "roles": ["IT Support Technician", "Administrator"]},
+        {"id": 3, "roles": ["Administrator"]},
+        {"id": 4, "roles": ["it support technician"]},
+    ]
+    tools = [
+        FakeTool("discover_endpoints", {
+            "semantic": {"mode": "fuzzy_fast_path", "selected": [{"endpoint": endpoint}]},
+            "selected_details": {
+                "method": "GET", "endpoint": endpoint, "parameters": [], "responses": {},
+            },
+        }),
+        FakeTool("execute_endpoint", {
+            "endpoint": endpoint, "executed": True, "complete": True,
+            "truncated": False, "data": records, "items_fetched": 4, "elapsed_ms": 20,
+        }),
+    ]
+
+    answer, activity = await app.run_generic_mcp_read(
+        tools, 'As per record its 78 technicians have the "IT Support Technician" role'
+    )
+
+    assert answer == (
+        '3 technicians have the role "IT Support Technician" according to the '
+        'complete NinjaOne result (4 technicians checked).'
+    )
+    tools[0].ainvoke.assert_awaited_once_with({
+        "intent": "List all technicians", "candidate_limit": 8,
+    })
+    tools[1].ainvoke.assert_awaited_once_with({"endpoint": endpoint})
+
+
+@pytest.mark.asyncio
+async def test_generic_mcp_role_count_does_not_claim_exact_total_for_incomplete_result():
+    endpoint = "GET /v2/user/technicians"
+    tools = [
+        FakeTool("discover_endpoints", {
+            "semantic": {"mode": "fuzzy_fast_path", "selected": [{"endpoint": endpoint}]},
+            "selected_details": {
+                "method": "GET", "endpoint": endpoint, "parameters": [], "responses": {},
+            },
+        }),
+        FakeTool("execute_endpoint", {
+            "endpoint": endpoint, "executed": True, "complete": False,
+            "truncated": True, "data": [{"id": 1, "roles": ["IT Support Technician"]}],
+            "items_fetched": 1, "elapsed_ms": 20,
+        }),
+    ]
+
+    answer, _ = await app.run_generic_mcp_read(
+        tools, 'How many technicians have the "IT Support Technician" role?'
+    )
+
+    assert answer.startswith("At least 1 technicians")
+    assert "cannot confirm the complete total" in answer
