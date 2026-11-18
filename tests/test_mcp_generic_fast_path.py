@@ -517,3 +517,25 @@ def test_mcp_read_evidence_metadata_survives_truncated_result_previews():
         {"kind": "result", "tool": "execute_endpoint",
          "result": '{"data": []}', "read_success": False},
     ])
+
+
+def test_exact_count_requires_completeness_for_every_read_investigation():
+    activity = [
+        {"kind": "result", "tool": "call",
+         "result": '{"complete": true, "data": [{"id": 1}]}',
+         "read_success": True, "complete": True},
+        {"kind": "result", "tool": "call",
+         "result": '{"complete": false, "data": [{"id": 2}]}',
+         "read_success": True, "complete": False},
+    ]
+    assert not app._has_complete_mcp_count_evidence(activity)
+
+
+def test_failed_read_in_multi_call_lookup_is_detected():
+    activity = [
+        {"kind": "result", "tool": "call", "result": '{"data": [{"id": 1}]}',
+         "read_success": True},
+        {"kind": "result", "tool": "call", "result": '{"error": "timeout"}',
+         "read_success": False},
+    ]
+    assert app._has_mcp_read_failure(activity)
