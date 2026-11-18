@@ -1851,7 +1851,7 @@ def recipe_device_details(q):
         return f'NinjaOne returned no device details for "{identifier}" (device ID {device_id}).'
 
     return (
-        f'NinjaOne returned system details for {row_name(device)} (device ID {device_id}) '
+        f'NinjaOne system details for {row_name(device)} (device ID {device_id}) '
         f'from GET {path.replace("{id}", str(device_id))}.\n\n'
         + format_record_summary(rows[0], title="System summary")
     )
