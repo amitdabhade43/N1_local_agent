@@ -1355,23 +1355,47 @@ def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
 
 
 def _has_complete_mcp_count_evidence(activity: list[dict[str, Any]]) -> bool:
-    """Exact counts require an explicit complete flag or authoritative total."""
+    """Exact counts require completeness evidence for every executed read."""
     read_tools = {
         "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
     }
-    for item in activity:
-        if not isinstance(item, dict) or item.get("kind") != "result":
-            continue
-        tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
-        if tool_name not in read_tools:
-            continue
+    read_results = [
+        item for item in activity
+        if isinstance(item, dict)
+        and item.get("kind") == "result"
+        and str(item.get("tool") or "").casefold().rsplit("__", 1)[-1] in read_tools
+    ]
+    if not read_results:
+        return False
+
+    for item in read_results:
+        if item.get("read_success") is False:
+            return False
         if item.get("complete") is True or item.get("authoritative_total") is not None:
-            return True
+            continue
         parsed = parse_mcp_result(item.get("result"))
-        if isinstance(parsed, dict):
-            if parsed.get("complete") is True or find_total_field(parsed) is not None:
-                return True
-    return False
+        if not isinstance(parsed, dict):
+            return False
+        if (parsed.get("error") or parsed.get("isError") is True
+                or parsed.get("success") is False or parsed.get("executed") is False):
+            return False
+        if parsed.get("complete") is not True and find_total_field(parsed) is None:
+            return False
+    return True
+
+
+def _has_mcp_read_failure(activity: list[dict[str, Any]]) -> bool:
+    """Detect any failed read in a multi-call investigation; partial data is not a complete answer."""
+    read_tools = {
+        "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    }
+    return any(
+        isinstance(item, dict)
+        and item.get("kind") == "result"
+        and str(item.get("tool") or "").casefold().rsplit("__", 1)[-1] in read_tools
+        and item.get("read_success") is False
+        for item in activity
+    )
 
 
 _AFFIRMATIVE_REPLY_RE = re.compile(r"^(?:yes|yeah|yep|sure|approved|approve|proceed|go ahead|do it|confirm|confirmed)\s*[.!]?$", re.I)
@@ -1541,6 +1565,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     # data-read result is required before the model may report live findings.
     has_tool_call = _has_mcp_tool_execution(activity)
     has_read_result = _has_mcp_data_read_result(activity)
+    has_read_failure = _has_mcp_read_failure(activity)
     count_question = bool(re.search(r"\b(?:how many|count|number of|total)\b", message_text, re.I))
     has_complete_count_evidence = _has_complete_mcp_count_evidence(activity)
     lookup_question = bool(re.search(
@@ -1561,6 +1586,11 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             "I could not create a real NinjaOne approval request for this change. "
             "No write was executed and no change was made. Please retry with the target "
             "record and requested change clearly identified."
+        )
+    elif lookup_question and has_read_failure:
+        final_text = (
+            "One or more NinjaOne data reads failed, so the retrieved records may be incomplete. "
+            "I cannot present a complete verified answer. Please retry or narrow the request."
         )
     elif lookup_question and not has_read_result:
         if has_tool_call:
