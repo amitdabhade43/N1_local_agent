@@ -1328,7 +1328,7 @@ def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
     parsed = parse_mcp_result(value)
     markers = {
         "endpoint", "executed", "complete", "truncated", "pagination",
-        "error", "isError", "success", "status", "status_code", "total", "totalCount",
+        "error", "isError", "success", "status_code", "total", "totalCount",
         "total_count", "totalRecords", "count",
     }
     found: list[dict[str, Any]] = []
