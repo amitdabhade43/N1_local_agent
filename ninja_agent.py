@@ -1850,10 +1850,17 @@ def recipe_device_details(q):
     if not rows:
         return f'NinjaOne returned no device details for "{identifier}" (device ID {device_id}).'
 
+    summary = format_record_summary(rows[0], title="System summary")
+    # Keep exact API field names and values alongside the readable summary.
+    # This preserves the established details response for callers verifying source data.
+    source_values = json.dumps(rows[0], indent=2, ensure_ascii=False, default=str)
     return (
         f'NinjaOne system details for {row_name(device)} (device ID {device_id}) '
         f'from GET {path.replace("{id}", str(device_id))}.\n\n'
-        + format_record_summary(rows[0], title="System summary")
+        + summary
+        + "\n\n**Exact API response**\n\n```json\n"
+        + source_values
+        + "\n```"
     )
 
 
