@@ -1328,7 +1328,7 @@ def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
     parsed = parse_mcp_result(value)
     markers = {
         "endpoint", "executed", "complete", "truncated", "pagination",
-        "error", "isError", "success", "status_code", "total", "totalCount",
+        "error", "isError", "success", "status", "status_code", "total", "totalCount",
         "total_count", "totalRecords", "count",
     }
     found: list[dict[str, Any]] = []
@@ -1378,7 +1378,11 @@ def _mcp_result_is_error(value: Any) -> bool:
                 or envelope.get("success") is False
                 or envelope.get("executed") is False
                 or str(envelope.get("status", "")).casefold() in {"error", "failed", "failure"}
+                or (isinstance(envelope.get("status"), int)
+                    and not isinstance(envelope.get("status"), bool)
+                    and envelope.get("status") >= 400)
                 or (isinstance(envelope.get("status_code"), int)
+                    and not isinstance(envelope.get("status_code"), bool)
                     and envelope.get("status_code") >= 400)):
             return True
     parsed = parse_mcp_result(value)
