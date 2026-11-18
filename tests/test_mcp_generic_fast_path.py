@@ -446,7 +446,7 @@ def test_exact_count_requires_complete_or_authoritative_total_evidence():
 def test_exact_count_intent_matches_natural_language_count_questions():
     import re
 
-    pattern = re.compile(r"\\b(?:how many|count|number of|total)\\b", re.I)
+    pattern = re.compile(r"\b(?:how many|count|number of|total)\b", re.I)
     assert pattern.search("How many users contain Rene?")
     assert pattern.search("Count all technicians")
     assert not pattern.search("List all technicians")
