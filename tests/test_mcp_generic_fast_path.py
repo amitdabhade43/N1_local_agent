@@ -369,6 +369,8 @@ def test_people_name_search_prompt_requires_all_categories_and_pagination():
     assert "searchCriteria" in prompt
     assert "Paginate the unified people endpoint completely" in prompt
     assert "stable record identity" in prompt
+    assert "Ambiguity gate" in prompt
+    assert "never select the first or most likely match" in prompt
 
 
 def test_activity_metric_is_not_mistaken_for_mcp_tool_execution():
@@ -380,4 +382,138 @@ def test_activity_metric_is_not_mistaken_for_mcp_tool_execution():
     ])
     assert app._has_mcp_tool_execution([
         {"kind": "call", "tool": "discover_endpoints", "arguments": {}},
+    ])
+
+
+def test_mcp_discovery_is_not_mistaken_for_a_successful_data_read():
+    activity = [
+        {"kind": "call", "tool": "discover_endpoints", "arguments": {"intent": "users"}},
+        {"kind": "result", "tool": "discover_endpoints", "result": "{'selected': []}"},
+        {"kind": "result", "tool": "inspect_endpoint", "result": "{'method': 'GET'}"},
+    ]
+    assert app._has_mcp_tool_execution(activity)
+    assert not app._has_mcp_data_read_result(activity)
+
+
+@pytest.mark.parametrize("tool_name", [
+    "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    "ninjaone__execute_endpoint",
+])
+def test_successful_mcp_data_read_result_is_accepted(tool_name):
+    assert app._has_mcp_data_read_result([
+        {"kind": "result", "tool": tool_name,
+         "result": '{"executed": true, "complete": true, "data": [{"id": 1}]}'},
+    ])
+
+
+@pytest.mark.parametrize("payload", [
+    '{"error": "upstream unavailable"}',
+    '{"executed": false, "error": "request failed"}',
+    'Error: request timed out',
+    '',
+    None,
+])
+def test_failed_or_empty_mcp_read_result_is_not_accepted(payload):
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint", "result": payload},
+    ])
+
+
+def test_mcp_read_result_is_not_confused_with_discovery_or_metrics():
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "discover_endpoints", "result": '{"selected": []}'},
+        {"kind": "metric", "tool": "execute_endpoint", "result": '{"data": [{"id": 1}]}'},
+    ])
+
+
+def test_exact_count_requires_complete_or_authoritative_total_evidence():
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_paginated_endpoint",
+         "result": '{"complete": true, "items_fetched": 250}'},
+    ])
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "call",
+         "result": '{"data": [], "total": 42}'},
+    ])
+    assert not app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"complete": false, "items_fetched": 50, "data": []}'},
+    ])
+    assert not app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "discover_endpoints",
+         "result": '{"complete": true, "total": 42}'},
+    ])
+
+
+def test_exact_count_intent_matches_natural_language_count_questions():
+    import re
+
+    pattern = re.compile(r"\b(?:how many|count|number of|total)\b", re.I)
+    assert pattern.search("How many users contain Rene?")
+    assert pattern.search("Count all technicians")
+    assert not pattern.search("List all technicians")
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_reports_minimum_for_incomplete_data():
+    tool = FakeTool("list_users", {
+        "complete": False,
+        "data": [{"id": 1}, {"id": 2}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert "at least 2 users" in answer
+    assert "did not confirm a complete total" in answer
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_can_be_exact_when_result_is_complete():
+    tool = FakeTool("list_users", {
+        "complete": True,
+        "data": [{"id": 1}, {"id": 2}, {"id": 3}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert answer == "NinjaOne returned 3 users in the complete result."
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_uses_authoritative_total():
+    tool = FakeTool("list_users", {
+        "complete": False,
+        "totalCount": 87,
+        "data": [{"id": 1}, {"id": 2}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert answer == "NinjaOne reports 87 users in the result."
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_error_payload_is_never_reported_as_zero_records():
+    tool = FakeTool("list_users", {"error": "upstream timeout"})
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert "could not complete the read" in answer
+    assert "0 users" not in answer
+
+
+def test_mcp_read_evidence_metadata_survives_truncated_result_previews():
+    assert app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": "' + ("x" * 2600),
+         "read_success": True, "complete": True, "authoritative_total": 9},
+    ])
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": "' + ("x" * 2600),
+         "read_success": True, "complete": True, "authoritative_total": 9},
+    ])
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"data": []}', "read_success": False},
     ])
