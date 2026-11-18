@@ -360,3 +360,24 @@ async def test_generic_mcp_role_count_does_not_claim_exact_total_for_incomplete_
 
     assert answer.startswith("At least 1 technicians")
     assert "cannot confirm the complete total" in answer
+
+
+def test_people_name_search_prompt_requires_all_categories_and_pagination():
+    prompt = app.SYSTEM_PROMPT
+    assert "getAllUserAndContacts" in prompt
+    assert "TECHNICIAN, END_USER, and CONTACT" in prompt
+    assert "searchCriteria" in prompt
+    assert "Paginate the unified people endpoint completely" in prompt
+    assert "stable record identity" in prompt
+
+
+def test_activity_metric_is_not_mistaken_for_mcp_tool_execution():
+    assert not app._has_mcp_tool_execution([
+        {"kind": "metric", "stage": "llm_agent", "elapsed_ms": 1200},
+    ])
+    assert app._has_mcp_tool_execution([
+        {"kind": "result", "tool": "execute_endpoint", "result": "[]"},
+    ])
+    assert app._has_mcp_tool_execution([
+        {"kind": "call", "tool": "discover_endpoints", "arguments": {}},
+    ])
