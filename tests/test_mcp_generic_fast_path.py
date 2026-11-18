@@ -312,7 +312,7 @@ async def test_generic_mcp_counts_exact_technician_role_only_from_complete_resul
     ]
     tools = [
         FakeTool("discover_endpoints", {
-            "semantic": {"mode": "fuzzy_fast_path", "selected": [{"endpoint": endpoint}]},
+            "semantic": {"mode": "fuzzy_fallback", "selected": [{"endpoint": endpoint}]},
             "selected_details": {
                 "method": "GET", "endpoint": endpoint, "parameters": [], "responses": {},
             },
