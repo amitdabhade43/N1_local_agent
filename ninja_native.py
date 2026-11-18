@@ -186,6 +186,26 @@ def _resolve_device_access_clarification(question, history):
         return None, None
 
     reply = str(question or "").strip().strip(" .")
+
+    # Do not trap the whole conversation in a candidate-selection loop. Only
+    # treat selection-shaped replies as attempts to choose a listed candidate.
+    # Questions, greetings, cancellations, acknowledgements and new requests
+    # must return to normal routing (including the original request context).
+    if (
+        not reply.isdigit()
+        and re.search(
+            r"\\b(?:how|what|why|when|where|who|which|"
+            r"count|number|many|total|list|search|find|check|show|details|"
+            r"cancel|stop|nevermind|never\\s+mind|"
+            r"hi|hello|hey|thanks|thank\\s+you|"
+            r"no\\s+change|not\\s+required|not\\s+needed|"
+            r"start\\s+over|new\\s+request)\\b",
+            reply,
+            re.I,
+        )
+    ):
+        return None, None
+
     selected = []
     if reply.isdigit():
         selected = [item for item in candidates if item["number"] == int(reply)]
