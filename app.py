@@ -938,6 +938,8 @@ async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
     if isinstance(parsed, dict) and (
         parsed.get("error") or parsed.get("isError") is True
         or parsed.get("success") is False or parsed.get("executed") is False
+        or str(parsed.get("status", "")).casefold() in {"error", "failed", "failure"}
+        or (isinstance(parsed.get("status_code"), int) and parsed.get("status_code") >= 400)
     ):
         detail = parsed.get("error") or parsed.get("message") or parsed.get("detail") or "the API reported an unsuccessful read"
         return f"NinjaOne could not complete the read: {detail}", activity
@@ -1504,12 +1506,15 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 evidence_text = json.dumps(parsed_tool_result, ensure_ascii=False, default=str)
             except (TypeError, ValueError):
                 evidence_text = str(parsed_tool_result)
-            read_success = not (
+            read_success = parsed_tool_result not in (None, "", {}) and not (
                 isinstance(parsed_tool_result, dict) and (
                     parsed_tool_result.get("error")
                     or parsed_tool_result.get("isError") is True
                     or parsed_tool_result.get("success") is False
                     or parsed_tool_result.get("executed") is False
+                    or str(parsed_tool_result.get("status", "")).casefold() in {"error", "failed", "failure"}
+                    or (isinstance(parsed_tool_result.get("status_code"), int)
+                        and parsed_tool_result.get("status_code") >= 400)
                 )
             ) and not (
                 isinstance(parsed_tool_result, str) and re.search(
