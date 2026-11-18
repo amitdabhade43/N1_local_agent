@@ -1333,6 +1333,10 @@ def _has_mcp_data_read_result(activity: list[dict[str, Any]]) -> bool:
         raw_result = item.get("result")
         if raw_result in (None, ""):
             continue
+        if item.get("read_success") is True:
+            return True
+        if item.get("read_success") is False:
+            continue
         parsed = parse_mcp_result(raw_result)
         if isinstance(parsed, dict):
             if (parsed.get("error") or parsed.get("isError") is True
@@ -1358,6 +1362,8 @@ def _has_complete_mcp_count_evidence(activity: list[dict[str, Any]]) -> bool:
         tool_name = str(item.get("tool") or "").casefold().rsplit("__", 1)[-1]
         if tool_name not in read_tools:
             continue
+        if item.get("complete") is True or item.get("authoritative_total") is not None:
+            return True
         parsed = parse_mcp_result(item.get("result"))
         if isinstance(parsed, dict):
             if parsed.get("complete") is True or find_total_field(parsed) is not None:
@@ -1498,10 +1504,27 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 evidence_text = json.dumps(parsed_tool_result, ensure_ascii=False, default=str)
             except (TypeError, ValueError):
                 evidence_text = str(parsed_tool_result)
+            read_success = not (
+                isinstance(parsed_tool_result, dict) and (
+                    parsed_tool_result.get("error")
+                    or parsed_tool_result.get("isError") is True
+                    or parsed_tool_result.get("success") is False
+                    or parsed_tool_result.get("executed") is False
+                )
+            ) and not (
+                isinstance(parsed_tool_result, str) and re.search(
+                    r"^\\s*(?:error|exception|failed|failure)\\b",
+                    parsed_tool_result, re.I
+                )
+            )
             activity.append({
                 "kind": "result",
                 "tool": getattr(msg, "name", "tool"),
                 "result": evidence_text[:2500],
+                "read_success": read_success,
+                "complete": parsed_tool_result.get("complete") is True
+                    if isinstance(parsed_tool_result, dict) else False,
+                "authoritative_total": find_total_field(parsed_tool_result),
             })
             if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
                 activity.append({
