@@ -1513,7 +1513,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 )
             ) and not (
                 isinstance(parsed_tool_result, str) and re.search(
-                    r"^\\s*(?:error|exception|failed|failure)\\b",
+                    r"^\s*(?:error|exception|failed|failure)\b",
                     parsed_tool_result, re.I
                 )
             )
