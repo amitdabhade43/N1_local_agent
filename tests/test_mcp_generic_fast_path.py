@@ -422,3 +422,31 @@ def test_mcp_read_result_is_not_confused_with_discovery_or_metrics():
         {"kind": "result", "tool": "discover_endpoints", "result": '{"selected": []}'},
         {"kind": "metric", "tool": "execute_endpoint", "result": '{"data": [{"id": 1}]}'},
     ])
+
+
+def test_exact_count_requires_complete_or_authoritative_total_evidence():
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_paginated_endpoint",
+         "result": '{"complete": true, "items_fetched": 250}'},
+    ])
+    assert app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "call",
+         "result": '{"data": [], "total": 42}'},
+    ])
+    assert not app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "execute_endpoint",
+         "result": '{"complete": false, "items_fetched": 50, "data": []}'},
+    ])
+    assert not app._has_complete_mcp_count_evidence([
+        {"kind": "result", "tool": "discover_endpoints",
+         "result": '{"complete": true, "total": 42}'},
+    ])
+
+
+def test_exact_count_intent_matches_natural_language_count_questions():
+    import re
+
+    pattern = re.compile(r"\\b(?:how many|count|number of|total)\\b", re.I)
+    assert pattern.search("How many users contain Rene?")
+    assert pattern.search("Count all technicians")
+    assert not pattern.search("List all technicians")
