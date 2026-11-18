@@ -1328,11 +1328,24 @@ def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
     parsed = parse_mcp_result(value)
     markers = {
         "endpoint", "executed", "complete", "truncated", "pagination",
-        "error", "isError", "success", "status_code",
+        "error", "isError", "success", "status_code", "total", "totalCount",
+        "total_count", "totalRecords", "count",
     }
     found: list[dict[str, Any]] = []
 
     def visit(node: Any) -> None:
+        # MCP text content often contains JSON as a string. Parse that nested
+        # payload before inspecting its execution status or completeness.
+        if isinstance(node, str):
+            text_value = node.strip()
+            if text_value.startswith(("{", "[")):
+                try:
+                    decoded = json.loads(text_value)
+                except (json.JSONDecodeError, TypeError):
+                    return
+                if decoded is not node:
+                    visit(decoded)
+            return
         if isinstance(node, dict):
             status_raw = node.get("status_code", node.get("status"))
             status_value = str(status_raw or "").casefold()
