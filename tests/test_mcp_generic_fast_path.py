@@ -450,3 +450,51 @@ def test_exact_count_intent_matches_natural_language_count_questions():
     assert pattern.search("How many users contain Rene?")
     assert pattern.search("Count all technicians")
     assert not pattern.search("List all technicians")
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_reports_minimum_for_incomplete_data():
+    tool = FakeTool("list_users", {
+        "complete": False,
+        "data": [{"id": 1}, {"id": 2}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert "at least 2 users" in answer
+    assert "did not confirm a complete total" in answer
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_can_be_exact_when_result_is_complete():
+    tool = FakeTool("list_users", {
+        "complete": True,
+        "data": [{"id": 1}, {"id": 2}, {"id": 3}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert answer == "NinjaOne returned 3 users in the complete result."
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_count_uses_authoritative_total():
+    tool = FakeTool("list_users", {
+        "complete": False,
+        "totalCount": 87,
+        "data": [{"id": 1}, {"id": 2}],
+    })
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert answer == "NinjaOne reports 87 users in the result."
+
+
+@pytest.mark.asyncio
+async def test_direct_mcp_error_payload_is_never_reported_as_zero_records():
+    tool = FakeTool("list_users", {"error": "upstream timeout"})
+    answer, _ = await app.run_direct_mcp_tool(
+        "list_users", {}, "count", tools_override=[tool]
+    )
+    assert "could not complete the read" in answer
+    assert "0 users" not in answer
