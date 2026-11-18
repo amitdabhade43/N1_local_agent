@@ -1306,14 +1306,32 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     except HTTPException:
         raise
     except Exception as exc:
+        # TEMPORARY DIAGNOSTICS: expose the underlying ExceptionGroup cause and
+        # retain the complete traceback in the Local Agent terminal. Remove
+        # this block after the failure has been reproduced and diagnosed.
+        _logger.exception(
+            "MCP agent execution failed: model=%s transport=%s",
+            model_id,
+            MCP_TRANSPORT,
+        )
+
+        def _exception_tree(error, depth=0):
+            lines = ["  " * depth + f"{type(error).__name__}: {error}"]
+            nested = getattr(error, "exceptions", None)
+            if isinstance(nested, (tuple, list)):
+                for child in nested:
+                    lines.extend(_exception_tree(child, depth + 1))
+            return lines
+
+        root_cause = "\\n".join(_exception_tree(exc))
         raise HTTPException(
             status_code=502,
             detail=(
-                "Agent/model execution failed. Verify Foundry Local is running, "
-                "the selected model is loaded, and the MCP gateway environment is valid. "
-                f"Details: {exc}"
+                "Temporary MCP diagnostics: agent execution failed. "
+                "The complete traceback is in the Local Agent terminal. "
+                f"Underlying exception: {root_cause}"
             ),
-        )
+        ) from exc
 
     inference_elapsed = time.perf_counter() - started
     _logger.info("mcp_agent_complete model=%s elapsed_ms=%.1f", model_id, inference_elapsed * 1000)
