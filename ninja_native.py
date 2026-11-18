@@ -123,7 +123,7 @@ def _resolve_device_access_clarification(question, history):
         r"\b(?:check|show|find|search|lookup|look\s+up|details|who\s+is|"
         r"tell\s+me\s+about|i\s+want|i'd\s+like|not\s+in\s+the\s+list|"
         r"not\s+in\s+list|not\s+listed|none\s+of\s+these|another\s+user|"
-        r"different\s+user|cancel|start\s+over)\\b",
+        r"different\s+user|cancel|start\s+over)\b",
         clarification_reply,
         re.I,
     ):
