@@ -120,7 +120,7 @@ def _resolve_device_access_clarification(question, history):
     request_match = re.search(
         r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
         r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+to\s+.+?\s+"
-        r"(?:for\s+)?(?:the\s+)?device\s+access(?:\s+list)?\s*$",
+        r"(?:for\s+)?(?:the\s+)?(?:device\s+)?access(?:\s+list)?\s*$",
         original_request.strip(), re.I,
     )
     if not request_match:
