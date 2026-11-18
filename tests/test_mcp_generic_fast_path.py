@@ -381,3 +381,44 @@ def test_activity_metric_is_not_mistaken_for_mcp_tool_execution():
     assert app._has_mcp_tool_execution([
         {"kind": "call", "tool": "discover_endpoints", "arguments": {}},
     ])
+
+
+def test_mcp_discovery_is_not_mistaken_for_a_successful_data_read():
+    activity = [
+        {"kind": "call", "tool": "discover_endpoints", "arguments": {"intent": "users"}},
+        {"kind": "result", "tool": "discover_endpoints", "result": "{'selected': []}"},
+        {"kind": "result", "tool": "inspect_endpoint", "result": "{'method': 'GET'}"},
+    ]
+    assert app._has_mcp_tool_execution(activity)
+    assert not app._has_mcp_data_read_result(activity)
+
+
+@pytest.mark.parametrize("tool_name", [
+    "execute_endpoint", "execute_paginated_endpoint", "call", "raw_call",
+    "ninjaone__execute_endpoint",
+])
+def test_successful_mcp_data_read_result_is_accepted(tool_name):
+    assert app._has_mcp_data_read_result([
+        {"kind": "result", "tool": tool_name,
+         "result": '{"executed": true, "complete": true, "data": [{"id": 1}]}'},
+    ])
+
+
+@pytest.mark.parametrize("payload", [
+    '{"error": "upstream unavailable"}',
+    '{"executed": false, "error": "request failed"}',
+    'Error: request timed out',
+    '',
+    None,
+])
+def test_failed_or_empty_mcp_read_result_is_not_accepted(payload):
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "execute_endpoint", "result": payload},
+    ])
+
+
+def test_mcp_read_result_is_not_confused_with_discovery_or_metrics():
+    assert not app._has_mcp_data_read_result([
+        {"kind": "result", "tool": "discover_endpoints", "result": '{"selected": []}'},
+        {"kind": "metric", "tool": "execute_endpoint", "result": '{"data": [{"id": 1}]}'},
+    ])
