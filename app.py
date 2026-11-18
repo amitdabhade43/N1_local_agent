@@ -1327,13 +1327,15 @@ def _mcp_result_envelopes(value: Any) -> list[dict[str, Any]]:
     parsed = parse_mcp_result(value)
     markers = {
         "endpoint", "executed", "complete", "truncated", "pagination",
-        "error", "isError", "success", "status", "status_code",
+        "error", "isError", "success", "status_code",
     }
     found: list[dict[str, Any]] = []
 
     def visit(node: Any) -> None:
         if isinstance(node, dict):
-            if markers.intersection(node):
+            status_value = str(node.get("status", "")).casefold()
+            if (markers.intersection(node)
+                    or status_value in {"error", "failed", "failure"}):
                 found.append(node)
                 return
             if node.get("type") == "text" and "text" in node:
