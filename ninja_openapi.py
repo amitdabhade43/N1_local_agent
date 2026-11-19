@@ -251,6 +251,13 @@ def schema_field_entries(
             "maxLength": node.get("maxLength"),
             "minItems": node.get("minItems"),
             "maxItems": node.get("maxItems"),
+            "pattern": node.get("pattern"),
+            "multipleOf": node.get("multipleOf"),
+            "exclusiveMinimum": node.get("exclusiveMinimum"),
+            "exclusiveMaximum": node.get("exclusiveMaximum"),
+            "uniqueItems": node.get("uniqueItems"),
+            "minProperties": node.get("minProperties"),
+            "maxProperties": node.get("maxProperties"),
         }
         return {key: value for key, value in item.items() if value not in (None, "", [], {})}
 
@@ -411,11 +418,23 @@ def describe_operation(operation: dict, include_schema: bool = False) -> dict:
         "summary": operation.get("summary", ""),
         "tags": operation.get("tags", []),
         "parameters": [
-            {k: p.get(k) for k in ("name", "in", "required", "description", "schema")}
+            {k: p.get(k) for k in ("name", "in", "required", "description", "schema", "style", "explode")}
             for p in operation.get("params", [])
         ],
         "request_body_required": bool((operation.get("request_body") or {}).get("required")),
         "request_body_media_type": (operation.get("request_body") or {}).get("media_type"),
+        "request_body_description": (operation.get("request_body") or {}).get("description", ""),
+        "operation_description": operation.get("description", ""),
+        "deprecated": bool(operation.get("deprecated", False)),
+        "security": operation.get("security", []),
+        "response_metadata": {
+            str(status): {
+                "description": response.get("description", ""),
+                "media_types": list((response.get("content") or {}).keys()),
+            }
+            for status, response in (operation.get("responses") or {}).items()
+            if isinstance(response, dict)
+        },
     }
     if include_schema and operation.get("request_body"):
         result["request_body_schema"] = operation["request_body"].get("schema")
