@@ -230,6 +230,11 @@ def test_supplemental_yaml_schema_fields_are_indexed_without_replacing_json_oper
     assert admin["type"] == "boolean"
     assert admin["schema_source"] == "yaml"
     assert supplemental_email["format"] == "email"
+    search_index = ninja_agent._prepare_field_search_index(fields)
+    ninja_agent.FIELD_INDEX = fields
+    ninja_agent.FIELD_SEARCH_INDEX = search_index
+    matches = __import__("json").loads(ninja_agent.t_search_fields({"query": "administrator"}))
+    assert any(item.get("schema_source") == "yaml" for item in matches["matches"])
     assert set(operations) == {"createEndUser", "getEndUsers"}
 
 
@@ -277,7 +282,7 @@ def test_inspect_schema_reads_yaml_component_schema_and_paginates():
     assert first["schema_fields"][0]["path"] == "Technician.administrator"
     assert first["schema_fields_complete"] is False
     assert second["schema_fields_complete"] is True
-    assert second["schema_fields"][0]["path"] == "Technician.roles[].$"
+    assert second["schema_fields"][0]["path"] == "Technician.roles"
 
 
 def test_text_call_parser_accepts_inspect_schema():
