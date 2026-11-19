@@ -87,7 +87,7 @@ Execution activity includes elapsed-time metrics for direct MCP calls, Native mo
 
 ## Native OpenAPI backend
 
-Set `AGENT_BACKEND=native`. The bundled `ninja_spec.json` is the source of truth for endpoint discovery and request validation.
+Set `AGENT_BACKEND=native`. The bundled `ninja_spec.json` is the source of truth for executable endpoint discovery and request validation. The bundled `ninjaOne-API-core-resources.yaml` is loaded as a supplemental schema catalog; it enriches field discovery without adding or overriding executable operations.
 To compare or refresh it from NinjaOne's official OpenAPI URL, run `python scripts/sync_ninjaone_api_catalog.py --check` (check only) or `python scripts/sync_ninjaone_api_catalog.py` (safe atomic update). The sync script validates OpenAPI format and catalog size and refuses an unexpected catalog downgrade unless explicitly overridden. The agent can also refresh on startup with `NINJA_SPEC_REFRESH=1`; it validates the downloaded document and replaces the file atomically.
 
 The current specification contains 315 operations across 254 paths:
