@@ -24,7 +24,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b")
 NO_THINK = os.getenv("NO_THINK", "0") == "1"  # set 1 for Qwen3 to skip thinking (faster)
 MAX_STEPS, MAX_ROWS, MAX_CHARS, TTL = 6, 25, 6000, 60
 
-OPS, IDX, SPEC_DATA, FIELD_INDEX = {}, None, {}, []
+OPS, IDX, SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX = {}, None, {}, [], []
 _tok, _cache = {"v": None, "exp": 0.0}, {}
 _pending_actions, _pending_lock = {}, threading.Lock()
 _active_session = threading.local()
@@ -77,9 +77,26 @@ def _validate_spec_document(spec, previous=None):
     return counts
 
 
+def _prepare_field_search_index(fields):
+    """Pre-tokenize schema metadata once so field lookup stays fast during chat."""
+    prepared = []
+    for field in fields:
+        haystack = " ".join(str(field.get(key, "")) for key in (
+            "name", "path", "description", "schema_name", "operation_id",
+            "operation_path", "location", "enum",
+        ))
+        prepared.append((
+            field,
+            " ".join(toks(haystack)),
+            set(toks(haystack)),
+            " ".join(toks(field.get("name", ""))),
+        ))
+    return prepared
+
+
 def load_ops():
     """Load the bundled OpenAPI document and build the complete safe operation catalog."""
-    global SPEC_DATA, FIELD_INDEX
+    global SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX
     cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ninja_spec.json")
     refresh_spec = os.getenv("NINJA_SPEC_REFRESH", "0").strip().lower() in {"1", "true", "yes"}
     previous = None
@@ -112,6 +129,7 @@ def load_ops():
     SPEC_DATA = spec
     operations = build_operations(spec)
     FIELD_INDEX = build_field_catalog(spec, operations)
+    FIELD_SEARCH_INDEX = _prepare_field_search_index(FIELD_INDEX)
     return operations
 
 
@@ -524,19 +542,12 @@ def t_search_fields(a):
     qnorm = " ".join(toks(query))
     qtokens = set(toks(query))
     ranked = []
-    for field in FIELD_INDEX:
+    for field, normalized, field_tokens, name_norm in FIELD_SEARCH_INDEX:
         if schema_filter and schema_filter not in str(field.get("schema_name", "")).casefold():
             continue
         if operation_filter and operation_filter not in str(field.get("operation_id", "")).casefold():
             continue
-        name = str(field.get("name", ""))
-        haystack = " ".join(str(field.get(key, "")) for key in (
-            "name", "path", "description", "schema_name", "operation_id",
-            "operation_path", "location", "enum",
-        ))
-        normalized = " ".join(toks(haystack))
-        name_norm = " ".join(toks(name))
-        overlap = len(qtokens.intersection(set(toks(haystack))))
+        overlap = len(qtokens.intersection(field_tokens))
         score = overlap / max(len(qtokens), 1)
         if qnorm == name_norm:
             score += 5
