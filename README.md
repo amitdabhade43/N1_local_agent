@@ -88,8 +88,10 @@ Execution activity includes elapsed-time metrics for direct MCP calls, Native mo
 ## Native OpenAPI backend
 
 Set `AGENT_BACKEND=native`. The bundled `ninja_spec.json` is the source of truth for endpoint discovery and request validation.
+To compare or refresh it from NinjaOne's official OpenAPI URL, run `python scripts/sync_ninjaone_api_catalog.py --check` (check only) or `python scripts/sync_ninjaone_api_catalog.py` (safe atomic update). The sync script validates OpenAPI format and catalog size and refuses an unexpected catalog downgrade unless explicitly overridden. The agent can also refresh on startup with `NINJA_SPEC_REFRESH=1`; it validates the downloaded document and replaces the file atomically.
 
 The current specification contains 315 operations across 254 paths:
+- **416 component schemas** and **2,485 top-level schema properties** are bundled. The published NinjaOne API documentation currently lists the same 315 operations and 416 models (Public API 2.0, `2.0.9-draft`).
 - **151 GET** read operations.
 - **91 POST**, **30 PATCH**, and **20 PUT** operations in the source specification.
 - **23 DELETE** operations are blocked.
@@ -98,6 +100,10 @@ The current specification contains 315 operations across 254 paths:
 
 Capabilities:
 - Search API operations by endpoint name, description, tags, parameters, and request/response fields.
+- Search every component-schema field and every operation parameter, request-body field and response field with `search_fields`; results include exact field paths, types, descriptions, required flags, enums, formats and read/write constraints where published.
+- `inspect_api` returns a lossless field catalog for an operation, paginated when necessary. It does not silently stop at the first 35 properties or depth four; use its `schema_fields_next_offset` to retrieve remaining fields.
+- Search/indexing traverses nested schemas and enum values deeply, including array item objects and composed schemas.
+- Response shaping preserves nested non-secret fields and supports dotted field selection/filtering. Credential-like values (passwords, tokens, secrets, keys and authorization values) are redacted.
 - Inspect the exact operation schema, required parameters, enums, and request body before calling it.
 - Execute validated GET requests and POST operations explicitly documented as read-only queries (for example, listing tickets by board); filter, count, group, and paginate where the OpenAPI request/response schemas define an integer ID cursor, opaque nextCursor/pageInfo cursor, or ticket-board lastCursorId cursor; unknown pagination is marked partial.
 - Prepare state-changing POST/PUT/PATCH requests using OpenAPI request schemas. The agent displays the exact method, path, query and body; it does not send the mutation until you click **Approve and execute**.
