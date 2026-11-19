@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 import ninja_agent
 import ninja_openapi
 
@@ -289,3 +292,35 @@ def test_text_call_parser_accepts_inspect_schema():
     assert ninja_agent.text_call('inspect_schema(schema_name="Technician", schema_source="yaml")') == (
         "inspect_schema", {"schema_name": "Technician", "schema_source": "yaml"}
     )
+
+
+
+def test_bundled_yaml_catalog_loads_and_matches_primary_operation_ids():
+    import yaml
+
+    root = Path(__file__).resolve().parents[1]
+    primary = json.loads((root / "ninja_spec.json").read_text(encoding="utf-8"))
+    supplemental = yaml.safe_load(
+        (root / "ninjaOne-API-core-resources.yaml").read_text(encoding="utf-8")
+    )
+
+    report = ninja_openapi.compare_spec_documents(primary, supplemental)
+    primary_ops = {
+        operation.get("operationId")
+        for path_item in primary["paths"].values()
+        for method, operation in path_item.items()
+        if method.lower() in {"get", "post", "put", "patch", "delete"}
+        and isinstance(operation, dict)
+    }
+    technician = supplemental["components"]["schemas"]["Technician"]
+    technician_fields = ninja_openapi.schema_field_entries(technician, "Technician")
+    administrator = next(
+        field for field in technician_fields
+        if field["path"] == "Technician.administrator"
+    )
+
+    assert report["matching_operation_ids"] == len(primary_ops)
+    assert report["primary_only_operation_ids"] == []
+    assert report["supplemental_only_operation_ids"] == []
+    assert report["operation_route_conflicts"] == []
+    assert administrator["type"] == "boolean"
