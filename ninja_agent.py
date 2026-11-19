@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 from openai import OpenAI
-from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog)
+from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog, compare_spec_documents, schema_field_entries, expand_refs)
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
 BASE = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").rstrip("/")  # use your region host
@@ -25,6 +25,7 @@ NO_THINK = os.getenv("NO_THINK", "0") == "1"  # set 1 for Qwen3 to skip thinking
 MAX_STEPS, MAX_ROWS, MAX_CHARS, TTL = 6, 25, 6000, 60
 
 OPS, IDX, SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX = {}, None, {}, [], []
+SCHEMA_SOURCES, SCHEMA_INDEX, SPEC_SOURCE_REPORT = {}, {}, {}
 _tok, _cache = {"v": None, "exp": 0.0}, {}
 _pending_actions, _pending_lock = {}, threading.Lock()
 _active_session = threading.local()
@@ -83,7 +84,7 @@ def _prepare_field_search_index(fields):
     for field in fields:
         haystack = " ".join(str(field.get(key, "")) for key in (
             "name", "path", "description", "schema_name", "operation_id",
-            "operation_path", "location", "enum",
+            "operation_path", "location", "enum", "schema_source",
         ))
         prepared.append((
             field,
@@ -96,8 +97,10 @@ def _prepare_field_search_index(fields):
 
 def load_ops():
     """Load the bundled OpenAPI document and build the complete safe operation catalog."""
-    global SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX
-    cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ninja_spec.json")
+    global SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX, SCHEMA_SOURCES, SCHEMA_INDEX, SPEC_SOURCE_REPORT
+    root = os.path.dirname(os.path.abspath(__file__))
+    cache = os.path.join(root, "ninja_spec.json")
+    yaml_cache = os.path.join(root, "ninjaOne-API-core-resources.yaml")
     refresh_spec = os.getenv("NINJA_SPEC_REFRESH", "0").strip().lower() in {"1", "true", "yes"}
     previous = None
     if os.path.exists(cache):
@@ -128,7 +131,39 @@ def load_ops():
             raise
     SPEC_DATA = spec
     operations = build_operations(spec)
-    FIELD_INDEX = build_field_catalog(spec, operations)
+
+    # The JSON document remains authoritative for executable operations and
+    # request validation. YAML enriches schema/field discovery only.
+    supplemental_specs = []
+    yaml_spec = None
+    if os.path.isfile(yaml_cache):
+        try:
+            import yaml
+            with open(yaml_cache, "r", encoding="utf-8") as handle:
+                yaml_spec = yaml.safe_load(handle)
+            if not isinstance(yaml_spec, dict) or not str(yaml_spec.get("openapi", "")).startswith("3."):
+                raise ValueError("Supplemental YAML is not a valid OpenAPI 3.x document.")
+            supplemental_specs.append(("yaml", yaml_spec))
+        except Exception as exc:
+            raise RuntimeError(
+                f"Could not load supplemental NinjaOne YAML schema catalog ({yaml_cache}): "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
+
+    SCHEMA_SOURCES = {"json": spec}
+    if yaml_spec is not None:
+        SCHEMA_SOURCES["yaml"] = yaml_spec
+    SPEC_SOURCE_REPORT = {
+        "primary": "ninja_spec.json",
+        "supplemental": "ninjaOne-API-core-resources.yaml" if yaml_spec is not None else None,
+        "comparison": compare_spec_documents(spec, yaml_spec) if yaml_spec is not None else None,
+    }
+    SCHEMA_INDEX = {}
+    for source_name, document in SCHEMA_SOURCES.items():
+        for schema_name, schema in (document.get("components", {}).get("schemas") or {}).items():
+            SCHEMA_INDEX[(source_name, schema_name)] = expand_refs(schema, document)
+
+    FIELD_INDEX = build_field_catalog(spec, operations, supplemental_specs=supplemental_specs)
     FIELD_SEARCH_INDEX = _prepare_field_search_index(FIELD_INDEX)
     return operations
 
@@ -564,7 +599,45 @@ def t_search_fields(a):
         "query": query,
         "total_matches": len(ranked),
         "matches": [{**field, "match_score": round(score, 3)} for score, field in ranked[:limit]],
-        "note": "These are documented schema definitions, not live record values. Use inspect_api for the complete operation contract and call_api to retrieve actual NinjaOne values.",
+        "schema_sources": {"primary": "ninja_spec.json", "supplemental": "ninjaOne-API-core-resources.yaml" if "yaml" in SCHEMA_SOURCES else None},
+        "note": "These are documented schema definitions, not live record values. JSON is authoritative for executable API contracts; YAML is supplemental schema discovery. Use inspect_schema for a complete component schema, inspect_api for an operation contract, and call_api for live NinjaOne values.",
+    }, default=str)
+
+
+def t_inspect_schema(a):
+    """Inspect a complete component schema from the primary or supplemental catalog."""
+    name = str(a.get("schema_name", "")).strip()
+    source = str(a.get("schema_source", "")).strip().casefold()
+    if not name:
+        return err("Provide schema_name. Use search_fields to discover schema names.")
+    matches = [
+        (src, schema) for (src, schema_name), schema in SCHEMA_INDEX.items()
+        if schema_name.casefold() == name.casefold() and (not source or src == source)
+    ]
+    if not matches:
+        return err(f"Schema '{name}' was not found in the requested specification source.")
+    if len(matches) > 1 and not source:
+        return json.dumps({
+            "schema_name": name,
+            "available_sources": [src for src, _ in matches],
+            "note": "This schema exists in multiple specifications. Call inspect_schema with schema_source='json' or 'yaml' to inspect a specific definition.",
+        })
+    selected_source, schema = matches[0]
+    fields = schema_field_entries(schema, name)
+    offset = max(0, int(a.get("offset", 0)))
+    limit = max(1, min(100, int(a.get("limit", 80))))
+    page = fields[offset:offset + limit]
+    next_offset = offset + len(page)
+    return json.dumps({
+        "schema_name": name,
+        "schema_source": selected_source,
+        "schema_definition": schema,
+        "schema_fields_total": len(fields),
+        "schema_fields_offset": offset,
+        "schema_fields": page,
+        "schema_fields_next_offset": next_offset if next_offset < len(fields) else None,
+        "schema_fields_complete": next_offset >= len(fields),
+        "note": "Schema definitions describe documented fields and constraints, not live tenant values.",
     }, default=str)
 
 
@@ -1010,6 +1083,7 @@ def t_resolve(a):
 DISPATCH = {
     "search_api": t_search,
     "search_fields": t_search_fields,
+    "inspect_schema": t_inspect_schema,
     "inspect_api": t_inspect,
     "call_api": t_call,
     "resolve_entity": t_resolve,
@@ -1031,6 +1105,15 @@ TOOLS = [
             "operation_id": {"type": "string"},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50}
         }, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "inspect_schema",
+        "description": "Inspect a complete NinjaOne component schema, including nested properties, array item fields, types, enums and constraints. Supports the primary JSON specification and supplemental YAML specification. Use search_fields first to find the schema name; specify schema_source when a schema exists in both.",
+        "parameters": {"type": "object", "properties": {
+            "schema_name": {"type": "string"},
+            "schema_source": {"type": "string", "enum": ["json", "yaml"]},
+            "offset": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
+        }, "required": ["schema_name"]}}},
     {"type": "function", "function": {
         "name": "inspect_api",
         "description": "Inspect an exact operation_id from search_api. Returns all documented operation parameters and a paginated, lossless field catalog for request and response schemas. Use offset/limit to retrieve subsequent field pages. Call before writes or when arguments are unclear.",
@@ -1080,7 +1163,9 @@ Execution strategy:
 
 API workflow:
 - search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
-- The field index covers all component schemas plus operation path/query/header parameters, request bodies and JSON responses. Use search_fields for an exact field name or concept before guessing a field. It returns schema name, field path, type, required status, description, enum, nullable/readOnly/writeOnly and other constraints where documented.
+- The field index covers all primary JSON component schemas, supplemental YAML component schemas, plus primary operation path/query/header parameters, request bodies and responses. Use search_fields for an exact field name or concept before guessing a field. It returns schema name, field path, source, type, required status, description, enum, nullable/readOnly/writeOnly and other constraints where documented.
+- JSON is authoritative for executable endpoint selection, request parameters, request-body validation and live calls. YAML is supplemental for schema discovery only; never execute an endpoint or construct a request solely from a YAML-only operation.
+- Use inspect_schema to retrieve the complete nested component schema (including array item fields) after search_fields identifies the schema. If the schema exists in both sources, specify schema_source to inspect each version and compare them.
 - inspect_api returns a paginated lossless field catalog for the selected operation. If schema_fields_next_offset is non-null, retrieve additional pages as needed. Do not assume omitted fields do not exist; search_fields can find fields across the entire specification.
 - Schema definitions describe possible fields and constraints, not actual tenant values. Use call_api to retrieve live values and report only values present in the response. Do not confuse absent, null, false, empty, and zero values.
 - resolve_entity resolves names for organizations, devices, users, technicians, policies, locations, groups, roles, contacts, scripts, alerts, software products and ticket boards. Resolve names to IDs before calling entity-specific endpoints.
