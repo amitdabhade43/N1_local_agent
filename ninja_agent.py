@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 from openai import OpenAI
-from ninja_openapi import build_operations, describe_operation, operation_document, validate_payload, is_delete_operation
+from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog)
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
 BASE = os.getenv("NINJA_BASE_URL", "https://eu.ninjarmm.com").rstrip("/")  # use your region host
@@ -24,7 +24,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:14b")
 NO_THINK = os.getenv("NO_THINK", "0") == "1"  # set 1 for Qwen3 to skip thinking (faster)
 MAX_STEPS, MAX_ROWS, MAX_CHARS, TTL = 6, 25, 6000, 60
 
-OPS, IDX, SPEC_DATA = {}, None, {}
+OPS, IDX, SPEC_DATA, FIELD_INDEX = {}, None, {}, []
 _tok, _cache = {"v": None, "exp": 0.0}, {}
 _pending_actions, _pending_lock = {}, threading.Lock()
 _active_session = threading.local()
@@ -57,7 +57,10 @@ def load_ops():
         with open(cache, "w", encoding="utf-8") as handle:
             json.dump(spec, handle)
     SPEC_DATA = spec
-    return build_operations(spec)
+    operations = build_operations(spec)
+    global FIELD_INDEX
+    FIELD_INDEX = build_field_catalog(spec, operations)
+    return operations
 
 
 SYN = {
@@ -432,6 +435,50 @@ def t_search(a):
     return "\n".join(describe(o) for o in hits) or err("no match; try different keywords")
 
 
+def t_search_fields(a):
+    """Search every field in component schemas and operation request/response contracts."""
+    query = str(a.get("query", "")).strip()
+    if not query:
+        return err("Provide a field name, description, or concept to search.")
+    limit = max(1, min(50, int(a.get("limit", 20))))
+    schema_filter = str(a.get("schema_name", "")).strip().casefold()
+    operation_filter = str(a.get("operation_id", "")).strip().casefold()
+    qnorm = " ".join(toks(query))
+    qtokens = set(toks(query))
+    ranked = []
+    for field in FIELD_INDEX:
+        if schema_filter and schema_filter not in str(field.get("schema_name", "")).casefold():
+            continue
+        if operation_filter and operation_filter not in str(field.get("operation_id", "")).casefold():
+            continue
+        name = str(field.get("name", ""))
+        haystack = " ".join(str(field.get(key, "")) for key in (
+            "name", "path", "description", "schema_name", "operation_id",
+            "operation_path", "location", "enum",
+        ))
+        normalized = " ".join(toks(haystack))
+        name_norm = " ".join(toks(name))
+        overlap = len(qtokens.intersection(set(toks(haystack))))
+        score = overlap / max(len(qtokens), 1)
+        if qnorm == name_norm:
+            score += 5
+        elif qnorm and qnorm in normalized:
+            score += 2.5
+        elif name_norm and (name_norm in qnorm or qnorm in name_norm):
+            score += 1.5
+        if name_norm:
+            score += 0.8 * difflib.SequenceMatcher(None, qnorm, name_norm).ratio()
+        if score > 0.25:
+            ranked.append((score, field))
+    ranked.sort(key=lambda item: (-item[0], item[1].get("name", ""), item[1].get("path", "")))
+    return json.dumps({
+        "query": query,
+        "total_matches": len(ranked),
+        "matches": [{**field, "match_score": round(score, 3)} for score, field in ranked[:limit]],
+        "note": "These are documented schema definitions, not live record values. Use inspect_api for the complete operation contract and call_api to retrieve actual NinjaOne values.",
+    }, default=str)
+
+
 def _compact_schema(schema, depth=0):
     if not isinstance(schema, dict):
         return schema
@@ -460,16 +507,29 @@ def t_inspect(a):
     operation = OPS.get(a.get("operation_id", ""))
     if not operation:
         return err("Unknown operation_id. Use search_api first.")
-    details = describe_operation(operation, include_schema=True)
-    encoded = json.dumps(details, default=str)
-    if len(encoded) > MAX_CHARS:
-        details["request_body_schema"] = _compact_schema(details.get("request_body_schema") or {})
-        for response in (details.get("responses") or {}).values():
-            if isinstance(response, dict) and response.get("schema"):
-                response["schema"] = _compact_schema(response["schema"])
-        details["schema_truncated"] = True
-        encoded = json.dumps(details, default=str)
-    return encoded
+    details = describe_operation(operation, include_schema=False)
+    fields = operation_field_entries(operation)
+    field_filter = str(a.get("field_filter", "")).strip().casefold()
+    if field_filter:
+        fields = [
+            field for field in fields
+            if field_filter in " ".join(str(field.get(key, "")) for key in (
+                "name", "path", "description", "source", "location", "enum",
+            )).casefold()
+        ]
+    offset = max(0, int(a.get("offset", 0)))
+    limit = max(1, min(100, int(a.get("limit", 80))))
+    details["schema_fields_total"] = len(fields)
+    details["schema_fields_offset"] = offset
+    details["schema_fields"] = fields[offset:offset + limit]
+    next_offset = offset + len(details["schema_fields"])
+    details["schema_fields_next_offset"] = next_offset if next_offset < len(fields) else None
+    details["schema_fields_complete"] = next_offset >= len(fields)
+    details["schema_fields_note"] = (
+        "All field definitions include request parameters, request-body properties, and response properties. "
+        "If schema_fields_next_offset is not null, call inspect_api again with that offset to retrieve the next page."
+    )
+    return json.dumps(details, default=str)
 
 
 def _argument_errors(op, args):
@@ -860,6 +920,7 @@ def t_resolve(a):
 
 DISPATCH = {
     "search_api": t_search,
+    "search_fields": t_search_fields,
     "inspect_api": t_inspect,
     "call_api": t_call,
     "resolve_entity": t_resolve,
@@ -873,10 +934,22 @@ TOOLS = [
             "query": {"type": "string"}, "limit": {"type": "integer", "minimum": 1, "maximum": 12}
         }, "required": ["query"]}}},
     {"type": "function", "function": {
-        "name": "inspect_api",
-        "description": "Inspect an exact operation_id from search_api. Returns path/query parameters, required fields, request-body schema and media type. Call before writes or when arguments are unclear.",
+        "name": "search_fields",
+        "description": "Search every NinjaOne OpenAPI component schema and every operation's path/query/header parameters, request-body properties and response properties. Returns exact field names, paths, types, required flags, descriptions, enums and read/write metadata. This returns schema definitions, not live values.",
         "parameters": {"type": "object", "properties": {
-            "operation_id": {"type": "string"}
+            "query": {"type": "string"},
+            "schema_name": {"type": "string"},
+            "operation_id": {"type": "string"},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 50}
+        }, "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "inspect_api",
+        "description": "Inspect an exact operation_id from search_api. Returns all documented operation parameters and a paginated, lossless field catalog for request and response schemas. Use offset/limit to retrieve subsequent field pages. Call before writes or when arguments are unclear.",
+        "parameters": {"type": "object", "properties": {
+            "operation_id": {"type": "string"},
+            "field_filter": {"type": "string"},
+            "offset": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100}
         }, "required": ["operation_id"]}}},
     {"type": "function", "function": {
         "name": "resolve_entity",
@@ -918,6 +991,9 @@ Execution strategy:
 
 API workflow:
 - search_api searches the complete supported API catalog, including GET, POST, PUT and PATCH. Use natural-language intent and resource synonyms.
+- The field index covers all component schemas plus operation path/query/header parameters, request bodies and JSON responses. Use search_fields for an exact field name or concept before guessing a field. It returns schema name, field path, type, required status, description, enum, nullable/readOnly/writeOnly and other constraints where documented.
+- inspect_api returns a paginated lossless field catalog for the selected operation. If schema_fields_next_offset is non-null, retrieve additional pages as needed. Do not assume omitted fields do not exist; search_fields can find fields across the entire specification.
+- Schema definitions describe possible fields and constraints, not actual tenant values. Use call_api to retrieve live values and report only values present in the response. Do not confuse absent, null, false, empty, and zero values.
 - resolve_entity resolves names for organizations, devices, users, technicians, policies, locations, groups, roles, contacts, scripts, alerts, software products and ticket boards. Resolve names to IDs before calling entity-specific endpoints.
 - inspect_api retrieves the exact request schema, required parameters, enums and body fields. Use it whenever a write body or parameter is unclear.
 - call_api executes GET operations and POST operations that the OpenAPI catalog explicitly identifies as read-only queries. It prepares state-changing POST, PUT and PATCH operations for user approval; a prepared request has NOT been executed.
