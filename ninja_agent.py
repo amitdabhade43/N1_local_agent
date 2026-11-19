@@ -1207,7 +1207,7 @@ GREET = re.compile(r"^\s*(hi+|hello+|hey+|yo|good (morning|afternoon|evening)|th
 HELP = ('Hi! I can investigate NinjaOne data and prepare approved changes (delete actions are disabled), for example: "how many devices do we have?", '
         '"list organizations", "how many technicians?", "devices per organization", or "how many devices does Richard have access to?"')
 
-_TXT_CALL = re.compile(r"\b(search_api|inspect_api|call_api|resolve_entity)\s*\(\s*(\{.*\})\s*\)", re.S)
+_TXT_CALL = re.compile(r"\b(search_api|search_fields|inspect_api|call_api|resolve_entity)\s*\(\s*(\{.*\})\s*\)", re.S)
 _TAG_CALL = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.S)
 
 
@@ -1217,7 +1217,7 @@ def text_call(txt):
     try:
         text = (txt or "").strip()
         # Parse Python-call syntax safely; only literal arguments are accepted.
-        for match in re.finditer(r"\b(search_api|inspect_api|call_api|resolve_entity)\s*\(", text):
+        for match in re.finditer(r"\b(search_api|search_fields|inspect_api|call_api|resolve_entity)\s*\(", text):
             start = match.start()
             depth, quote, escaped, end = 0, None, False, None
             for index in range(match.end() - 1, len(text)):
