@@ -178,3 +178,10 @@ def test_shape_supports_nested_field_selection_and_filtering():
 
     assert result["total"] == 1
     assert result["rows"] == [{"id": 1, "profile.enabled": True}]
+
+
+
+def test_text_call_parser_accepts_search_fields():
+    assert ninja_agent.text_call('search_fields(query="email address", limit=5)') == (
+        "search_fields", {"query": "email address", "limit": 5}
+    )
