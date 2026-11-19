@@ -369,6 +369,7 @@ def build_field_catalog(
             **field,
             "source": "component_schema",
             "schema_name": schema_name,
+            "schema_source": "json",
         } for field in schema_field_entries(expanded, schema_name))
     for source_name, supplemental in (supplemental_specs or []):
         schemas = supplemental.get("components", {}).get("schemas") or {}
