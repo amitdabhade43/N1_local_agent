@@ -135,14 +135,20 @@ def test_inspect_api_paginates_fields_without_losing_remaining_fields():
     first = __import__("json").loads(ninja_agent.t_inspect({
         "operation_id": "createEndUser", "limit": 2, "offset": 0
     }))
-    second = __import__("json").loads(ninja_agent.t_inspect({
-        "operation_id": "createEndUser", "limit": 2,
-        "offset": first["schema_fields_next_offset"]
-    }))
+    collected = list(first["schema_fields"])
+    offset = first["schema_fields_next_offset"]
 
     assert first["schema_fields_complete"] is False
-    assert second["schema_fields_offset"] == first["schema_fields_next_offset"]
-    assert len(first["schema_fields"]) + len(second["schema_fields"]) == first["schema_fields_total"]
+    while offset is not None:
+        page = __import__("json").loads(ninja_agent.t_inspect({
+            "operation_id": "createEndUser", "limit": 2, "offset": offset
+        }))
+        assert page["schema_fields_offset"] == offset
+        collected.extend(page["schema_fields"])
+        offset = page["schema_fields_next_offset"]
+
+    assert len(collected) == first["schema_fields_total"]
+    assert len({(field["source"], field["path"], field.get("location")) for field in collected}) == len(collected)
 
 
 def test_slim_preserves_nested_fields_and_redacts_secrets():
