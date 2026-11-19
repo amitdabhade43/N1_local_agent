@@ -143,6 +143,7 @@ def build_operations(spec: dict) -> dict[str, dict]:
                 "path": path,
                 "summary": summary,
                 "description": raw.get("description") or "",
+                "deprecated": bool(raw.get("deprecated", False)),
                 "tags": raw.get("tags") or [],
                 "params": params,
                 "request_body": {
