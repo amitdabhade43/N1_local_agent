@@ -370,27 +370,33 @@ def op_by_path(path):
 
 
 # ---------------------------------------------------------------- shaping
-def slim(r):
-    if not isinstance(r, dict):
-        return r
-    o = {}
-    list_fields = {
-        "accessibleDeviceIds", "assignedDeviceIds", "deviceIds", "roles", "tags",
-        "members", "organizationPermissions",
-    }
-    for k, v in r.items():
-        if isinstance(v, (str, int, float, bool)) and v != "":
-            o[k] = v[:80] if isinstance(v, str) else v
-        elif isinstance(v, dict) and v.get("name"):
-            o[k + "_name"] = str(v["name"])[:60]
-        elif isinstance(v, list) and k in list_fields:
-            o[k + "_count"] = len(v)
-            if all(not isinstance(item, (dict, list)) for item in v):
-                # Keep every scalar ID. Truncating at 50 silently hid valid user access.
-                o[k] = list(v)
+_SENSITIVE_FIELD_RE = re.compile(
+    r"(?:password|passwd|secret|token|credential|private.?key|authorization|api.?key|access.?key)",
+    re.I,
+)
+
+
+def slim(value, field_name=""):
+    """Preserve every documented response field while redacting credential-like values."""
+    if _SENSITIVE_FIELD_RE.search(str(field_name or "")):
+        return "[redacted]"
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            if _SENSITIVE_FIELD_RE.search(str(key)):
+                result[key] = "[redacted]"
+                continue
+            if isinstance(item, list):
+                result[key + "_count"] = len(item)
+                result[key] = [slim(child, key) for child in item]
             else:
-                o[k] = [slim(item) for item in v[:20]]
-    return o
+                if isinstance(item, dict) and item.get("name") not in (None, ""):
+                    result[key + "_name"] = str(item["name"])
+                result[key] = slim(item, key)
+        return result
+    if isinstance(value, list):
+        return [slim(item, field_name) for item in value]
+    return value
 
 
 def _partial_note(rows):
@@ -401,10 +407,28 @@ def _partial_note(rows):
     return ""
 
 
+def _field_value(record, field_path):
+    """Read a top-level or dotted nested field path without guessing aliases."""
+    value = record
+    for part in str(field_path).split("."):
+        if isinstance(value, list) and part == "[]":
+            continue
+        if isinstance(value, dict):
+            value = value.get(part)
+        elif isinstance(value, list):
+            try:
+                value = value[int(part)]
+            except (ValueError, IndexError):
+                return None
+        else:
+            return None
+    return value
+
+
 def shape(rows, where=None, contains=None, group_by=None, fields=None, count_only=False, limit=MAX_ROWS):
     if where:
         rows = [r for r in rows if isinstance(r, dict) and
-                all(str(r.get(k)).lower() == str(v).lower() for k, v in where.items())]
+                all(str(_field_value(r, k)).lower() == str(v).lower() for k, v in where.items())]
     if contains:
         c = str(contains).lower()
         rows = [r for r in rows if c in json.dumps(r).lower()]
@@ -413,13 +437,15 @@ def shape(rows, where=None, contains=None, group_by=None, fields=None, count_onl
         return out
     if group_by:
         def g(r):
-            v = r.get(group_by) if isinstance(r, dict) else None
+            v = _field_value(r, group_by) if isinstance(r, dict) else None
             return str(v.get("name") if isinstance(v, dict) else v)
         out["groups"] = dict(Counter(g(r) for r in rows).most_common(30))
         return out
     limit = min(int(limit or MAX_ROWS), 100)
-    out["rows"] = [({k: r.get(k) for k in fields} if fields and isinstance(r, dict) else slim(r))
-                   for r in rows[:limit]]
+    out["rows"] = [
+        ({field: _field_value(r, field) for field in fields} if fields and isinstance(r, dict) else slim(r))
+        for r in rows[:limit]
+    ]
     if len(rows) > limit:
         out["truncated"] = f"showing {limit} of {len(rows)}; narrow with where/contains/fields"
     return out
