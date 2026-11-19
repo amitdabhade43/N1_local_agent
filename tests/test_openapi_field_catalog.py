@@ -122,6 +122,7 @@ def test_search_fields_finds_component_and_operation_fields():
     operations = ninja_openapi.build_operations(spec)
     ninja_agent.OPS = operations
     ninja_agent.FIELD_INDEX = ninja_openapi.build_field_catalog(spec, operations)
+    ninja_agent.FIELD_SEARCH_INDEX = ninja_agent._prepare_field_search_index(ninja_agent.FIELD_INDEX)
 
     result = __import__("json").loads(ninja_agent.t_search_fields({"query": "email address"}))
     assert result["total_matches"] > 0
