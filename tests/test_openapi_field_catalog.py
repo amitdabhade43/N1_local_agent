@@ -186,3 +186,101 @@ def test_text_call_parser_accepts_search_fields():
     assert ninja_agent.text_call('search_fields(query="email address", limit=5)') == (
         "search_fields", {"query": "email address", "limit": 5}
     )
+
+
+
+def test_supplemental_yaml_schema_fields_are_indexed_without_replacing_json_operations():
+    primary = sample_spec()
+    supplemental = {
+        "openapi": "3.0.1",
+        "info": {"version": "1"},
+        "components": {"schemas": {
+            "Technician": {
+                "type": "object",
+                "properties": {
+                    "administrator": {"type": "boolean", "description": "System administrator flag"},
+                    "roles": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+            "EndUser": {
+                "type": "object",
+                "properties": {"email": {"type": "string", "format": "email"}},
+            },
+        }},
+        "paths": primary["paths"],
+    }
+    operations = ninja_openapi.build_operations(primary)
+    fields = ninja_openapi.build_field_catalog(
+        primary, operations, supplemental_specs=[("yaml", supplemental)]
+    )
+
+    admin = next(
+        item for item in fields
+        if item.get("schema_name") == "Technician"
+        and item.get("path") == "Technician.administrator"
+    )
+    supplemental_email = next(
+        item for item in fields
+        if item.get("schema_name") == "EndUser"
+        and item.get("path") == "EndUser.email"
+        and item.get("schema_source") == "yaml"
+    )
+
+    assert admin["source"] == "supplemental_component_schema"
+    assert admin["type"] == "boolean"
+    assert admin["schema_source"] == "yaml"
+    assert supplemental_email["format"] == "email"
+    assert set(operations) == {"createEndUser", "getEndUsers"}
+
+
+def test_compare_spec_documents_reports_schema_and_operation_differences():
+    primary = sample_spec()
+    supplemental = {
+        **primary,
+        "components": {"schemas": {
+            **primary["components"]["schemas"],
+            "Technician": {"type": "object", "properties": {"administrator": {"type": "boolean"}}},
+        }},
+        "paths": {
+            **primary["paths"],
+            "/v2/extra": {"get": {"operationId": "getExtra", "summary": "Extra"}},
+        },
+    }
+
+    report = ninja_openapi.compare_spec_documents(primary, supplemental)
+
+    assert report["matching_operation_ids"] == 2
+    assert report["supplemental_only_operation_ids"] == ["getExtra"]
+    assert report["supplemental_only_schemas"] == ["Technician"]
+
+
+def test_inspect_schema_reads_yaml_component_schema_and_paginates():
+    ninja_agent.SCHEMA_INDEX = {
+        ("yaml", "Technician"): {
+            "type": "object",
+            "properties": {
+                "administrator": {"type": "boolean"},
+                "roles": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+    }
+
+    first = __import__("json").loads(ninja_agent.t_inspect_schema({
+        "schema_name": "Technician", "schema_source": "yaml", "limit": 1, "offset": 0
+    }))
+    second = __import__("json").loads(ninja_agent.t_inspect_schema({
+        "schema_name": "Technician", "schema_source": "yaml", "limit": 1,
+        "offset": first["schema_fields_next_offset"],
+    }))
+
+    assert first["schema_source"] == "yaml"
+    assert first["schema_fields"][0]["path"] == "Technician.administrator"
+    assert first["schema_fields_complete"] is False
+    assert second["schema_fields_complete"] is True
+    assert second["schema_fields"][0]["path"] == "Technician.roles[].$"
+
+
+def test_text_call_parser_accepts_inspect_schema():
+    assert ninja_agent.text_call('inspect_schema(schema_name="Technician", schema_source="yaml")') == (
+        "inspect_schema", {"schema_name": "Technician", "schema_source": "yaml"}
+    )
