@@ -352,8 +352,16 @@ def operation_field_entries(operation: dict) -> list[dict[str, Any]]:
     return result
 
 
-def build_field_catalog(spec: dict, operations: dict[str, dict]) -> list[dict[str, Any]]:
-    """Index all component schema fields and all operation-specific parameter/body/response fields."""
+def build_field_catalog(
+    spec: dict,
+    operations: dict[str, dict],
+    supplemental_specs: list[tuple[str, dict]] | None = None,
+) -> list[dict[str, Any]]:
+    """Index primary and supplemental schemas plus primary operation contracts.
+
+    Supplemental specifications enrich schema discovery only. They never add or
+    replace executable operations or request-validation contracts.
+    """
     entries: list[dict[str, Any]] = []
     for schema_name, raw_schema in (spec.get("components", {}).get("schemas") or {}).items():
         expanded = expand_refs(raw_schema, spec)
@@ -362,13 +370,23 @@ def build_field_catalog(spec: dict, operations: dict[str, dict]) -> list[dict[st
             "source": "component_schema",
             "schema_name": schema_name,
         } for field in schema_field_entries(expanded, schema_name))
+    for source_name, supplemental in (supplemental_specs or []):
+        schemas = supplemental.get("components", {}).get("schemas") or {}
+        for schema_name, raw_schema in schemas.items():
+            expanded = expand_refs(raw_schema, supplemental)
+            entries.extend({
+                **field,
+                "source": "supplemental_component_schema",
+                "schema_name": schema_name,
+                "schema_source": source_name,
+            } for field in schema_field_entries(expanded, schema_name))
     for operation in operations.values():
         entries.extend(operation_field_entries(operation))
     # Stable de-duplication keeps the catalog compact while retaining distinct sources.
     unique: dict[tuple, dict[str, Any]] = {}
     for entry in entries:
         key = (
-            entry.get("source"), entry.get("schema_name"), entry.get("operation_id"),
+            entry.get("source"), entry.get("schema_source"), entry.get("schema_name"), entry.get("operation_id"),
             entry.get("location"), entry.get("path"), entry.get("name"),
         )
         unique[key] = entry
@@ -454,3 +472,46 @@ def describe_operation(operation: dict, include_schema: bool = False) -> dict:
             }
         result["responses"] = response_details
     return result
+
+
+def compare_spec_documents(primary: dict, supplemental: dict) -> dict[str, Any]:
+    """Compare operation and schema inventories without merging executable APIs."""
+    def operation_map(document: dict) -> dict[str, tuple[str, str]]:
+        result = {}
+        for path, path_item in (document.get("paths") or {}).items():
+            if not isinstance(path_item, dict):
+                continue
+            for method, operation in path_item.items():
+                if method.lower() in {"get", "post", "put", "patch", "delete"} and isinstance(operation, dict):
+                    operation_id = operation.get("operationId")
+                    if operation_id:
+                        result[str(operation_id)] = (method.upper(), path)
+        return result
+
+    primary_ops = operation_map(primary)
+    supplemental_ops = operation_map(supplemental)
+    primary_schemas = primary.get("components", {}).get("schemas") or {}
+    supplemental_schemas = supplemental.get("components", {}).get("schemas") or {}
+    shared = sorted(set(primary_schemas) & set(supplemental_schemas))
+    conflicts = [
+        name for name in shared
+        if primary_schemas[name] != supplemental_schemas[name]
+    ]
+    return {
+        "primary_version": (primary.get("info") or {}).get("version"),
+        "supplemental_version": (supplemental.get("info") or {}).get("version"),
+        "primary_operations": len(primary_ops),
+        "supplemental_operations": len(supplemental_ops),
+        "matching_operation_ids": len(set(primary_ops) & set(supplemental_ops)),
+        "primary_only_operation_ids": sorted(set(primary_ops) - set(supplemental_ops)),
+        "supplemental_only_operation_ids": sorted(set(supplemental_ops) - set(primary_ops)),
+        "operation_contract_conflicts": sorted(
+            name for name in set(primary_ops) & set(supplemental_ops)
+            if primary_ops[name] != supplemental_ops[name]
+        ),
+        "primary_schema_count": len(primary_schemas),
+        "supplemental_schema_count": len(supplemental_schemas),
+        "supplemental_only_schemas": sorted(set(supplemental_schemas) - set(primary_schemas)),
+        "primary_only_schemas": sorted(set(primary_schemas) - set(supplemental_schemas)),
+        "schema_definition_conflicts": conflicts,
+    }
