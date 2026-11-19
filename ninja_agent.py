@@ -574,6 +574,7 @@ def t_search_fields(a):
     limit = max(1, min(50, int(a.get("limit", 20))))
     schema_filter = str(a.get("schema_name", "")).strip().casefold()
     operation_filter = str(a.get("operation_id", "")).strip().casefold()
+    source_filter = str(a.get("schema_source", "")).strip().casefold()
     qnorm = " ".join(toks(query))
     qtokens = set(toks(query))
     ranked = []
@@ -581,6 +582,8 @@ def t_search_fields(a):
         if schema_filter and schema_filter not in str(field.get("schema_name", "")).casefold():
             continue
         if operation_filter and operation_filter not in str(field.get("operation_id", "")).casefold():
+            continue
+        if source_filter and source_filter != str(field.get("schema_source", "json" if field.get("source") == "component_schema" else "")).casefold():
             continue
         overlap = len(qtokens.intersection(field_tokens))
         score = overlap / max(len(qtokens), 1)
@@ -599,7 +602,7 @@ def t_search_fields(a):
         "query": query,
         "total_matches": len(ranked),
         "matches": [{**field, "match_score": round(score, 3)} for score, field in ranked[:limit]],
-        "schema_sources": {"primary": "ninja_spec.json", "supplemental": "ninjaOne-API-core-resources.yaml" if "yaml" in SCHEMA_SOURCES else None},
+        "schema_sources": SPEC_SOURCE_REPORT,
         "note": "These are documented schema definitions, not live record values. JSON is authoritative for executable API contracts; YAML is supplemental schema discovery. Use inspect_schema for a complete component schema, inspect_api for an operation contract, and call_api for live NinjaOne values.",
     }, default=str)
 
@@ -1103,6 +1106,7 @@ TOOLS = [
             "query": {"type": "string"},
             "schema_name": {"type": "string"},
             "operation_id": {"type": "string"},
+            "schema_source": {"type": "string", "enum": ["json", "yaml"]},
             "limit": {"type": "integer", "minimum": 1, "maximum": 50}
         }, "required": ["query"]}}},
     {"type": "function", "function": {
