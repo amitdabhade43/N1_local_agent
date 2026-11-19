@@ -598,11 +598,27 @@ def t_search_fields(a):
         if score > 0.25:
             ranked.append((score, field))
     ranked.sort(key=lambda item: (-item[0], item[1].get("name", ""), item[1].get("path", "")))
+    comparison = SPEC_SOURCE_REPORT.get("comparison") or {}
+    comparison_summary = {
+        "primary_version": comparison.get("primary_version"),
+        "supplemental_version": comparison.get("supplemental_version"),
+        "primary_operations": comparison.get("primary_operations", 0),
+        "supplemental_operations": comparison.get("supplemental_operations", 0),
+        "matching_operation_ids": comparison.get("matching_operation_ids", 0),
+        "operation_contract_conflicts": comparison.get("operation_contract_conflicts", [])[:25],
+        "supplemental_only_schemas": comparison.get("supplemental_only_schemas", [])[:25],
+        "primary_only_schemas": comparison.get("primary_only_schemas", [])[:25],
+        "schema_definition_conflicts": comparison.get("schema_definition_conflicts", [])[:25],
+    } if comparison else None
     return json.dumps({
         "query": query,
         "total_matches": len(ranked),
         "matches": [{**field, "match_score": round(score, 3)} for score, field in ranked[:limit]],
-        "schema_sources": SPEC_SOURCE_REPORT,
+        "schema_sources": {
+            "primary": SPEC_SOURCE_REPORT.get("primary"),
+            "supplemental": SPEC_SOURCE_REPORT.get("supplemental"),
+            "comparison": comparison_summary,
+        },
         "note": "These are documented schema definitions, not live record values. JSON is authoritative for executable API contracts; YAML is supplemental schema discovery. Use inspect_schema for a complete component schema, inspect_api for an operation contract, and call_api for live NinjaOne values.",
     }, default=str)
 
