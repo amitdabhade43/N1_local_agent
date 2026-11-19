@@ -157,10 +157,11 @@ def build_operations(spec: dict) -> dict[str, dict]:
     return operations
 
 
-def _schema_terms(schema: Any, limit: int = 250) -> list[str]:
+def _schema_terms(schema: Any, limit: int = 10000) -> list[str]:
+    """Collect field names, descriptions, formats and enum values deeply enough to index the full spec."""
     terms: list[str] = []
     def walk(node: Any, depth: int = 0):
-        if len(terms) >= limit or depth > 8:
+        if len(terms) >= limit or depth > 32:
             return
         if isinstance(node, dict):
             for key in ("title", "description", "format"):
@@ -213,6 +214,157 @@ def operation_document(operation: dict) -> str:
         " ".join(_schema_terms(body_schema)),
         " ".join(response_terms),
     ))
+
+
+def schema_field_entries(
+    schema: Any,
+    prefix: str = "$",
+    *,
+    source: str = "",
+    required_names: set[str] | None = None,
+    depth: int = 0,
+) -> list[dict[str, Any]]:
+    """Flatten every documented schema property without dropping nested fields."""
+    if depth > 32 or not isinstance(schema, dict):
+        return []
+    required_names = required_names or set()
+    entries: list[dict[str, Any]] = []
+
+    def metadata(node: dict, path: str, name: str, required: bool) -> dict[str, Any]:
+        item = {
+            "name": name,
+            "path": path,
+            "required": bool(required),
+            "type": node.get("type"),
+            "format": node.get("format"),
+            "description": node.get("description", ""),
+            "enum": node.get("enum"),
+            "nullable": node.get("nullable"),
+            "readOnly": node.get("readOnly"),
+            "writeOnly": node.get("writeOnly"),
+            "deprecated": node.get("deprecated"),
+            "default": node.get("default"),
+            "example": node.get("example"),
+            "minimum": node.get("minimum"),
+            "maximum": node.get("maximum"),
+            "minLength": node.get("minLength"),
+            "maxLength": node.get("maxLength"),
+            "minItems": node.get("minItems"),
+            "maxItems": node.get("maxItems"),
+        }
+        return {key: value for key, value in item.items() if value not in (None, "", [], {})}
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        parent_required = set(schema.get("required") or [])
+        for name, child in properties.items():
+            if not isinstance(child, dict):
+                continue
+            path = f"{prefix}.{name}"
+            entries.append(metadata(child, path, str(name), name in parent_required))
+            entries.extend(schema_field_entries(
+                child, path, source=source,
+                required_names=set(child.get("required") or []), depth=depth + 1,
+            ))
+
+    items = schema.get("items")
+    if isinstance(items, dict):
+        entries.extend(schema_field_entries(
+            items, prefix + "[]", source=source,
+            required_names=set(items.get("required") or []), depth=depth + 1,
+        ))
+
+    for composition in ("allOf", "oneOf", "anyOf"):
+        children = schema.get(composition)
+        if isinstance(children, list):
+            for index, child in enumerate(children):
+                entries.extend(schema_field_entries(
+                    child, f"{prefix}.{composition}[{index}]", source=source,
+                    required_names=set((child or {}).get("required") or []) if isinstance(child, dict) else set(),
+                    depth=depth + 1,
+                ))
+
+    additional = schema.get("additionalProperties")
+    if isinstance(additional, dict):
+        entries.extend(schema_field_entries(
+            additional, prefix + ".*", source=source,
+            required_names=set(additional.get("required") or []), depth=depth + 1,
+        ))
+    return entries
+
+
+def operation_field_entries(operation: dict) -> list[dict[str, Any]]:
+    """Return request, parameter and response fields for one expanded operation."""
+    result: list[dict[str, Any]] = []
+    operation_id = operation.get("id", "")
+    for parameter in operation.get("params", []):
+        name = str(parameter.get("name", ""))
+        schema = parameter.get("schema") or {}
+        entry = {
+            "name": name,
+            "path": f'{parameter.get("in", "parameter")}.{name}',
+            "source": "parameter",
+            "location": parameter.get("in"),
+            "required": bool(parameter.get("required")),
+            "type": schema.get("type"),
+            "format": schema.get("format"),
+            "description": parameter.get("description", ""),
+            "enum": schema.get("enum"),
+        }
+        result.append({key: value for key, value in entry.items() if value not in (None, "", [], {})})
+        result.extend({
+            **field,
+            "source": "parameter",
+            "location": parameter.get("in"),
+        } for field in schema_field_entries(schema, f'{parameter.get("in", "parameter")}.{name}'))
+    body = operation.get("request_body") or {}
+    if body.get("schema"):
+        result.extend({
+            **field,
+            "source": "request",
+            "location": "body",
+        } for field in schema_field_entries(body["schema"], "body"))
+    for status, response in (operation.get("responses") or {}).items():
+        if not isinstance(response, dict):
+            continue
+        content = response.get("content") or {}
+        for media_type, media in content.items():
+            if not isinstance(media, dict) or not isinstance(media.get("schema"), dict):
+                continue
+            result.extend({
+                **field,
+                "source": "response",
+                "location": str(status),
+                "media_type": media_type,
+            } for field in schema_field_entries(media["schema"], f"response[{status}]"))
+    for item in result:
+        item.setdefault("operation_id", operation_id)
+        item.setdefault("method", operation.get("method"))
+        item.setdefault("operation_path", operation.get("path"))
+    return result
+
+
+def build_field_catalog(spec: dict, operations: dict[str, dict]) -> list[dict[str, Any]]:
+    """Index all component schema fields and all operation-specific parameter/body/response fields."""
+    entries: list[dict[str, Any]] = []
+    for schema_name, raw_schema in (spec.get("components", {}).get("schemas") or {}).items():
+        expanded = expand_refs(raw_schema, spec)
+        entries.extend({
+            **field,
+            "source": "component_schema",
+            "schema_name": schema_name,
+        } for field in schema_field_entries(expanded, schema_name))
+    for operation in operations.values():
+        entries.extend(operation_field_entries(operation))
+    # Stable de-duplication keeps the catalog compact while retaining distinct sources.
+    unique: dict[tuple, dict[str, Any]] = {}
+    for entry in entries:
+        key = (
+            entry.get("source"), entry.get("schema_name"), entry.get("operation_id"),
+            entry.get("location"), entry.get("path"), entry.get("name"),
+        )
+        unique[key] = entry
+    return list(unique.values())
 
 
 def normalize_nullable(schema: Any) -> Any:
