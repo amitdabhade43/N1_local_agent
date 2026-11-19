@@ -605,7 +605,7 @@ def t_search_fields(a):
         "primary_operations": comparison.get("primary_operations", 0),
         "supplemental_operations": comparison.get("supplemental_operations", 0),
         "matching_operation_ids": comparison.get("matching_operation_ids", 0),
-        "operation_contract_conflicts": comparison.get("operation_contract_conflicts", [])[:25],
+        "operation_route_conflicts": comparison.get("operation_route_conflicts", [])[:25],
         "supplemental_only_schemas": comparison.get("supplemental_only_schemas", [])[:25],
         "primary_only_schemas": comparison.get("primary_only_schemas", [])[:25],
         "schema_definition_conflicts": comparison.get("schema_definition_conflicts", [])[:25],
