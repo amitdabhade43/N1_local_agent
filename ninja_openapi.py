@@ -509,7 +509,7 @@ def compare_spec_documents(primary: dict, supplemental: dict) -> dict[str, Any]:
         "matching_operation_ids": len(set(primary_ops) & set(supplemental_ops)),
         "primary_only_operation_ids": sorted(set(primary_ops) - set(supplemental_ops)),
         "supplemental_only_operation_ids": sorted(set(supplemental_ops) - set(primary_ops)),
-        "operation_contract_conflicts": sorted(
+        "operation_route_conflicts": sorted(
             name for name in set(primary_ops) & set(supplemental_ops)
             if primary_ops[name] != supplemental_ops[name]
         ),
