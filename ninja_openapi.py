@@ -382,7 +382,10 @@ def build_field_catalog(
                 "schema_source": source_name,
             } for field in schema_field_entries(expanded, schema_name))
     for operation in operations.values():
-        entries.extend(operation_field_entries(operation))
+        entries.extend({
+            **field,
+            "schema_source": "json",
+        } for field in operation_field_entries(operation))
     # Stable de-duplication keeps the catalog compact while retaining distinct sources.
     unique: dict[tuple, dict[str, Any]] = {}
     for entry in entries:
