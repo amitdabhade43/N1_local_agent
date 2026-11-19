@@ -6,7 +6,7 @@ POST/PUT/PATCH requests are schema-validated and prepared for explicit UI approv
 DELETE and explicit delete actions are blocked.
 The local model selects operations; the OpenAPI catalog validates their contracts.
 """
-import ast, difflib, json, math, os, re, sys, time, threading, secrets
+import ast, difflib, json, math, os, re, sys, time, threading, secrets, tempfile
 from collections import Counter
 from urllib.parse import quote
 
@@ -42,23 +42,75 @@ def deref(spec, x):
     return x
 
 
+def _spec_counts(spec):
+    paths = spec.get("paths") or {}
+    methods = {"get", "post", "put", "patch", "delete"}
+    operation_count = sum(
+        1 for item in paths.values() if isinstance(item, dict)
+        for method, value in item.items()
+        if method.lower() in methods and isinstance(value, dict)
+    )
+    schemas = spec.get("components", {}).get("schemas") or {}
+    return {
+        "operations": operation_count,
+        "paths": len(paths),
+        "schemas": len(schemas),
+    }
+
+
+def _validate_spec_document(spec, previous=None):
+    if not isinstance(spec, dict) or not str(spec.get("openapi", "")).startswith("3."):
+        raise ValueError("Downloaded NinjaOne specification is not a valid OpenAPI 3.x document.")
+    counts = _spec_counts(spec)
+    if counts["operations"] < 100 or counts["schemas"] < 100:
+        raise ValueError(
+            "Downloaded NinjaOne specification looks incomplete: "
+            f'{counts["operations"]} operations, {counts["schemas"]} schemas.'
+        )
+    if previous:
+        old = _spec_counts(previous)
+        if counts["operations"] < old["operations"] or counts["schemas"] < old["schemas"]:
+            raise ValueError(
+                "Refusing to replace the bundled NinjaOne specification with a smaller catalog. "
+                f'Current={old}; downloaded={counts}. Review the upstream change manually.'
+            )
+    return counts
+
+
 def load_ops():
     """Load the bundled OpenAPI document and build the complete safe operation catalog."""
-    global SPEC_DATA
+    global SPEC_DATA, FIELD_INDEX
     cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ninja_spec.json")
     refresh_spec = os.getenv("NINJA_SPEC_REFRESH", "0").strip().lower() in {"1", "true", "yes"}
-    if os.path.exists(cache) and not refresh_spec:
+    previous = None
+    if os.path.exists(cache):
         with open(cache, "r", encoding="utf-8") as handle:
-            spec = json.load(handle)
+            previous = json.load(handle)
+    if previous is not None and not refresh_spec:
+        spec = previous
+        _validate_spec_document(spec)
     else:
         response = requests.get(SPEC_URL, timeout=60)
         response.raise_for_status()
         spec = response.json()
-        with open(cache, "w", encoding="utf-8") as handle:
-            json.dump(spec, handle)
+        _validate_spec_document(spec, previous)
+        fd, temporary_path = tempfile.mkstemp(
+            prefix="ninja_spec.", suffix=".tmp", dir=os.path.dirname(cache)
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(spec, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_path, cache)
+        except Exception:
+            try:
+                os.unlink(temporary_path)
+            except OSError:
+                pass
+            raise
     SPEC_DATA = spec
     operations = build_operations(spec)
-    global FIELD_INDEX
     FIELD_INDEX = build_field_catalog(spec, operations)
     return operations
 
