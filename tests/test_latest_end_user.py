@@ -14,7 +14,7 @@ def test_latest_end_user_uses_highest_id_from_complete_inventory(monkeypatch):
     assert "Alexander Dinkel" in answer
     assert "ID 185" in answer
     assert "alex@example.com" in answer
-    assert "3 records" in answer
+    assert "all 3 returned records" in answer
     assert "does not expose a creation timestamp" in answer
 
 
