@@ -54,3 +54,19 @@ def test_create_end_user_without_email_asks_for_required_details(monkeypatch):
     assert "nothing will be created until you approve" in answer.lower()
     assert activity[0]["stage"] == "missing_required_fields"
     assert ninja_native._sessions["create-end-user-test"][-1]["content"] == answer
+
+
+
+def test_read_only_list_requests_are_not_misclassified_as_mutations():
+    assert not ninja_native._is_mutation_request(
+        "how many organizations we have and give me list"
+    )
+    assert not ninja_native._is_mutation_request("give me the list of organizations")
+    assert not ninja_native._is_mutation_request("show me users who have device access")
+
+
+def test_explicit_access_grants_remain_mutations():
+    assert ninja_native._is_mutation_request("give Rene access to VM-123")
+    assert ninja_native._is_mutation_request("grant device access to Rene")
+    assert ninja_native._is_mutation_request("add VM-123 to Rene access")
+    assert ninja_native._is_mutation_request("remove device access from Rene")
