@@ -1793,8 +1793,8 @@ def _find_end_user_creator(end_user):
             next_cursor = int(last)
         except (TypeError, ValueError):
             return "Creator could not be verified: the activity page did not provide a usable activity-ID cursor."
-        if next_cursor <= 0 or next_cursor == cursor:
-            return "Creator could not be verified: activity pagination did not advance safely."
+        if next_cursor <= 0 or next_cursor == cursor or (cursor is not None and next_cursor >= cursor):
+            return "Creator could not be verified: activity pagination did not move safely to an older activity ID."
         cursor = next_cursor
     else:
         return (
