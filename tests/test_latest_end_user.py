@@ -100,3 +100,33 @@ def test_latest_end_user_creator_followup_reuses_previous_latest_user_context(mo
     ]
     assert ninja_agent.fast_path("who created?", history) == "creator lookup result"
     assert calls and calls[0][1] is True
+
+
+def test_creator_search_pages_back_with_older_than_cursor(monkeypatch):
+    target = {"id": 185, "firstName": "Alexander", "lastName": "Dinkel", "email": "alex@example.com"}
+    operations = {
+        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "olderThan"}, {"name": "class"}]},
+        "/v2/users": {"params": []},
+    }
+    calls = []
+    def fake_http_get(path, query):
+        calls.append(dict(query))
+        if "olderThan" not in query:
+            return {"activities": [{"id": 6000 - index} for index in range(1000)]}
+        return {"activities": [{
+            "id": 4000,
+            "activityType": "SYSTEM",
+            "subject": "End user created",
+            "message": "Created end user Alexander Dinkel (alex@example.com)",
+            "userId": 8,
+        }]}
+    monkeypatch.setattr(ninja_agent, "op_by_path", lambda path: operations.get(path))
+    monkeypatch.setattr(ninja_agent, "http_get", fake_http_get)
+    monkeypatch.setattr(ninja_agent, "fetch", lambda op, path, query: ninja_agent.FetchRows([
+        {"id": 8, "firstName": "Morgan", "lastName": "Administrator"}
+    ]))
+    answer = ninja_agent._find_end_user_creator(target)
+    assert "Creator verified: Morgan Administrator" in answer
+    assert len(calls) == 2
+    assert calls[0]["pageSize"] == 1000
+    assert calls[1]["olderThan"] == 5001
