@@ -1647,7 +1647,8 @@ def recipe_latest_end_user(q):
     The published end-user list does not define a creation timestamp. A highest ID
     is therefore reported as an ID-based indicator, never as a verified createdAt.
     """
-    text = re.sub(r"\s+", " ", str(q or "").strip().rstrip("?.! "))
+    text = re.sub(r"\buend\s+users?\b", "end user", str(q or ""), flags=re.I)
+    text = re.sub(r"\s+", " ", text.strip().rstrip("?.! "))
     if not re.search(r"\bend[\s-]?users?\b", text, re.I):
         return None
     latest_intent = re.search(
