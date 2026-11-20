@@ -1674,21 +1674,27 @@ def recipe_latest_end_user(q):
     candidates = []
     for row in rows:
         if not isinstance(row, dict):
-            continue
+            return (
+                "NinjaOne pagination completed, but the response contained a non-record item. "
+                "I cannot safely determine the highest-ID end user."
+            )
         raw_id = row.get("id")
         if isinstance(raw_id, bool):
-            continue
+            return (
+                "NinjaOne pagination completed, but at least one end-user record had no usable "
+                "numeric ID. I cannot safely determine the highest-ID end user."
+            )
         try:
             numeric_id = int(raw_id)
         except (TypeError, ValueError):
-            continue
+            return (
+                "NinjaOne pagination completed, but at least one end-user record had no usable "
+                "numeric ID. I cannot safely determine the highest-ID end user."
+            )
         candidates.append((numeric_id, row))
 
     if not candidates:
-        return (
-            "NinjaOne returned a complete end-user inventory, but none of the records "
-            "contained a usable numeric ID. I cannot determine the highest-ID record."
-        )
+        return "NinjaOne returned a complete end-user inventory with no records."
 
     highest_id = max(item[0] for item in candidates)
     highest_rows = [row for numeric_id, row in candidates if numeric_id == highest_id]
@@ -1707,7 +1713,7 @@ def recipe_latest_end_user(q):
     return (
         "The end user with the highest ID in the complete NinjaOne end-user inventory is "
         + " — ".join(details)
-        + f". I checked {len(candidates)} records using GET {path} and completed pagination. "
+        + f". I checked all {len(rows)} returned records using GET {path} and completed pagination. "
         "The published end-user list does not expose a creation timestamp, so the highest ID "
         "is an ID-based indicator—not independent proof of the most recent creation time."
     )
