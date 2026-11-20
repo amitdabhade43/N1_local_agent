@@ -1824,8 +1824,8 @@ def _find_end_user_creator(end_user):
             identity += f" ({actor_email})"
         id_suffix = f" (NinjaOne user ID {actor_id})" if actor_id not in (None, "", 0, "0") else ""
         return (
-            f"**Creator identified in the activity: {identity}**{id_suffix}. "
-            "The name/email is taken from the appUserName/appUserEmail fields on the matching creation event."
+            f"**Activity actor: {identity}**{id_suffix}. "
+            "The name/email is taken from the appUserName/appUserEmail fields on the matching end-user creation event."
         )
     if actor_id in (None, "", 0, "0"):
         return (
@@ -1856,8 +1856,8 @@ def _find_end_user_creator(end_user):
         actor_email = actor.get("email") or actor.get("emailAddress")
         suffix = f" ({actor_email})" if actor_email else ""
         return (
-            f"**Creator verified: {actor_name}{suffix}** (NinjaOne user ID {actor_id}). "
-            "This identity comes from the actor userId on the matching end-user creation activity."
+            f"The matching end-user creation activity is associated with **{actor_name}{suffix}** "
+            f"(activity userId {actor_id}). This is audit-event attribution; the end-user record itself has no createdBy field."
         )
     if len(matches) > 1:
         candidates = "; ".join(
