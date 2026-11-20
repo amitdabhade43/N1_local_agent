@@ -130,3 +130,29 @@ def test_creator_search_pages_back_with_older_than_cursor(monkeypatch):
     assert len(calls) == 2
     assert calls[0]["pageSize"] == 1000
     assert calls[1]["olderThan"] == 5001
+
+
+def test_creator_uses_app_user_identity_from_matching_audit_event(monkeypatch):
+    target = {"id": 185, "firstName": "Alexander", "lastName": "Dinkel", "email": "alex@example.com"}
+    operations = {
+        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "olderThan"}, {"name": "class"}]},
+    }
+    monkeypatch.setattr(ninja_agent, "op_by_path", lambda path: operations.get(path))
+    monkeypatch.setattr(ninja_agent, "http_get", lambda path, query: {
+        "activities": [{
+            "id": 9001,
+            "activityType": "SYSTEM",
+            "subject": "End user created",
+            "message": "Created end user Alexander Dinkel (alex@example.com)",
+            "userId": 8,
+            "data": {"message": {"code": "audit_end_user_created", "params": {
+                "appUserId": "8",
+                "appUserName": "Morgan Administrator",
+                "appUserEmail": "morgan@example.com",
+            }}},
+        }]
+    })
+    answer = ninja_agent._find_end_user_creator(target)
+    assert "Creator identified in the activity: Morgan Administrator" in answer
+    assert "morgan@example.com" in answer
+    assert "user ID 8" in answer
