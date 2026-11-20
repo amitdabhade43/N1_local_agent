@@ -2643,7 +2643,10 @@ def fast_path(q, history=None):
         )
         latest_end_user_context = bool(
             re.search(r"\bend[\s-]?users?\b", context, re.I)
-            and re.search(r"\b(?:last|latest|newest|most recent)\b.{0,60}\b(?:created|added|registered|end user)\b|\b(?:created|added|registered)\b.{0,60}\b(?:last|latest|newest|most recent)\b", context, re.I)
+            and (
+                re.search(r"\b(?:last|latest|newest|most recent)\b.{0,60}\b(?:created|added|registered|end user)\b|\b(?:created|added|registered)\b.{0,60}\b(?:last|latest|newest|most recent)\b", context, re.I)
+                or re.search(r"\bhighest[- ]id\b", context, re.I)
+            )
         )
         if creator_question and latest_end_user_context and not re.search(r"\bend[\s-]?users?\b", q, re.I):
             out = recipe_latest_end_user("who created the last end user?", include_creator=True)
