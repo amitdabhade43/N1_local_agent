@@ -1811,11 +1811,26 @@ def _find_end_user_creator(end_user):
             )
         return "Creator could not be verified because the activity search did not complete."
 
-    actor_id = matched_activity.get("userId")
+    activity_data = matched_activity.get("data") or {}
+    message_data = activity_data.get("message") if isinstance(activity_data, dict) else {}
+    actor_params = message_data.get("params") if isinstance(message_data, dict) else {}
+    actor_params = actor_params if isinstance(actor_params, dict) else {}
+    actor_id = actor_params.get("appUserId") or matched_activity.get("userId")
+    actor_name = actor_params.get("appUserName")
+    actor_email = actor_params.get("appUserEmail")
+    if actor_name or actor_email:
+        identity = str(actor_name or actor_email)
+        if actor_email and actor_name:
+            identity += f" ({actor_email})"
+        id_suffix = f" (NinjaOne user ID {actor_id})" if actor_id not in (None, "", 0, "0") else ""
+        return (
+            f"**Creator identified in the activity: {identity}**{id_suffix}. "
+            "The name/email is taken from the appUserName/appUserEmail fields on the matching creation event."
+        )
     if actor_id in (None, "", 0, "0"):
         return (
             "I found a matching end-user creation activity, but NinjaOne did not return an actor userId "
-            "for that event. The creator's identity cannot be verified from this response."
+            "or appUserName/appUserEmail for that event. The creator's identity cannot be verified from this response."
         )
 
     users_path = "/v2/users"
