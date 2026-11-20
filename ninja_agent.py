@@ -1641,7 +1641,7 @@ def recipe_search_people(q):
         total += " Results may be incomplete: " + "; ".join(dict.fromkeys(partial_notes))
     return total + "\n" + "\n".join(lines)
 
-def recipe_latest_end_user(q):
+def recipe_latest_end_user(q, include_creator=False):
     """Identify the highest-ID end-user record only after a complete inventory fetch.
 
     The published end-user list does not define a creation timestamp. A highest ID
@@ -1716,6 +1716,146 @@ def recipe_latest_end_user(q):
         + f". I checked all {len(rows)} returned records using GET {path} and completed pagination. "
         "The published end-user list does not expose a creation timestamp, so the highest ID "
         "is an ID-based indicator—not independent proof of the most recent creation time."
+        + ("\n" + _find_end_user_creator(row) if include_creator else "")
+    )
+
+
+
+def _activity_matches_end_user_creation(activity, end_user):
+    """Match an activity only when it describes creation of this specific end-user."""
+    if not isinstance(activity, dict):
+        return False
+    detail_parts = [
+        activity.get("subject"), activity.get("message"), activity.get("sourceName"),
+        activity.get("type"), activity.get("activityType"),
+        json.dumps(activity.get("data") or {}, ensure_ascii=False, default=str),
+    ]
+    detail = " ".join(str(value) for value in detail_parts if value not in (None, ""))
+    normalized = detail.casefold()
+    if not re.search(r"\b(?:creat(?:e|ed|ion)|add(?:ed)?|register(?:ed|ation)?)\b", normalized):
+        return False
+
+    email = str(end_user.get("email") or end_user.get("emailAddress") or "").strip()
+    full_name = row_name(end_user).strip()
+    target_match = bool(email and email.casefold() in normalized)
+    if not target_match and full_name and full_name.casefold() not in {"", "none"}:
+        target_match = full_name.casefold() in normalized
+    if not target_match:
+        return False
+
+    # The event must identify a user/end-user operation, not merely mention the
+    # target in an unrelated device, ticket, or automation activity.
+    return bool(re.search(r"\b(?:end[\s_-]?user|user|portal account|portal user)\b", normalized))
+
+
+def _find_end_user_creator(end_user):
+    """Find a matching creation event and resolve its actor without guessing."""
+    path = "/v2/activities"
+    operation = op_by_path(path)
+    if not operation:
+        return "Creator lookup unavailable: GET /v2/activities is not present in the loaded NinjaOne API specification."
+
+    documented = {parameter.get("name") for parameter in operation.get("params", [])}
+    required_paging = {"pageSize", "olderThan"}
+    if not required_paging.issubset(documented):
+        return (
+            "Creator lookup unavailable: the loaded API specification does not document the "
+            "activity pagination parameters needed for a complete audit search."
+        )
+
+    query = {"pageSize": 1000}
+    if "class" in documented:
+        query["class"] = "ALL"
+    cursor = None
+    matched_activity = None
+    complete = False
+    for _ in range(200):
+        if cursor is not None:
+            query["olderThan"] = cursor
+        result = http_get(path, dict(query))
+        if not isinstance(result, dict) or not isinstance(result.get("activities"), list):
+            return "Creator could not be verified: NinjaOne returned an unexpected activity-log response."
+        activities = result["activities"]
+        for activity in activities:
+            if _activity_matches_end_user_creation(activity, end_user):
+                matched_activity = activity
+                break
+        if matched_activity:
+            break
+        if not activities:
+            complete = True
+            break
+        if len(activities) < query["pageSize"]:
+            complete = True
+            break
+        last = activities[-1].get("id") if isinstance(activities[-1], dict) else None
+        try:
+            next_cursor = int(last)
+        except (TypeError, ValueError):
+            return "Creator could not be verified: the activity page did not provide a usable activity-ID cursor."
+        if next_cursor <= 0 or next_cursor == cursor:
+            return "Creator could not be verified: activity pagination did not advance safely."
+        cursor = next_cursor
+    else:
+        return (
+            "Creator could not be verified: the activity search reached its 200-page safety limit "
+            "without finding a matching creation event. The audit search may be incomplete."
+        )
+
+    if not matched_activity:
+        if complete:
+            return (
+                "I searched the complete activity history returned by GET /v2/activities, "
+                "but found no creation event that could be tied confidently to this end user. "
+                "NinjaOne does not expose a creator field on the end-user record, so the creator remains unverified."
+            )
+        return "Creator could not be verified because the activity search did not complete."
+
+    actor_id = matched_activity.get("userId")
+    if actor_id in (None, "", 0, "0"):
+        return (
+            "I found a matching end-user creation activity, but NinjaOne did not return an actor userId "
+            "for that event. The creator's identity cannot be verified from this response."
+        )
+
+    users_path = "/v2/users"
+    users_operation = op_by_path(users_path)
+    if not users_operation:
+        return (
+            f"I found a matching creation activity with actor user ID {actor_id}, "
+            "but the documented user-list operation is unavailable to resolve that ID to a name."
+        )
+    users = fetch(users_operation, users_path, {"includeRoles": True})
+    if getattr(users, "complete", True) is False:
+        return (
+            f"I found a matching creation activity with actor user ID {actor_id}, "
+            "but the user lookup was incomplete, so I cannot verify the actor's name."
+        )
+    matches = [
+        user for user in users
+        if isinstance(user, dict) and str(user.get("id")) == str(actor_id)
+    ]
+    if len(matches) == 1:
+        actor = matches[0]
+        actor_name = row_name(actor)
+        actor_email = actor.get("email") or actor.get("emailAddress")
+        suffix = f" ({actor_email})" if actor_email else ""
+        return (
+            f"**Creator verified: {actor_name}{suffix}** (NinjaOne user ID {actor_id}). "
+            "This identity comes from the actor userId on the matching end-user creation activity."
+        )
+    if len(matches) > 1:
+        candidates = "; ".join(
+            row_name(user) + (f" <{user.get('email')}>" if user.get("email") else "")
+            for user in matches
+        )
+        return (
+            f"The matching creation activity identifies actor user ID {actor_id}, but that ID maps "
+            f"to multiple user records: {candidates}. I cannot safely choose one."
+        )
+    return (
+        f"The matching creation activity identifies actor user ID {actor_id}, but that ID was not "
+        "found in the complete NinjaOne user list. The creator's name cannot be verified."
     )
 
 
@@ -2475,7 +2615,7 @@ def recipe_count_device_prefix(q):
     return f'{matched} devices have names starting with "{prefix}".'
 
 
-def fast_path(q):
+def fast_path(q, history=None):
     if GREET.match(q):
         return HELP
     q1 = re.sub(r"end[\s-]?users?", "enduser", q.lower())
@@ -2496,7 +2636,23 @@ def fast_path(q):
             heading = f"{len(rows)} {label} in the returned result"
             return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_latest_end_user, recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
+        creator_question = bool(re.search(r"\b(?:who|which person|what user)\b.{0,30}\b(?:created|added|registered|creator)\b|\bcreator\b", q, re.I))
+        context = " ".join(
+            str(item.get("content", "")) for item in (history or [])[-6:]
+            if isinstance(item, dict)
+        )
+        latest_end_user_context = bool(
+            re.search(r"\bend[\s-]?users?\b", context, re.I)
+            and re.search(r"\b(?:last|latest|newest|most recent)\b.{0,60}\b(?:created|added|registered|end user)\b|\b(?:created|added|registered)\b.{0,60}\b(?:last|latest|newest|most recent)\b", context, re.I)
+        )
+        if creator_question and latest_end_user_context and not re.search(r"\bend[\s-]?users?\b", q, re.I):
+            out = recipe_latest_end_user("who created the last end user?", include_creator=True)
+            if out:
+                return out
+        out = recipe_latest_end_user(q, include_creator=creator_question)
+        if out:
+            return out
+        for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
@@ -2514,7 +2670,7 @@ def clean(t):
 
 
 def ask(q, history):
-    fp = fast_path(q)
+    fp = fast_path(q, history)
     if fp:
         return fp
     msgs = [{"role": "system", "content": SYSTEM + candidates(q) + ("\n/no_think" if NO_THINK else "")}] + history[-6:]
