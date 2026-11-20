@@ -43,10 +43,15 @@ def _is_mutation_request(content):
     text = re.sub(r"\s+", " ", str(content or "").strip().lower())
     if not text:
         return False
+    # "give" is commonly conversational ("give me the list"), not a write
+    # intent. Only treat it as a mutation when it explicitly grants access,
+    # permissions, or a role. Keep the other action verbs as explicit intents.
+    if re.search(r"\\bgive\\b.{0,60}\\b(?:access|permission|permissions|role)\\b", text):
+        return True
     return bool(re.search(
-        r"\b(?:add|assign|grant|give|remove|revoke|update|change|modify|edit|"
+        r"\\b(?:add|assign|grant|remove|revoke|update|change|modify|edit|"
         r"enable|disable|create|delete|reset|rename|move|invite|suspend|unsuspend|"
-        r"activate|deactivate|unlink|link)\b",
+        r"activate|deactivate|unlink|link)\\b",
         text,
     ))
 
