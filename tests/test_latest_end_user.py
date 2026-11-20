@@ -84,7 +84,7 @@ def test_latest_end_user_creator_is_resolved_from_activity_actor(monkeypatch):
         {"id": 8, "firstName": "Morgan", "lastName": "Administrator", "email": "morgan@example.com"}
     ]))
     answer = ninja_agent._find_end_user_creator(target)
-    assert "Creator verified: Morgan Administrator" in answer
+    assert "associated with **Morgan Administrator" in answer
     assert "morgan@example.com" in answer
     assert "user ID 8" in answer
 
@@ -126,7 +126,7 @@ def test_creator_search_pages_back_with_older_than_cursor(monkeypatch):
         {"id": 8, "firstName": "Morgan", "lastName": "Administrator"}
     ]))
     answer = ninja_agent._find_end_user_creator(target)
-    assert "Creator verified: Morgan Administrator" in answer
+    assert "associated with **Morgan Administrator" in answer
     assert len(calls) == 2
     assert calls[0]["pageSize"] == 1000
     assert calls[1]["olderThan"] == 5001
@@ -153,6 +153,6 @@ def test_creator_uses_app_user_identity_from_matching_audit_event(monkeypatch):
         }]
     })
     answer = ninja_agent._find_end_user_creator(target)
-    assert "Creator identified in the activity: Morgan Administrator" in answer
+    assert "Activity actor: Morgan Administrator" in answer
     assert "morgan@example.com" in answer
     assert "user ID 8" in answer
