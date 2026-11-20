@@ -86,7 +86,7 @@ def test_latest_end_user_creator_is_resolved_from_activity_actor(monkeypatch):
     answer = ninja_agent._find_end_user_creator(target)
     assert "associated with **Morgan Administrator" in answer
     assert "morgan@example.com" in answer
-    assert "user ID 8" in answer
+    assert "activity userId 8" in answer
 
 
 def test_latest_end_user_creator_followup_reuses_previous_latest_user_context(monkeypatch):
