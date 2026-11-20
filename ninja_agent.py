@@ -1641,6 +1641,77 @@ def recipe_search_people(q):
         total += " Results may be incomplete: " + "; ".join(dict.fromkeys(partial_notes))
     return total + "\n" + "\n".join(lines)
 
+def recipe_latest_end_user(q):
+    """Identify the highest-ID end-user record only after a complete inventory fetch.
+
+    The published end-user list does not define a creation timestamp. A highest ID
+    is therefore reported as an ID-based indicator, never as a verified createdAt.
+    """
+    text = re.sub(r"\\s+", " ", str(q or "").strip().rstrip("?.! "))
+    if not re.search(r"\\bend[\\s-]?users?\\b", text, re.I):
+        return None
+    latest_intent = re.search(
+        r"\\b(?:last|latest|newest|most\\s+recent)\\b.{0,60}\\b(?:created|added|registered|end\\s+user)\\b"
+        r"|\\b(?:created|added|registered)\\b.{0,60}\\b(?:last|latest|newest|most\\s+recent)\\b",
+        text, re.I,
+    )
+    if not latest_intent:
+        return None
+
+    path = "/v2/user/end-users"
+    operation = op_by_path(path)
+    if not operation:
+        return f"The NinjaOne end-user listing operation GET {path} is not present in the loaded API specification."
+
+    rows = fetch(operation, path, {})
+    if getattr(rows, "complete", True) is False:
+        return (
+            "I cannot safely identify the highest-ID end user because NinjaOne pagination "
+            f"did not complete. {_partial_note(rows)}"
+        )
+
+    candidates = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        raw_id = row.get("id")
+        if isinstance(raw_id, bool):
+            continue
+        try:
+            numeric_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        candidates.append((numeric_id, row))
+
+    if not candidates:
+        return (
+            "NinjaOne returned a complete end-user inventory, but none of the records "
+            "contained a usable numeric ID. I cannot determine the highest-ID record."
+        )
+
+    highest_id = max(item[0] for item in candidates)
+    highest_rows = [row for numeric_id, row in candidates if numeric_id == highest_id]
+    if len(highest_rows) != 1:
+        return (
+            f"The complete end-user inventory contains multiple records with ID {highest_id}; "
+            "I cannot identify a unique record."
+        )
+
+    row = highest_rows[0]
+    name = row_name(row)
+    email = row.get("email") or row.get("emailAddress")
+    details = [f"**{name}** (ID {highest_id})"]
+    if email:
+        details.append(f"Email: {email}")
+    return (
+        "The end user with the highest ID in the complete NinjaOne end-user inventory is "
+        + " — ".join(details)
+        + f". I checked {len(candidates)} records using GET {path} and completed pagination. "
+        "The published end-user list does not expose a creation timestamp, so the highest ID "
+        "is an ID-based indicator—not independent proof of the most recent creation time."
+    )
+
+
 def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
     text = str(q).strip().rstrip("?.! ")
@@ -2418,7 +2489,7 @@ def fast_path(q):
             heading = f"{len(rows)} {label} in the returned result"
             return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
-        for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_latest_end_user, recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
             out = rec(q)
             if out:
                 return out
