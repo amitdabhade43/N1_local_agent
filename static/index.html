@@ -344,7 +344,7 @@ async function send(){
      else if(event.type==='error')throw new Error(event.message);
      else if(event.type==='complete'){
       completed=true;sessionId=event.session_id;
-       const timeline=document.createElement('details');timeline.className='tools';timeline.open=true;
+       const timeline=document.createElement('details');timeline.className='tools';timeline.open=false;
        const timelineTitle=document.createElement('summary');timelineTitle.textContent='Execution timeline ('+progress.children.length+' events)';timeline.append(timelineTitle,progress);
        body.textContent=event.answer;body.append(timeline);addActivity(pending,event.activity,liveActivityKeys);
      }
