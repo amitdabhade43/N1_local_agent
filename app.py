@@ -617,7 +617,9 @@ def wrap_mcp_write_tools(tools):
                 if method == "GET" or operation.get("read_only"):
                     # GET and spec-confirmed read-only POST queries are safe to run directly.
                     safe_arguments = {key: value for key, value in arguments.items() if key != "approval_token"}
-                    return await ninja_native.core.NINJA_TOOL_REGISTRY.aexecute(\n                        "mcp::" + _tool.name, safe_arguments\n                    )
+                    return await ninja_native.core.NINJA_TOOL_REGISTRY.aexecute(
+                        "mcp::" + _tool.name, safe_arguments
+                    )
                 if method not in {"POST", "PUT", "PATCH"}:
                     return json.dumps({"error": f"Unsupported HTTP method {method}.", "executed": False})
 
