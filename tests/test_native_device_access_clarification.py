@@ -178,3 +178,25 @@ def test_selection_parser_rejects_console_user_candidate_for_end_user_only_acces
     assert "console user, not an end user" in clarification
     assert "will not substitute a same-name or same-email end-user record" in clarification
     assert "No change was prepared"
+
+
+def test_system_access_wording_selection_preserves_original_device_and_candidate():
+    turns = [
+        {"role": "user", "content": "add VM-6804B761 system access to rene"},
+        {"role": "assistant", "content": (
+            'Multiple NinjaOne people records matched "rene". '
+            'Which user should receive the device access for "VM-6804B761"?\n'
+            "1. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)\n"
+            "2. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\n"
+            "3. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\n"
+            "4. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (console user ID 31)\n"
+            "5. Altiris Admin Rene Piuk <aadmin_pr@hoerbiger.com> (technician ID 39)\n"
+            "6. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)"
+        )},
+    ]
+    request, clarification = native._resolve_device_access_clarification("1", turns)
+    assert clarification is None
+    assert request == (
+        "add VM-6804B761 to PC Admin Rene Piuk <admin_pr@hoerbiger.com> "
+        "for device access"
+    )
