@@ -3116,13 +3116,31 @@ def _device_lifecycle_exact_name(record, target):
     return False
 
 def _device_lifecycle_actor(activity):
+    """Read actor attribution from the activity's documented and observed identity containers."""
     data = activity.get("data") if isinstance(activity, dict) else {}
     message = data.get("message") if isinstance(data, dict) else {}
     params = message.get("params") if isinstance(message, dict) else {}
     params = params if isinstance(params, dict) else {}
+    sources = [activity, data, params]
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        details = source.get("userDetails") or source.get("actor") or source.get("user")
+        if isinstance(details, dict):
+            name = details.get("name") or details.get("displayName")
+            if not name:
+                name = " ".join(str(details.get(key) or "") for key in ("firstName", "lastName")).strip()
+            email = details.get("email") or details.get("emailAddress")
+            actor_id = details.get("id") or details.get("userId")
+            if name and email:
+                return f"{name} ({email})", actor_id
+            if name or email:
+                return str(name or email), actor_id
     name = params.get("appUserName") or params.get("userName") or params.get("name")
     email = params.get("appUserEmail") or params.get("email")
     actor_id = params.get("appUserId") or params.get("userId") or activity.get("userId")
+    if not actor_id:
+        actor_id = data.get("userId") if isinstance(data, dict) else None
     if name and email:
         return f"{name} ({email})", actor_id
     if name or email:
@@ -3130,7 +3148,6 @@ def _device_lifecycle_actor(activity):
     if actor_id not in (None, "", 0, "0"):
         return f"unresolved user ID {actor_id}", actor_id
     return "not identified in the activity record", None
-
 
 def _device_lifecycle_org(record):
     if not isinstance(record, dict):
