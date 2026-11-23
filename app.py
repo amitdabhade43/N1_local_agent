@@ -548,15 +548,12 @@ def wrap_mcp_write_tools(tools):
             try:
                 target = _mcp_write_request(_tool.name, arguments)
                 if target is None:
-                    if direct_call:
-                        return json.dumps({
-                            "error": "The Local Agent could not verify the HTTP method and endpoint for this request. "
-                                     "Use an explicit METHOD /path endpoint and required path parameters. "
-                                     "No NinjaOne request was sent.",
-                            "executed": False,
-                        })
-                    safe_arguments = {key: value for key, value in arguments.items() if key != "approval_token"}
-                    return await _tool.ainvoke(safe_arguments)
+                    return json.dumps({
+                        "error": "The Local Agent could not verify the HTTP method and endpoint for this request. "
+                                 "Use an explicit METHOD /path endpoint and required path parameters. "
+                                 "No NinjaOne request was sent.",
+                        "executed": False,
+                    })
 
                 method, path, body = target
                 validation = _mcp_validate_call(method, path, _tool.name, arguments)

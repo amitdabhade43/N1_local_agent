@@ -141,3 +141,18 @@ def test_raw_mcp_query_preserves_repeated_values():
         "request": "GET /v2/devices?type=WINDOWS&type=MAC"
     })
     assert result == {"type": ["WINDOWS", "MAC"]}
+
+
+
+def test_mcp_spec_validation_rejects_unknown_endpoint_without_execution(monkeypatch):
+    core = app.ninja_native.core
+    monkeypatch.setattr(core, "SPEC_DATA", {"paths": {}})
+    monkeypatch.setattr(core, "OPS", {})
+
+    result = app._mcp_validate_call("POST", "/v2/unknown", "ninjaone__call", {
+        "endpoint": "POST /v2/unknown",
+        "body": {"any": "value"},
+    })
+
+    assert result["ok"] is False
+    assert "not present" in result["error"]
