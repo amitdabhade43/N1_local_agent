@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 from openai import OpenAI
-from agent_runtime import AgentDefinition, AgentRegistry, EventBus, RuntimeEvent, SubagentManager, TaskRegistry, ToolDefinition, ToolRegistry
+from agent_runtime import AgentDefinition, AgentRegistry, EventBus, RuntimeEvent, SkillRegistry, SubagentManager, TaskRegistry, ToolDefinition, ToolRegistry
 from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog, compare_spec_documents, schema_field_entries, expand_refs)
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
@@ -1240,7 +1240,13 @@ NINJA_AGENTS.register(AgentDefinition(
     instructions="Use the shared OpenAPI operation and field catalogs; do not assume a resource-specific recipe exists.",
     keywords=(), allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=True,
 ))
-NINJA_TASKS = TaskRegistry(history_limit=250)\nNINJA_EVENT_BUS = EventBus()\nNINJA_SUBAGENTS = SubagentManager(\n    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4\n)
+NINJA_TASKS = TaskRegistry(history_limit=250)
+NINJA_EVENT_BUS = EventBus()
+NINJA_SUBAGENTS = SubagentManager(
+    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4
+)
+NINJA_SKILLS = SkillRegistry()
+NINJA_SKILLS.load_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills"))
 
 
 def specialist_for_request(question):
@@ -1249,9 +1255,13 @@ def specialist_for_request(question):
 
 
 def specialist_instructions(question):
-    """Return concise specialist guidance for the active request."""
+    """Return specialist guidance plus only the matching repository-local skill."""
     agent = specialist_for_request(question)
-    return f"\n\nActive specialist: {agent.name} — {agent.description}\n{agent.instructions}"
+    skill_context = NINJA_SKILLS.for_agent(agent.name, max_chars=5000)
+    return (
+        f"\n\nActive specialist: {agent.name} — {agent.description}\n{agent.instructions}"
+        + (f"\n\n{skill_context}" if skill_context else "")
+    )
 
 
 SYSTEM = """You are a reliable NinjaOne API agent. Use the bundled official NinjaOne OpenAPI specification as the source of truth.
