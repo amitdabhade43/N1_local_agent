@@ -588,6 +588,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     )
     # Device-access grants are routed deterministically so the model cannot stall
     # while narrating a plan. The recipe only prepares a UI approval request.
+    emit("Resolving the requested person and device against NinjaOne inventory.", "resolution")
     write_result = core.recipe_add_device_access(q)
     if write_result:
         try:
