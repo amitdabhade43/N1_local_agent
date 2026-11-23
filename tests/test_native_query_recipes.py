@@ -117,7 +117,7 @@ def test_person_first_device_access_request_resolves_user_and_device_separately(
         kind, name = arguments["kind"], arguments["name"]
         calls.append((kind, name))
         if kind == "end_user":
-            return json.dumps({"matches": [end_user], "total_matches": 1})
+            return json.dumps({"matches": [None, end_user], "total_matches": 1})
         if kind == "user":
             # The same END_USER also appears in /v2/users; this must not
             # be misclassified as a second console-user identity.
@@ -125,7 +125,7 @@ def test_person_first_device_access_request_resolves_user_and_device_separately(
         if kind in {"technician", "contact"}:
             return json.dumps({"matches": [], "total_matches": 0})
         if kind == "device":
-            return json.dumps({"matches": [device], "total_matches": 1})
+            return json.dumps({"matches": [None, device], "total_matches": 1})
         return json.dumps({"matches": [], "total_matches": 0})
 
     monkeypatch.setattr(ninja_agent, "t_resolve", fake_resolve)
@@ -209,3 +209,37 @@ def test_person_first_device_access_request_stops_for_ambiguous_rene(monkeypatch
     assert "Multiple NinjaOne people records matched" in answer
     assert "Which user should receive the device access" in answer
     assert "No change has been prepared" in answer
+
+def test_person_first_device_access_rejects_non_object_write_validator_response(monkeypatch):
+    end_user = {
+        "id": 42,
+        "firstName": "Rene",
+        "lastName": "Piuk",
+        "email": "rene.piuk@example.com",
+        "accessibleDeviceIds": [],
+    }
+    device = {"id": 50, "systemName": "VM-6804B761"}
+
+    def fake_resolve(arguments):
+        if arguments["kind"] == "end_user":
+            return json.dumps({"matches": [end_user]})
+        if arguments["kind"] == "device":
+            return json.dumps({"matches": [device]})
+        raise AssertionError("A full-name target should not need other people inventories.")
+
+    monkeypatch.setattr(ninja_agent, "t_resolve", fake_resolve)
+    monkeypatch.setattr(ninja_agent, "OPS", {
+        "patchEndUserDeviceAccess": {
+            "id": "patchEndUserDeviceAccess",
+            "method": "PATCH",
+            "path": "/v2/user/end-user/{id}/device-access",
+        }
+    })
+    monkeypatch.setattr(ninja_agent, "t_call", lambda _arguments: "null")
+
+    answer = ninja_agent.recipe_add_device_access(
+        "Give Rene Piuk access to VM-6804B761"
+    )
+
+    assert "validator returned a non-object response" in answer
+    assert "No change was prepared" in answer
