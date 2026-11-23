@@ -41,6 +41,22 @@ def test_lazy_tool_loads_only_on_first_execution():
     assert loaded == [True]
 
 
+@pytest.mark.asyncio
+async def test_registry_supports_async_mcp_handlers():
+    registry = ToolRegistry()
+
+    async def invoke(arguments):
+        return {"result": arguments["value"]}
+
+    registry.register(ToolDefinition(
+        name="mcp_read", description="async MCP read", handler=invoke,
+        input_schema={"type": "object", "properties": {"value": {"type": "string"}},
+                      "required": ["value"]},
+    ))
+
+    assert await registry.aexecute("mcp_read", {"value": "ok"}) == {"result": "ok"}
+
+
 def test_event_bus_isolates_subscriber_failures():
     bus = EventBus()
     seen = []
