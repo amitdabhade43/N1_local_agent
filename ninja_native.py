@@ -543,6 +543,13 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         if recovered:
             q = recovered
             emit("Resuming the previous change request to create its approval card.", "understanding")
+    execution_plan = core.build_execution_plan(q, hist)
+    plan_event = {"kind": "execution_plan", "plan": execution_plan}
+    emit(
+        f'Plan: {execution_plan["intent"]} via {execution_plan["route"]}; '
+        f'{len(execution_plan["candidate_operations"])} specification candidate(s) ranked.',
+        "planning",
+    )
     # Device-access grants are routed deterministically so the model cannot stall
     # while narrating a plan. The recipe only prepares a UI approval request.
     write_result = core.recipe_add_device_access(q)
@@ -554,6 +561,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         if prepared.get("approval_required"):
             emit("Resolved the end user and device; preparing the approval request.", "tool")
             activity = [
+                plan_event,
                 {"kind": "call", "tool": "call_api", "arguments": {
                     "operation_id": prepared.get("operation_id"),
                     "method": prepared.get("method"), "path": prepared.get("path"),
@@ -569,22 +577,16 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 "No change has been made yet.",
                 activity,
             )
-        return write_result, [{"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
+        return write_result, [plan_event,
+                             {"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
                              {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
 
     fp = None if fast_path_checked else core.fast_path(q, hist)  # preflight already checked when routed by app.py
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
-        return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
+        return fp, [plan_event, {"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
 
-    activity = []
-    execution_plan = core.build_execution_plan(q, hist)
-    activity.append({"kind": "execution_plan", "plan": execution_plan})
-    emit(
-        f'Plan: {execution_plan["intent"]} via {execution_plan["route"]}; '
-        f'{len(execution_plan["candidate_operations"])} specification candidate(s) ranked.',
-        "planning",
-    )
+    activity = [plan_event]
     clarification_guidance = _CLARIFICATION_GUIDANCE if _has_pending_clarification(hist) else ""
     system = core.SYSTEM + core.candidates(q) + clarification_guidance + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
