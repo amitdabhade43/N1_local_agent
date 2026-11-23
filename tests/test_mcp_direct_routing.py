@@ -32,5 +32,17 @@ class MCPDirectRoutingTests(unittest.TestCase):
         )
 
 
+    def test_device_deletion_question_is_recognized_for_shared_lifecycle_route(self):
+        import re
+        from pathlib import Path
+
+        source = Path("app.py").read_text(encoding="utf-8")
+        self.assertIn("ninja_native.try_fast_path(session_id, message_content)", source)
+        self.assertRegex(
+            source,
+            r"who\\s+\\(\\?:deleted\\|removed\\)",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
