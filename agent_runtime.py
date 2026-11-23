@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any, Callable
 import json
 import time
+import inspect
 import uuid
 
 
@@ -254,6 +255,36 @@ class ToolRegistry:
                     concurrent_safe=tool.concurrent_safe, category=tool.category,
                 )
         return handler(arguments)
+
+    async def aexecute(self, name: str, arguments: dict[str, Any],
+                       allowed: set[str] | None = None,
+                       before_execute: Callable[[ToolDefinition, dict[str, Any]], None] | None = None) -> Any:
+        """Async counterpart used by MCP adapters while preserving registry policy."""
+        with self._lock:
+            tool = self._tools.get(name)
+            if tool is None:
+                raise KeyError(f"Unknown tool: {name}")
+            if allowed is not None and name not in allowed:
+                raise PermissionError(f"Agent is not permitted to use tool: {name}")
+            if not isinstance(arguments, dict):
+                raise TypeError("Tool arguments must be a JSON object.")
+            self._validate_arguments(tool.input_schema, arguments)
+            if before_execute:
+                before_execute(tool, arguments)
+            handler = tool.handler
+            if handler is None:
+                if tool.lazy_loader is None:
+                    raise RuntimeError(f"Tool has no handler: {name}")
+                handler = tool.lazy_loader()
+                if not callable(handler):
+                    raise TypeError(f"Lazy loader for {name} did not return a callable.")
+                self._tools[name] = ToolDefinition(
+                    name=tool.name, description=tool.description, handler=handler,
+                    input_schema=tool.input_schema, read_only=tool.read_only,
+                    concurrent_safe=tool.concurrent_safe, category=tool.category,
+                )
+        result = handler(arguments)
+        return await result if inspect.isawaitable(result) else result
 
     @staticmethod
     def _validate_arguments(schema: dict[str, Any], arguments: dict[str, Any]) -> None:
