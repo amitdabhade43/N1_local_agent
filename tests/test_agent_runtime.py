@@ -2,7 +2,7 @@ import pytest
 
 from agent_runtime import (
     AgentDefinition, AgentRegistry, EventBus, RuntimeEvent,
-    SubagentManager, TaskRegistry, ToolDefinition, ToolRegistry,
+    SubagentManager, TaskRegistry, SkillRegistry, ToolDefinition, ToolRegistry,
 )
 
 
@@ -118,3 +118,16 @@ def test_subagent_spawn_depth_is_bounded():
     agent = AgentDefinition("worker", "worker", "worker")
     with pytest.raises(PermissionError, match="depth limit"):
         manager.run(agent, "task", lambda *_: "ok", depth=1)
+
+def test_skill_registry_loads_only_matching_specialist_context(tmp_path):
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "access.md").write_text(
+        "---\\nname: access\\ndescription: Access rules\\nagents: access\\n---\\n"
+        "# Access\\nAlways require approval for writes.\\n",
+        encoding="utf-8",
+    )
+    registry = SkillRegistry()
+    assert registry.load_directory(str(skills)) == 1
+    assert "Always require approval" in registry.for_agent("access")
+    assert registry.for_agent("inventory") == ""
