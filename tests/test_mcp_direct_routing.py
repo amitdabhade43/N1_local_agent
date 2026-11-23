@@ -32,12 +32,11 @@ class MCPDirectRoutingTests(unittest.TestCase):
         )
 
 
-    def test_device_deletion_question_uses_shared_fast_path_in_mcp_mode(self, monkeypatch):
+    def test_device_deletion_question_uses_shared_fast_path_in_mcp_mode(self):
         import asyncio
+        import os
+        from unittest.mock import patch
         import app
-
-        monkeypatch.setenv("AGENT_BACKEND", "mcp")
-        monkeypatch.setattr(app, "is_contextual_followup", lambda _question: False)
 
         async def fake_fast_path(session_id, content):
             return ("shared lifecycle answer", [{"kind": "result", "tool": "fast_path"}])
@@ -48,13 +47,14 @@ class MCPDirectRoutingTests(unittest.TestCase):
         async def unexpected_get_tools():
             raise AssertionError("MCP model/tool discovery should not run for lifecycle fast path")
 
-        monkeypatch.setattr(app.ninja_native, "try_fast_path", fake_fast_path)
-        monkeypatch.setattr(app, "_record_mcp_direct_turn", fake_record)
-        monkeypatch.setattr(app, "get_tools", unexpected_get_tools)
-
-        result = asyncio.run(
-            app.try_direct_backend_request("test-session", "Who deleted B82ZST3?")
-        )
+        with patch.dict(os.environ, {"AGENT_BACKEND": "mcp"}), \
+             patch.object(app, "is_contextual_followup", return_value=False), \
+             patch.object(app.ninja_native, "try_fast_path", new=fake_fast_path), \
+             patch.object(app, "_record_mcp_direct_turn", new=fake_record), \
+             patch.object(app, "get_tools", new=unexpected_get_tools):
+            result = asyncio.run(
+                app.try_direct_backend_request("test-session", "Who deleted B82ZST3?")
+            )
 
         self.assertEqual(result[0], "shared lifecycle answer")
 
