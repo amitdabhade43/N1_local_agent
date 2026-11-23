@@ -103,7 +103,7 @@ def test_subagent_context_isolated_and_approval_gate_is_inherited():
 
     result = manager.run(
         agent, "inspect device inventory", runner,
-        parent_context={"tenant": "eu", "history": ["private chat"], "approval_token": "secret"},
+        parent_context={"tenant": "eu", "history": ["private chat"], "approval_token": "secret", "api_key": "key", "credentials_blob": "private"},
         approval_gate=approval_gate,
     )
 
