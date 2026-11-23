@@ -159,7 +159,7 @@ def test_selection_resumes_recipe_and_returns_approval_without_llm():
 
 
 
-def test_selection_parser_accepts_cross_category_candidate_labels():
+def test_selection_parser_rejects_console_user_candidate_for_end_user_only_access_patch():
     turns = [
         {"role": "user", "content": "add VM-6804B761 to rene for device access"},
         {"role": "assistant", "content": (
@@ -173,7 +173,8 @@ def test_selection_parser_accepts_cross_category_candidate_labels():
         )},
     ]
     request, clarification = native._resolve_device_access_clarification("2", turns)
-    assert clarification is None
-    assert request == (
-        "add VM-6804B761 to Rene Console <rene.console@example.com> for device access"
-    )
+    assert request is None
+    assert clarification is not None
+    assert "console user, not an end user" in clarification
+    assert "will not substitute a same-name or same-email end-user record" in clarification
+    assert "No change was prepared"
