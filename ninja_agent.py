@@ -1241,6 +1241,80 @@ def candidates(q):
     hits = IDX.search(q, 8) if IDX else []
     return ("\nLikely endpoints:\n" + "\n".join(describe(o) for o in hits)) if hits else ""
 
+def build_execution_plan(question, history=None):
+    """Build an inspectable, specification-ranked execution outline (not model chain-of-thought)."""
+    text = re.sub(r"\\s+", " ", str(question or "").strip())
+    folded = text.casefold()
+    mutation = bool(re.search(
+        r"\\b(?:add|assign|grant|remove|revoke|update|change|modify|create|enable|disable|"
+        r"invite|suspend|activate|deactivate|link|unlink)\\b", folded
+    ))
+    destructive = bool(re.search(r"\\b(?:delete|erase|purge|destroy)\\b", folded))
+    intent = "mutation" if mutation else "read"
+    if destructive:
+        intent = "blocked_destructive"
+    ranked = IDX.search_scored(text, 8) if IDX and text else []
+    candidates_out = []
+    for score, operation in ranked[:5]:
+        candidates_out.append({
+            "operation_id": operation.get("id"),
+            "method": operation.get("method"),
+            "path": operation.get("path"),
+            "summary": operation.get("summary"),
+            "risk": "approval_required" if not operation.get("read_only") else "read_only",
+            "relevance_score": round(float(score), 3),
+        })
+    guardrails = [
+        "Use JSON OpenAPI contracts for executable operations and validation.",
+        "Resolve entity names to IDs before entity-specific requests.",
+        "Verify live API results and pagination completeness before answering.",
+        "Prepare state-changing requests for explicit UI approval; never execute them directly.",
+        "Block DELETE and explicit destructive operations.",
+    ]
+    if intent == "blocked_destructive":
+        route = "policy_block"
+    elif not candidates_out:
+        route = "spec_discovery_required"
+    else:
+        route = "spec_ranked_tool_workflow"
+    return {
+        "intent": intent,
+        "route": route,
+        "candidate_operations": candidates_out,
+        "guardrails": guardrails,
+        "history_turns_considered": min(len(history or []), 6),
+        "disclosure": "This is an execution outline and evidence trail, not private model reasoning.",
+    }
+
+
+def verify_tool_result(tool_name, output):
+    """Independently validate the result envelope and completeness markers for live-data tools."""
+    if tool_name not in {"call_api", "resolve_entity"}:
+        return {"status": "not_applicable", "checks": [], "note": "Tool does not return a NinjaOne live-data envelope."}
+    try:
+        parsed = json.loads(output or "")
+    except (TypeError, ValueError):
+        return {"status": "failed", "checks": ["valid_json"], "note": "Tool returned invalid JSON."}
+    if not isinstance(parsed, dict):
+        return {"status": "failed", "checks": ["json_object"], "note": "Tool response was not a JSON object."}
+    if parsed.get("error"):
+        return {"status": "failed", "checks": ["no_api_or_validation_error"], "note": str(parsed["error"])[:500]}
+    if parsed.get("approval_required"):
+        return {"status": "prepared", "checks": ["approval_payload_present"], "note": "Mutation prepared; not executed."}
+    if tool_name == "resolve_entity":
+        if not isinstance(parsed.get("matches"), list):
+            return {"status": "failed", "checks": ["matches_array_present"], "note": "Resolver response has no matches array."}
+        if parsed.get("partial"):
+            return {"status": "partial", "checks": ["matches_array_present", "pagination_complete"], "note": parsed.get("pagination_note", "Resolver result is partial.")}
+        return {"status": "verified", "checks": ["valid_json", "matches_array_present", "pagination_complete"], "note": f'{parsed.get("total_matches", len(parsed["matches"]))} matching record(s) in the returned complete result.'}
+    if parsed.get("partial"):
+        return {"status": "partial", "checks": ["valid_json", "pagination_complete"], "note": parsed.get("pagination_note") or parsed.get("count_scope") or "API result is partial."}
+    if parsed.get("truncated"):
+        return {"status": "partial", "checks": ["valid_json", "display_complete"], "note": str(parsed["truncated"])}
+    if "count" in parsed or isinstance(parsed.get("rows"), list) or "groups" in parsed:
+        return {"status": "verified", "checks": ["valid_json", "result_shape", "pagination_complete"], "note": "API result envelope is valid and no partial-result marker was returned."}
+    return {"status": "verified", "checks": ["valid_json", "result_object"], "note": "API result envelope is valid; semantic correctness still depends on matching the requested fields and filters."}
+
 
 PLAN = re.compile(r"(?m)^\s*\d+[.)]\s")  # numbered list = the model is describing a plan
 NUDGE = "Do not describe steps or answer from memory. You MUST call the appropriate NinjaOne tool now. Search the specification, inspect the exact operation when parameters or fields are unclear, then call it and use only returned live data."
