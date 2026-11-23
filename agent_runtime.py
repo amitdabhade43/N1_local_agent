@@ -356,7 +356,7 @@ class AgentRegistry:
         for agent in self._agents.values():
             if agent.name == self.default_agent:
                 continue
-            score = sum(3 if keyword in {"access", "accessible", "permission", "permissions", "grant", "revoke"} else 1 for keyword in agent.keywords if keyword in folded)
+            score = sum(3 if keyword in {"access", "accessible", "permission", "permissions", "grant", "revoke"} else 2 if keyword in {"policy", "policies", "ticket", "tickets", "script", "scripts", "automation"} else 1 for keyword in agent.keywords if keyword in folded)
             if score:
                 ranked.append((score, agent.name, agent))
         if not ranked:
