@@ -2329,12 +2329,16 @@ def recipe_add_device_access(q):
                 # returned by both /v2/users and /v2/user/end-users, while keeping
                 # equal numeric IDs in genuinely different categories distinct.
                 user_type = str(row.get("userType") or row.get("type") or "").upper()
-                if kind == "end_user" or user_type in {"END_USER", "ENDUSER"}:
+                if kind == "end_user":
                     category = "end-user"
-                elif kind == "technician" or user_type == "TECHNICIAN":
+                elif kind == "technician":
                     category = "technician"
                 elif kind == "contact":
                     category = "contact"
+                elif user_type in {"END_USER", "ENDUSER"}:
+                    category = "end-user"
+                elif user_type == "TECHNICIAN":
+                    category = "technician"
                 else:
                     category = "console user"
 
