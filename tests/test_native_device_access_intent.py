@@ -219,6 +219,25 @@ def test_exact_email_still_selects_the_end_user_when_other_names_are_similar():
 
 
 
+def test_exact_email_collision_with_technician_does_not_prepare_write():
+    end_user = person(31, "Rene", "Piuk", "rene.piuk@example.com")
+    technician = person(89, "Rene", "Piuk", "rene.piuk@example.com")
+    technician["userType"] = "TECHNICIAN"
+    with patch.object(core, "OPS", {OPERATION["id"]: OPERATION}), \
+         patch.object(core, "t_resolve", side_effect=resolver_for(
+             [end_user], {"user": [technician], "technician": [technician]}
+         )), patch.object(core, "t_call") as call:
+        result = core.recipe_add_device_access(
+            "add VM-6804B761 to <rene.piuk@example.com> for device access"
+        )
+
+    assert "Multiple NinjaOne people records matched" in result
+    assert "(end-user ID 31)" in result
+    assert "(technician ID 89)" in result
+    assert "No change has been prepared" in result
+    call.assert_not_called()
+
+
 def test_people_inventory_api_error_fails_closed():
     end_user = person(31, "Rene", "Piuk", "rene.piuk@example.com")
 
