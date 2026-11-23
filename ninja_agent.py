@@ -12,6 +12,7 @@ from urllib.parse import quote
 
 import requests
 from openai import OpenAI
+from agent_runtime import AgentDefinition, AgentRegistry, SubagentManager, ToolDefinition, ToolRegistry
 from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog, compare_spec_documents, schema_field_entries, expand_refs)
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
@@ -1176,6 +1177,83 @@ TOOLS = [
 ]
 
 
+# A single registry owns tool schemas and dispatch metadata. Transport-specific
+# validation remains in the Native/MCP adapters; NinjaOne policy stays shared.
+NINJA_TOOL_REGISTRY = ToolRegistry()
+_TOOL_SCHEMAS = {
+    item["function"]["name"]: item["function"]
+    for item in TOOLS
+    if isinstance(item, dict) and isinstance(item.get("function"), dict)
+}
+for _tool_name, _handler in DISPATCH.items():
+    _tool_schema = _TOOL_SCHEMAS.get(_tool_name, {})
+    NINJA_TOOL_REGISTRY.register(ToolDefinition(
+        name=_tool_name,
+        description=_tool_schema.get("description", _tool_name),
+        handler=_handler,
+        input_schema=_tool_schema.get("parameters", {}),
+        read_only=_tool_name != "call_api",
+        concurrent_safe=_tool_name in {"search_api", "search_fields", "inspect_schema", "inspect_api", "resolve_entity"},
+        category="ninjaone",
+    ))
+
+NINJA_AGENTS = AgentRegistry(default_agent="general")
+_COMMON_NINJA_TOOLS = frozenset(DISPATCH)
+NINJA_AGENTS.register(AgentDefinition(
+    name="inventory", description="Device, organization and inventory specialist",
+    instructions="Focus on inventory scope, complete pagination, organization boundaries, device identity and current live fields.",
+    keywords=("device", "devices", "computer", "endpoint", "machine", "organization", "organizations", "inventory", "asset"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="people", description="People, technician and account specialist",
+    instructions="Resolve people across all relevant NinjaOne identity categories. Distinguish end users, console users, technicians and contacts; never merge different entity types by numeric ID.",
+    keywords=("user", "users", "person", "people", "technician", "technicians", "contact", "contacts", "email", "account"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="access", description="Device access and permissions specialist",
+    instructions="Distinguish accessible devices from assigned devices and role membership. Resolve every target unambiguously. Prepare changes only through the shared approval-gated API path.",
+    keywords=("access", "accessible", "assigned", "permission", "permissions", "grant", "revoke", "device-access"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="policy", description="Policy and configuration specialist",
+    instructions="Use exact policy and configuration schemas. Treat every state-changing operation as approval-required.",
+    keywords=("policy", "policies", "configuration", "settings", "maintenance"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="tickets", description="Ticket and service-desk specialist",
+    instructions="Use ticket-board and ticket schemas, follow documented cursors, and distinguish ticket counts from page sizes.",
+    keywords=("ticket", "tickets", "board", "boards", "service desk", "case", "cases"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="automation", description="Scripts and automation specialist",
+    instructions="Inspect the exact script or automation operation before use. Script execution and other side effects require explicit approval.",
+    keywords=("script", "scripts", "automation", "execute", "run script", "job", "jobs"),
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+))
+NINJA_AGENTS.register(AgentDefinition(
+    name="general", description="General NinjaOne API specialist",
+    instructions="Use the shared OpenAPI operation and field catalogs; do not assume a resource-specific recipe exists.",
+    keywords=(), allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+))
+NINJA_SUBAGENTS = SubagentManager(max_depth=1, max_children=4)
+
+
+def specialist_for_request(question):
+    """Return the specialist lane selected for a user request."""
+    return NINJA_AGENTS.route(question)
+
+
+def specialist_instructions(question):
+    """Return concise specialist guidance for the active request."""
+    agent = specialist_for_request(question)
+    return f"\n\nActive specialist: {agent.name} — {agent.description}\n{agent.instructions}"
+
+
 SYSTEM = """You are a reliable NinjaOne API agent. Use the bundled official NinjaOne OpenAPI specification as the source of truth.
 
 For NinjaOne data questions, call tools; never invent records, totals, fields, permissions or endpoint behavior. For greetings and unrelated questions, answer briefly.
@@ -1277,9 +1355,15 @@ def build_execution_plan(question, history=None):
         route = "spec_discovery_required"
     else:
         route = "spec_ranked_tool_workflow"
+    specialist = specialist_for_request(text)
     return {
         "intent": intent,
         "route": route,
+        "specialist": {
+            "name": specialist.name,
+            "description": specialist.description,
+            "max_iterations": specialist.max_iterations,
+        },
         "candidate_operations": candidates_out,
         "guardrails": guardrails,
         "history_turns_considered": min(len(history or []), 6),
@@ -1475,8 +1559,9 @@ def text_call(txt):
 
 def exec_tool(name, args):
     try:
-        fn = DISPATCH.get(name)
-        return fn(args) if fn else err("unknown tool")
+        if name not in DISPATCH:
+            return err("unknown tool")
+        return NINJA_TOOL_REGISTRY.execute(name, args)
     except requests.HTTPError as e:
         return err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
     except Exception as e:
