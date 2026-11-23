@@ -44,18 +44,11 @@ def _requires_ninjaone_tool(content):
 
 
 def _native_tool_result_succeeded(tool_name, output):
-    """Validate tool results that carry live tenant data, before UI truncation."""
+    """Use the shared verifier for live-data tool envelopes."""
     if tool_name not in {"call_api", "resolve_entity"}:
         return None
-    try:
-        parsed = json.loads(output or "{}")
-    except (TypeError, ValueError):
-        return False
-    return (
-        isinstance(parsed, dict)
-        and "error" not in parsed
-        and "approval_required" not in parsed
-    )
+    verification = core.verify_tool_result(tool_name, output)
+    return verification.get("status") in {"verified", "partial"}
 
 
 def _model_completion(client, model_id, messages, require_tool=False):
@@ -585,6 +578,13 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
 
     activity = []
+    execution_plan = core.build_execution_plan(q, hist)
+    activity.append({"kind": "execution_plan", "plan": execution_plan})
+    emit(
+        f'Plan: {execution_plan["intent"]} via {execution_plan["route"]}; '
+        f'{len(execution_plan["candidate_operations"])} specification candidate(s) ranked.',
+        "planning",
+    )
     clarification_guidance = _CLARIFICATION_GUIDANCE if _has_pending_clarification(hist) else ""
     system = core.SYSTEM + core.candidates(q) + clarification_guidance + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
@@ -614,6 +614,8 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 result_ok = _native_tool_result_succeeded(tc[0], out)
                 if result_ok is not None:
                     result_event["success"] = result_ok
+                    result_event["verification"] = core.verify_tool_result(tc[0], out)
+                    activity.append({"kind": "verification", "tool": tc[0], **result_event["verification"]})
                 activity.append(result_event)
                 activity.append({"kind": "metric", "stage": "ninjaone_tool",
                                  "tool": tc[0], "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
@@ -676,6 +678,8 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             result_ok = _native_tool_result_succeeded(tc.function.name, out)
             if result_ok is not None:
                 result_event["success"] = result_ok
+                result_event["verification"] = core.verify_tool_result(tc.function.name, out)
+                activity.append({"kind": "verification", "tool": tc.function.name, **result_event["verification"]})
             activity.append(result_event)
             activity.append({"kind": "metric", "stage": "ninjaone_tool",
                              "tool": tc.function.name, "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
