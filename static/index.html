@@ -211,31 +211,43 @@ function renderApprovalCard(parent,action){
  reject.onclick=()=>submitDecision('reject');
  parent.append(card);
 }
-function addActivity(parent,activity){
- if(!activity||!activity.length)return;
- const approvals=activity.filter(item=>item.kind==='approval_required');
- approvals.forEach(item=>{
-  const action=item.action||{};
-  if(!action.action_id){
-   const warning=document.createElement('p');warning.className='approval-warning';
-   warning.textContent='Approval ID is missing. No change has been made; prepare the request again.';
-   parent.append(warning);return;
-  }
-  renderApprovalCard(parent,action);
- });
- const visibleActivity=activity.filter(item=>item.kind!=='approval_required');
- if(!visibleActivity.length)return;
- const details=document.createElement('details');details.className='tools';
- const summary=document.createElement('summary');summary.textContent='Tool activity ('+visibleActivity.length+' events)';details.append(summary);
- visibleActivity.forEach(item=>{
-  const row=document.createElement('div');row.className='toolrow';
-  const b=document.createElement('b');b.textContent=item.kind==='call'?'CALL ':'RESULT ';b.textContent+=item.tool||'tool';row.append(b);
-  const pre=document.createElement('pre');pre.textContent=item.kind==='call'?JSON.stringify(item.arguments||{},null,2):(item.result||'');
-  row.append(pre);details.append(row);
- });
- parent.append(details);
-}
-async function loadProviders(force=false){
+function activityKey(item){try{return JSON.stringify(item)}catch{return String(item)}}
+ function activityLabel(item){
+  const tool=item.tool||'NinjaOne';
+  if(item.kind==='execution_plan'){const p=item.plan||{};return 'Execution plan: '+(p.specialist?.name||'general')+' specialist · '+(p.intent||'request')}
+  if(item.kind==='call')return 'Calling '+tool;
+  if(item.kind==='result')return 'Received result from '+tool;
+  if(item.kind==='verification')return 'Verification: '+tool+' · '+(item.status||'checked');
+  if(item.kind==='metric')return 'Timing recorded: '+(item.stage||'operation');
+  if(item.kind==='policy')return item.message||'Policy check';
+  if(item.kind==='clarification')return item.message||'Clarification required';
+  return item.message||'Execution activity';
+ }
+ function addActivity(parent,activity,seenKeys){
+  if(!activity||!activity.length)return;
+  const approvals=activity.filter(item=>item.kind==='approval_required'&&(!seenKeys||!seenKeys.has(activityKey(item))));
+  approvals.forEach(item=>{
+   const action=item.action||{};
+   if(!action.action_id){
+    const warning=document.createElement('p');warning.className='approval-warning';
+    warning.textContent='Approval ID is missing. No change has been made; prepare the request again.';
+    parent.append(warning);return;
+   }
+   renderApprovalCard(parent,action);
+  });
+  const visibleActivity=activity.filter(item=>item.kind!=='approval_required'&&(!seenKeys||!seenKeys.has(activityKey(item))));
+  if(!visibleActivity.length)return;
+  const details=document.createElement('details');details.className='tools';
+  const summary=document.createElement('summary');summary.textContent='Additional tool activity ('+visibleActivity.length+' events)';details.append(summary);
+  visibleActivity.forEach(item=>{
+   const row=document.createElement('div');row.className='toolrow';
+   const b=document.createElement('b');b.textContent=item.kind==='call'?'CALL ':item.kind==='verification'?'VERIFY ':item.kind.toUpperCase()+' ';b.textContent+=item.tool||'agent';row.append(b);
+   const pre=document.createElement('pre');pre.textContent=item.kind==='call'?JSON.stringify(item.arguments||{},null,2):(item.result||item.message||JSON.stringify(item));
+   row.append(pre);details.append(row);
+  });
+  parent.append(details);
+ }
+ async function loadProviders(force=false){
  try{
   const chosen=provider.value||'foundry';
   if(force){
@@ -288,12 +300,28 @@ async function send(){
  const pending=addMessage('assistant','');
  const body=pending.querySelector('.message-body');
  const progress=document.createElement('div');progress.className='progress';body.append(progress);
- function showProgress(message,stage){
-  const item=document.createElement('div');item.className='progress-item';
-  const dot=document.createElement('span');dot.className='progress-dot';dot.textContent=stage==='complete'?'✓':'›';
-  const label=document.createElement('span');label.textContent=message;item.append(dot,label);progress.append(item);chat.scrollTop=chat.scrollHeight;
- }
- message.value='';
+ const liveActivityKeys=new Set();
+  function showProgress(message,stage,streamEvent){
+   const activity=streamEvent&&streamEvent.activity_event;
+   if(activity){
+    const key=activityKey(activity);if(liveActivityKeys.has(key))return;liveActivityKeys.add(key);
+    if(activity.kind==='approval_required'){
+     const action=activity.action||{};
+     if(action.action_id)renderApprovalCard(pending,action);
+     else{const warning=document.createElement('p');warning.className='approval-warning';warning.textContent='Approval ID is missing. No change has been made; prepare the request again.';pending.append(warning)}
+     chat.scrollTop=chat.scrollHeight;return;
+    }
+    const item=document.createElement('div');item.className='progress-item live-activity '+(activity.kind||'event');
+    const dot=document.createElement('span');dot.className='progress-dot';dot.textContent=activity.kind==='verification'?'✓':activity.kind==='policy'?'!':'›';
+    const label=document.createElement('span');label.textContent=activityLabel(activity);item.append(dot,label);progress.append(item);
+   }else{
+    const item=document.createElement('div');item.className='progress-item';
+    const dot=document.createElement('span');dot.className='progress-dot';dot.textContent=stage==='complete'?'✓':'›';
+    const label=document.createElement('span');label.textContent=message;item.append(dot,label);progress.append(item);
+   }
+   chat.scrollTop=chat.scrollHeight;
+  }
+  message.value='';
  try{
   if(selectedImage){
    showProgress('Sending the image to the selected local vision model.','setup');
@@ -312,10 +340,10 @@ async function send(){
     for(const frame of frames){
      const line=frame.split(/\r?\n/).find(x=>x.startsWith('data: '));if(!line)continue;
      const event=JSON.parse(line.slice(6));
-     if(event.type==='progress')showProgress(event.message,event.stage);
+     if(event.type==='progress')showProgress(event.message,event.stage,event);
      else if(event.type==='error')throw new Error(event.message);
      else if(event.type==='complete'){
-      completed=true;sessionId=event.session_id;progress.remove();body.textContent=event.answer;addActivity(pending,event.activity);
+      completed=true;sessionId=event.session_id;progress.remove();body.textContent=event.answer;addActivity(pending,event.activity,liveActivityKeys);
      }
     }
    }
