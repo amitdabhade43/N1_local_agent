@@ -3091,47 +3091,29 @@ def recipe_catalog_collection_read(q):
 
 
 def _device_lifecycle_exact_name(record, target):
-    """Match a device name only against explicit device-name fields or the audit message."""
+    """Match an exact device-name field or an explicit name in the audit message."""
     if not isinstance(record, dict):
         return False
     wanted = re.sub(r"[^a-z0-9]", "", str(target or "").casefold())
     if not wanted:
         return False
-    values = []
     for key in ("systemName", "deviceName", "name", "displayName", "dnsName", "hostname", "netbiosName"):
         value = record.get(key)
-        if isinstance(value, (str, int)):
-            values.append(str(value))
-    message = record.get("message")
-    if isinstance(message, str):
-        values.append(message)
+        if value not in (None, ""):
+            normalized = re.sub(r"[^a-z0-9]", "", str(value).casefold())
+            if normalized == wanted:
+                return True
+    text_values = [record.get("message"), record.get("subject")]
     data = record.get("data")
     if isinstance(data, dict):
-        for key in ("message", "subject", "deviceName", "systemName", "name"):
-            value = data.get(key)
-            if isinstance(value, str):
-                values.append(value)
-        nested_message = data.get("message")
-        if isinstance(nested_message, dict):
-            for key in ("text", "message", "description", "deviceName", "systemName"):
-                value = nested_message.get(key)
-                if isinstance(value, str):
-                    values.append(value)
-    # Device-name fields require an exact normalized match. Audit messages may
-    # wrap the name in quotes, e.g. Device 'HOST' deleted.
-    for value in values:
-        normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
-        if normalized == wanted:
-            return True
-        if value is message or value in values and value not in (
-            record.get("systemName"), record.get("deviceName"), record.get("name"),
-            record.get("displayName"), record.get("dnsName"), record.get("hostname"),
-            record.get("netbiosName"),
+        text_values.extend(data.get(key) for key in ("message", "subject", "description"))
+    for value in text_values:
+        if isinstance(value, str) and re.search(
+            r"(?<![A-Za-z0-9])" + re.escape(str(target)) + r"(?![A-Za-z0-9])",
+            value, re.I,
         ):
-            if re.search(r"(?<![A-Za-z0-9])" + re.escape(str(target)) + r"(?![A-Za-z0-9])", value, re.I):
-                return True
+            return True
     return False
-
 
 def _device_lifecycle_actor(activity):
     data = activity.get("data") if isinstance(activity, dict) else {}
@@ -3195,8 +3177,12 @@ def recipe_device_lifecycle(q):
     inventory_complete = False
     device_op = op_by_path("/v2/devices")
     if device_op:
-        current_rows = fetch(device_op, "/v2/devices", {})
-        inventory_complete = getattr(current_rows, "complete", True) is not False
+        try:
+            current_rows = fetch(device_op, "/v2/devices", {})
+            inventory_complete = getattr(current_rows, "complete", True) is not False
+        except Exception as exc:
+            current_rows = []
+            inventory_complete = False
 
     exact_current = []
     wanted = re.sub(r"[^a-z0-9]", "", device_name.casefold())
@@ -3222,7 +3208,14 @@ def recipe_device_lifecycle(q):
     for _ in range(200):
         if cursor is not None:
             query["olderThan"] = cursor
-        result = http_get(activity_path, dict(query))
+        try:
+            result = http_get(activity_path, dict(query))
+        except Exception as exc:
+            return (
+                f"I found {len(deletion_events)} matching deletion event(s) for {device_name}, "
+                f"but the audit request failed before the search completed ({type(exc).__name__}). "
+                "The history may be incomplete."
+            )
         if not isinstance(result, dict) or not isinstance(result.get("activities"), list):
             return "I cannot verify deletion history: NinjaOne returned an unexpected activity response."
         page = result["activities"]
