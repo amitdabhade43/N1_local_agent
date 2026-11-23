@@ -1080,26 +1080,50 @@ def detect_direct_tool_request(message: str, tools) -> tuple[str, dict, str, lis
     return tool.name, {}, operation, fields
 
 
-async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str, fields: list[str] | None = None):
+async def run_direct_mcp_tool(tool_name: str, arguments: dict, operation: str,
+                             fields: list[str] | None = None, progress_callback=None):
     tools = await get_tools()
-    tool = next((t for t in tools if t.name == tool_name), None)
+    wrapped_tools = wrap_mcp_write_tools(tools)
+    tool = next((t for t in wrapped_tools if t.name == tool_name), None)
     if tool is None:
         raise HTTPException(status_code=502, detail=f"MCP tool not found: {tool_name}")
 
+    call_event = {"kind": "call", "tool": tool_name, "arguments": arguments}
+    if progress_callback:
+        progress_callback({"stage": "activity", "message": f"Calling MCP tool {tool_name}",
+                           "activity_event": call_event})
     started = time.perf_counter()
     try:
-        raw_result = await tool.ainvoke(arguments)
+        short_name = tool_name.rsplit("__", 1)[-1].casefold()
+        if short_name in {"execute_endpoint", "execute_raw_request", "call", "raw_call"}:
+            raw_result = await tool.ainvoke(arguments)
+        else:
+            raw_result = await ninja_native.core.NINJA_TOOL_REGISTRY.aexecute(
+                "mcp::" + tool_name, arguments
+            )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"MCP tool {tool_name} failed: {exc}")
 
     parsed = parse_mcp_result(raw_result)
     records = _flatten_records(parsed)
     elapsed = time.perf_counter() - started
+    result_event = {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]}
+    succeeded = _mcp_tool_result_succeeded(tool_name, raw_result)
+    if succeeded is not None:
+        result_event["success"] = succeeded
     activity = [
-        {"kind": "call", "tool": tool_name, "arguments": arguments},
-        {"kind": "result", "tool": tool_name, "result": str(parsed)[:4000]},
+        call_event,
+        result_event,
         {"kind": "metric", "stage": "mcp_tool", "elapsed_ms": round(elapsed * 1000, 1)},
     ]
+    if progress_callback:
+        progress_callback({"stage": "activity", "message": f"Received result from MCP tool {tool_name}",
+                           "activity_event": result_event})
+        if isinstance(parsed, dict) and parsed.get("approval_required"):
+            approval_event = {"kind": "approval_required", "action": parsed}
+            activity.append(approval_event)
+            progress_callback({"stage": "activity", "message": "Approval request prepared; no change executed",
+                               "activity_event": approval_event})
 
     noun = tool_name.replace("list_", "")
     if operation == "count":
@@ -1460,7 +1484,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         tool_name, arguments, operation, fields = direct_request
         if progress_callback:
             progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}'})
-        direct_answer, direct_activity = await run_direct_mcp_tool(tool_name, arguments, operation, fields)
+        direct_answer, direct_activity = await run_direct_mcp_tool(\n            tool_name, arguments, operation, fields, progress_callback\n        )
         if progress_callback:
             progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
         return direct_answer, direct_activity
