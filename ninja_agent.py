@@ -2130,6 +2130,22 @@ def recipe_add_device_access(q):
     device_labels = []
     user = None
 
+    # Handle "add <device> system access to <person>" before the generic
+    # person-first form below; otherwise the device identifier is mistaken
+    # for the person's name and the final person token for the device.
+    system_access = re.match(
+        r"^(?:please\\s+)?(?:add|grant|give|provide)\\s+"
+        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+"
+        r"(?:system|device|computer|machine|endpoint)\\s+"
+        r"access\\s+(?:to|for)\\s+(?P<user>.+?)\\s*$",
+        text, re.I,
+    )
+    if system_access and not multi:
+        text = (
+            f"add {system_access.group('device')} to "
+            f"{system_access.group('user')} for device access"
+        )
+
     person_first = re.search(
         r"^(?:please\s+)?(?:add|grant|give|provide)\s+(?P<user>.+?)\s+"
         r"(?:device\s+)?access\s+to\s+"
