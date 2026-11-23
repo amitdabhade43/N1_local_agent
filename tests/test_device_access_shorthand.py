@@ -40,8 +40,7 @@ def test_shorthand_device_access_request_lists_ambiguous_rene_records(monkeypatc
     assert "Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)" in result
     assert "PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)" in result
     assert "Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)" in result
-    assert "console user ID 144" in result
-    assert "No change has been prepared" in result
+    # The /v2/users fixture explicitly marks ID 144 as END_USER, so it is\n    # the same end-user record returned by /v2/user/end-users, not a second\n    # console-user identity. The duplicate must be shown only once.\n    assert "console user ID 144" not in result\n    assert "4. " not in result\n    assert "No change has been prepared" in result
     assert calls == ["end_user", "user", "technician", "contact"]
 
 
