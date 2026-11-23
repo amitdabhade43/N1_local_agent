@@ -588,7 +588,10 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     )
     # Device-access grants are routed deterministically so the model cannot stall
     # while narrating a plan. The recipe only prepares a UI approval request.
-    emit("Resolving the requested person and device against NinjaOne inventory.", "resolution")
+    if re.search(r"\b(?:device access|accessible devices?|grant .{1,60} access|add .{1,60} access)\b", q, re.I):
+        emit("Resolving the requested person and device against NinjaOne inventory.", "resolution")
+    else:
+        emit("Checking supported direct workflows.", "routing")
     write_result = core.recipe_add_device_access(q)
     if write_result:
         try:
@@ -643,9 +646,9 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 called = True
                 emit(f'Calling NinjaOne operation: {tc[0]}', 'tool')
                 tool_started = time.perf_counter()
+                record_activity({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 out = core.exec_tool(*tc)
                 emit(f'Received a response from {tc[0]}.', 'result')
-                record_activity({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 result_event = {"kind": "result", "tool": tc[0], "result": out[:2500]}
                 result_ok = _native_tool_result_succeeded(tc[0], out)
                 if result_ok is not None:
@@ -702,13 +705,16 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             tool_started = time.perf_counter()
             try:
                 args = json.loads(tc.function.arguments or "{}")
+            except (TypeError, ValueError):
+                args = {}
+            record_activity({"kind": "call", "tool": tc.function.name, "arguments": args})
+            try:
                 fn = core.DISPATCH.get(tc.function.name)
                 out = fn(args) if fn else core.err("unknown tool")
             except requests.HTTPError as e:
-                args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
+                out = core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
             except Exception as e:
-                args, out = {}, core.err(f"{type(e).__name__}: {e}")
-            record_activity({"kind": "call", "tool": tc.function.name, "arguments": args})
+                out = core.err(f"{type(e).__name__}: {e}")
             emit(f"Received a response from {tc.function.name}.", "result")
             result_event = {"kind": "result", "tool": tc.function.name, "result": out[:2500]}
             result_ok = _native_tool_result_succeeded(tc.function.name, out)
