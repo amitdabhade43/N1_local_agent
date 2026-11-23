@@ -504,7 +504,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     activity = []
 
     def record_activity(event):
-        record_activity(event)
+        activity.append(event)
         if progress:
             kind = event.get("kind", "activity")
             tool = event.get("tool") or ""
@@ -633,7 +633,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         m = _model_completion(
             _client(base, api_key), model_id, msgs, require_tool=require_tool
         )
-        activity.append({"kind": "metric", "stage": "llm_inference",
+        record_activity({"kind": "metric", "stage": "llm_inference",
                          "elapsed_ms": round((time.perf_counter() - inference_started) * 1000, 1)})
         if not m.tool_calls:
             tc = core.text_call(m.content)
@@ -644,20 +644,20 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 tool_started = time.perf_counter()
                 out = core.exec_tool(*tc)
                 emit(f'Received a response from {tc[0]}.', 'result')
-                activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
+                record_activity({"kind": "call", "tool": tc[0], "arguments": tc[1]})
                 result_event = {"kind": "result", "tool": tc[0], "result": out[:2500]}
                 result_ok = _native_tool_result_succeeded(tc[0], out)
                 if result_ok is not None:
                     result_event["success"] = result_ok
                     result_event["verification"] = core.verify_tool_result(tc[0], out)
-                    activity.append({"kind": "verification", "tool": tc[0], **result_event["verification"]})
-                activity.append(result_event)
-                activity.append({"kind": "metric", "stage": "ninjaone_tool",
+                    record_activity({"kind": "verification", "tool": tc[0], **result_event["verification"]})
+                record_activity(result_event)
+                record_activity({"kind": "metric", "stage": "ninjaone_tool",
                                  "tool": tc[0], "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
                 try:
                     prepared = json.loads(out)
                     if prepared.get("approval_required"):
-                        activity.append({"kind": "approval_required", "action": prepared})
+                        record_activity({"kind": "approval_required", "action": prepared})
                 except (ValueError, AttributeError):
                     pass
                 msgs += [{"role": "assistant", "content": m.content},
@@ -707,21 +707,21 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 args, out = {}, core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
             except Exception as e:
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
-            activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
+            record_activity({"kind": "call", "tool": tc.function.name, "arguments": args})
             emit(f"Received a response from {tc.function.name}.", "result")
             result_event = {"kind": "result", "tool": tc.function.name, "result": out[:2500]}
             result_ok = _native_tool_result_succeeded(tc.function.name, out)
             if result_ok is not None:
                 result_event["success"] = result_ok
                 result_event["verification"] = core.verify_tool_result(tc.function.name, out)
-                activity.append({"kind": "verification", "tool": tc.function.name, **result_event["verification"]})
-            activity.append(result_event)
-            activity.append({"kind": "metric", "stage": "ninjaone_tool",
+                record_activity({"kind": "verification", "tool": tc.function.name, **result_event["verification"]})
+            record_activity(result_event)
+            record_activity({"kind": "metric", "stage": "ninjaone_tool",
                              "tool": tc.function.name, "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
             try:
                 prepared = json.loads(out)
                 if prepared.get("approval_required"):
-                    activity.append({"kind": "approval_required", "action": prepared})
+                    record_activity({"kind": "approval_required", "action": prepared})
             except (ValueError, AttributeError):
                 pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
