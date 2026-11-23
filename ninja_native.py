@@ -16,7 +16,7 @@ from openai import OpenAI
 
 import ninja_agent as core
 
-MAX_STEPS = 10
+MAX_STEPS = max(1, min(int(os.getenv("NINJA_AGENT_MAX_STEPS", "20")), 40))
 _ready, _sessions, _clients = False, {}, {}
 
 
@@ -625,13 +625,23 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return fp, activity
 
     clarification_guidance = _CLARIFICATION_GUIDANCE if _has_pending_clarification(hist) else ""
-    system = core.SYSTEM + core.candidates(q) + clarification_guidance + ("\n/no_think" if core.NO_THINK else "")
+    specialist = core.specialist_for_request(q)
+    system = (core.SYSTEM + core.specialist_instructions(q) + core.candidates(q)
+              + clarification_guidance + ("\n/no_think" if core.NO_THINK else ""))
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
+    max_steps = min(MAX_STEPS, max(1, int(specialist.max_iterations)))
+    max_seconds = max(15.0, min(float(os.getenv("NINJA_AGENT_MAX_SECONDS", "180")), 600.0))
+    run_started = time.monotonic()
+    tool_fingerprints = {}
     called = nudged = False
     steps_text = 0
-    for step in range(MAX_STEPS):
-        emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
+    for step in range(max_steps):
+        if time.monotonic() - run_started >= max_seconds:
+            answer = "I reached the configured execution time budget before the request was fully verified. The results collected so far are shown in the execution activity; please narrow the request or retry."
+            emit("Execution time budget reached; stopping safely.", "timeout")
+            break
+        emit(f'Analyzing the request (step {step + 1} of {max_steps}).', 'model')
         inference_started = time.perf_counter()
         require_tool = bool(nudged and not called and _requires_ninjaone_tool(q))
         m = _model_completion(
@@ -647,7 +657,16 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 emit(f'Calling NinjaOne operation: {tc[0]}', 'tool')
                 tool_started = time.perf_counter()
                 record_activity({"kind": "call", "tool": tc[0], "arguments": tc[1]})
-                out = core.exec_tool(*tc)
+                fingerprint = hashlib.sha256(json.dumps(
+                    [tc[0], tc[1]], sort_keys=True, default=str
+                ).encode("utf-8")).hexdigest()
+                tool_fingerprints[fingerprint] = tool_fingerprints.get(fingerprint, 0) + 1
+                if tool_fingerprints[fingerprint] > 2:
+                    out = core.err("Repeated identical tool call blocked by loop protection. Use the previous result or change the query.")
+                    record_activity({"kind": "policy", "stage": "loop_guard",
+                                     "message": f"Blocked repeated identical call to {tc[0]}."})
+                else:
+                    out = core.exec_tool(tc[0], tc[1], allowed=specialist.allowed_tools)
                 emit(f'Received a response from {tc[0]}.', 'result')
                 result_event = {"kind": "result", "tool": tc[0], "result": out[:2500]}
                 result_ok = _native_tool_result_succeeded(tc[0], out)
@@ -708,13 +727,18 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             except (TypeError, ValueError):
                 args = {}
             record_activity({"kind": "call", "tool": tc.function.name, "arguments": args})
-            try:
-                fn = core.DISPATCH.get(tc.function.name)
-                out = fn(args) if fn else core.err("unknown tool")
-            except requests.HTTPError as e:
-                out = core.err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
-            except Exception as e:
-                out = core.err(f"{type(e).__name__}: {e}")
+            fingerprint = hashlib.sha256(json.dumps(
+                [tc.function.name, args], sort_keys=True, default=str
+            ).encode("utf-8")).hexdigest()
+            tool_fingerprints[fingerprint] = tool_fingerprints.get(fingerprint, 0) + 1
+            if tool_fingerprints[fingerprint] > 2:
+                out = core.err("Repeated identical tool call blocked by loop protection. Use the previous result or change the query.")
+                record_activity({"kind": "policy", "stage": "loop_guard",
+                                 "message": f"Blocked repeated identical call to {tc.function.name}."})
+            else:
+                out = core.exec_tool(
+                    tc.function.name, args, allowed=specialist.allowed_tools
+                )
             emit(f"Received a response from {tc.function.name}.", "result")
             result_event = {"kind": "result", "tool": tc.function.name, "result": out[:2500]}
             result_ok = _native_tool_result_succeeded(tc.function.name, out)
