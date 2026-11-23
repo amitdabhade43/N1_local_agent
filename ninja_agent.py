@@ -1243,13 +1243,13 @@ def candidates(q):
 
 def build_execution_plan(question, history=None):
     """Build an inspectable, specification-ranked execution outline (not model chain-of-thought)."""
-    text = re.sub(r"\\s+", " ", str(question or "").strip())
+    text = re.sub(r"\s+", " ", str(question or "").strip())
     folded = text.casefold()
     mutation = bool(re.search(
-        r"\\b(?:add|assign|grant|remove|revoke|update|change|modify|create|enable|disable|"
-        r"invite|suspend|activate|deactivate|link|unlink)\\b", folded
+        r"\b(?:add|assign|grant|remove|revoke|update|change|modify|create|enable|disable|"
+        r"invite|suspend|activate|deactivate|link|unlink)\b", folded
     ))
-    destructive = bool(re.search(r"\\b(?:delete|erase|purge|destroy)\\b", folded))
+    destructive = bool(re.search(r"\b(?:delete|erase|purge|destroy)\b", folded))
     intent = "mutation" if mutation else "read"
     if destructive:
         intent = "blocked_destructive"
