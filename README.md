@@ -146,3 +146,14 @@ Native and MCP are execution interfaces to one user-facing agent workflow. The b
 - Coverage limits: multipart and file-upload operations can be discovered in the specification but are not executed through the current chat transport. The agent must explain this boundary instead of claiming that an upload occurred.
 
 Simple unfiltered collection counts and lists can be routed from the loaded OpenAPI catalog without hard-coded endpoint tables. Filtered, relational, entity-specific and investigative requests use the full tool-using workflow.
+
+
+## Generic execution planning, verification and progress evidence
+
+The Native backend now creates a structured execution outline for each model-routed request using the loaded OpenAPI operation index. The outline records the request intent (read, mutation, or blocked destructive action), the route selected, the top specification-ranked candidate operations, their HTTP methods and paths, whether each is read-only or approval-gated, and the safety constraints that apply. This is an inspectable execution summary, not private model chain-of-thought.
+
+The Native activity stream includes an `execution_plan` event before model tool execution. Each live `call_api` and `resolve_entity` result also receives a separate `verification` event. The shared result verifier checks the JSON response envelope, required result shape, explicit API/validation errors, approval-prepared state, and partial/truncated pagination markers. A partial result is never labelled complete. A prepared write is explicitly distinguished from an executed write.
+
+This is a first reusable verification layer, not proof that every business-level interpretation is correct. The model must still match returned fields and filters to the user's request; write completion must still be established from the approval action's NinjaOne response. The verifier does not infer missing fields or silently promote a partial result to a complete tenant-wide count.
+
+Deterministic recipes remain as fast paths for narrow, high-confidence workflows. They should be treated as optimizations over the common specification-driven engine, not as the only way the agent can support an API operation. New resource support should preferentially use the OpenAPI operation/field index, shared entity resolution, request validation, pagination handling and shared verification instead of adding another question-specific regex recipe.
