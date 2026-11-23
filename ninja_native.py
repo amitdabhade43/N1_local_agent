@@ -501,7 +501,7 @@ async def try_fast_path(session_id, content):
         raise HTTPException(status_code=502, detail=f"Native NinjaOne fast path failed: {exc}")
 
 
-def _execute_parallel_read_batch(tool_calls, allowed_tools):
+def _execute_parallel_read_batch(tool_calls, allowed_tools, seen_fingerprints=None):
     """Run a batch concurrently only when every call is a distinct documented read-only GET."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -524,7 +524,7 @@ def _execute_parallel_read_batch(tool_calls, allowed_tools):
         fingerprint = hashlib.sha256(json.dumps(
             [name, args], sort_keys=True, default=str
         ).encode("utf-8")).hexdigest()
-        if fingerprint in fingerprints:
+        if fingerprint in fingerprints or fingerprint in (seen_fingerprints or {}):
             return {}
         fingerprints.add(fingerprint)
         prepared.append((tc, name, args))
@@ -771,7 +771,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         called = True
         msgs.append(m.model_dump(exclude_none=True))
         parallel_read_results = _execute_parallel_read_batch(
-            m.tool_calls, specialist.allowed_tools
+            m.tool_calls, specialist.allowed_tools, tool_fingerprints
         )
         if parallel_read_results:
             emit(
