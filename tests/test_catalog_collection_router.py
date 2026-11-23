@@ -92,7 +92,7 @@ def test_catalog_router_defers_ambiguous_endpoint_matches(monkeypatch):
 
 
 def test_catalog_router_does_not_infer_a_collection_from_a_plural_path_alone(monkeypatch):
-    candidate = operation()
+    _score, candidate = operation()
     candidate["responses"] = {
         "200": {"content": {"application/json": {"schema": {"type": "object", "properties": {
             "metadata": {"type": "object"}
