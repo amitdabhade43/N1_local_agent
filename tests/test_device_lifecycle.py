@@ -127,3 +127,47 @@ def test_device_lifecycle_refuses_to_claim_complete_history_when_inventory_or_au
 
     assert "audit request failed before the search completed" in answer
     assert "history may be incomplete" in answer
+
+
+def test_device_lifecycle_uses_documented_cursor_to_search_older_activity_pages(monkeypatch):
+    operations = {
+        "/v2/activities": {
+            "params": [
+                {"name": "pageSize"}, {"name": "newerThan"},
+                {"name": "status"}, {"name": "class"},
+            ]
+        },
+        "/v2/devices": {"params": []},
+    }
+    monkeypatch.setattr(ninja_agent, "op_by_path", lambda path: operations.get(path))
+    monkeypatch.setattr(
+        ninja_agent,
+        "fetch",
+        lambda op, path, query: ninja_agent.FetchRows([
+            {"id": 8100, "systemName": "B82ZST3", "organizationName": "HOERBIGER"}
+        ]),
+    )
+    calls = []
+
+    def fake_http_get(path, query):
+        calls.append(dict(query))
+        if "newerThan" not in query:
+            return {
+                "activities": [
+                    {
+                        "id": 9000 - index,
+                        "statusCode": "NODE_DELETED",
+                        "message": f"Device 'OTHER-{index}' deleted.",
+                    }
+                    for index in range(1000)
+                ]
+            }
+        return {"activities": [_activity(7999, 5988, 1795427226.754357)]}
+
+    monkeypatch.setattr(ninja_agent, "http_get", fake_http_get)
+    answer = ninja_agent.recipe_device_lifecycle("Who deleted B82ZST3?")
+
+    assert len(calls) == 2
+    assert calls[1]["newerThan"] == 8001
+    assert "Activity **7999**" in answer
+    assert "node ID **5988**" in answer
