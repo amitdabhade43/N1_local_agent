@@ -25,7 +25,7 @@ def test_device_lifecycle_reports_deleted_registrations_and_current_registration
     operations = {
         "/v2/activities": {
             "params": [
-                {"name": "pageSize"}, {"name": "olderThan"},
+                {"name": "pageSize"}, {"name": "newerThan"},
                 {"name": "status"}, {"name": "class"},
             ]
         },
@@ -74,7 +74,7 @@ def test_device_lifecycle_does_not_treat_current_inventory_as_deletion_history(m
     operations = {
         "/v2/activities": {
             "params": [
-                {"name": "pageSize"}, {"name": "olderThan"},
+                {"name": "pageSize"}, {"name": "newerThan"},
                 {"name": "status"}, {"name": "class"},
             ]
         },
@@ -101,7 +101,7 @@ def test_device_lifecycle_refuses_to_claim_complete_history_when_inventory_or_au
     operations = {
         "/v2/activities": {
             "params": [
-                {"name": "pageSize"}, {"name": "olderThan"},
+                {"name": "pageSize"}, {"name": "newerThan"},
                 {"name": "status"}, {"name": "class"},
             ]
         },
