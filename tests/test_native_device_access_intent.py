@@ -258,3 +258,21 @@ def test_people_inventory_api_error_fails_closed():
     assert "identity search is incomplete" in result
     assert "No change was prepared" in result
     call.assert_not_called()
+
+def test_system_wording_keeps_device_id_separate_from_person_name():
+    rene = person(31, "Rene", "Piuk", "rene.piuk@example.com")
+    with patch.object(core, "OPS", {OPERATION["id"]: OPERATION}), \
+         patch.object(core, "t_resolve", side_effect=resolver_for([rene])) as resolve, \
+         patch.object(core, "t_call", return_value=approval()) as call:
+        result = json.loads(core.recipe_add_device_access(
+            "add VM-6804B761 system access to rene"
+        ))
+
+    assert result["approval_required"] is True
+    assert call.call_count == 1
+    assert call.call_args.args[0]["path_params"] == {"id": 31}
+    assert call.call_args.args[0]["body"] == {"addDeviceIds": [50]}
+    assert any(
+        item.args[0] == {"kind": "device", "name": "VM-6804B761"}
+        for item in resolve.call_args_list
+    )
