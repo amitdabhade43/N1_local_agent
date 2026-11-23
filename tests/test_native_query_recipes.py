@@ -158,10 +158,13 @@ def test_person_first_device_access_request_resolves_user_and_device_separately(
     assert result["body"] == {"addDeviceIds": [50]}
     assert "Rene Piuk" in result["summary"]
     assert "VM-6804B761" in result["summary"]
-    # A full name is identity-qualified: resolve that exact end-user first,
-    # then resolve the device separately. No first-name cross-inventory scan.
+    # Cross-check name-only targets across all people inventories, while
+    # collapsing duplicate full-name records by NinjaOne userType.
     assert calls == [
         ("end_user", "Rene Piuk"),
+        ("user", "Rene Piuk"),
+        ("technician", "Rene Piuk"),
+        ("contact", "Rene Piuk"),
         ("device", "VM-6804B761"),
     ]
     assert len(prepared_calls) == 1
