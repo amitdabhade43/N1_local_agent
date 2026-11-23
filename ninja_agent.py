@@ -1932,7 +1932,7 @@ def _find_end_user_creator(end_user):
         return "Creator lookup unavailable: GET /v2/activities is not present in the loaded NinjaOne API specification."
 
     documented = {parameter.get("name") for parameter in operation.get("params", [])}
-    required_paging = {"pageSize", "olderThan"}
+    required_paging = {"pageSize", "newerThan"}
     if not required_paging.issubset(documented):
         return (
             "Creator lookup unavailable: the loaded API specification does not document the "
@@ -1947,7 +1947,7 @@ def _find_end_user_creator(end_user):
     complete = False
     for _ in range(200):
         if cursor is not None:
-            query["olderThan"] = cursor
+            query["newerThan"] = cursor
         result = http_get(path, dict(query))
         if not isinstance(result, dict) or not isinstance(result.get("activities"), list):
             return "Creator could not be verified: NinjaOne returned an unexpected activity-log response."
@@ -3168,7 +3168,7 @@ def recipe_device_lifecycle(q):
     if not activity_op:
         return "I cannot verify deletion history: GET /v2/activities is not available in the loaded NinjaOne API specification."
     documented = {parameter.get("name") for parameter in activity_op.get("params", [])}
-    if not {"pageSize", "olderThan", "status"}.issubset(documented):
+    if not {"pageSize", "newerThan", "status"}.issubset(documented):
         return "I cannot verify deletion history: the loaded NinjaOne specification does not document the required activity filters and pagination."
 
     # Retrieve current inventory separately: an active record does not erase
@@ -3207,7 +3207,7 @@ def recipe_device_lifecycle(q):
     complete = False
     for _ in range(200):
         if cursor is not None:
-            query["olderThan"] = cursor
+            query["newerThan"] = cursor
         try:
             result = http_get(activity_path, dict(query))
         except Exception as exc:
@@ -3235,7 +3235,7 @@ def recipe_device_lifecycle(q):
         except (TypeError, ValueError):
             return "I cannot confirm a complete deletion search: the activity page did not provide a valid activity ID cursor."
         if next_cursor <= 0 or (cursor is not None and next_cursor >= cursor):
-            return "I cannot confirm a complete deletion search: the activity pagination cursor did not move to older records."
+            return "I cannot confirm a complete deletion search: the documented newerThan cursor did not move to older records."
         cursor = next_cursor
     if not complete:
         return (
