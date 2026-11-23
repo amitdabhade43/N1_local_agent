@@ -190,6 +190,13 @@ class ToolRegistry:
                 raise ValueError(f"Tool already registered: {tool.name}")
             self._tools[tool.name] = tool
 
+    def replace(self, tool: ToolDefinition) -> None:
+        """Replace a dynamic adapter binding without changing its registry key."""
+        if not tool.name or not callable(tool.handler):
+            raise ValueError("A registered tool needs a name and callable handler.")
+        with self._lock:
+            self._tools[tool.name] = tool
+
     def register_lazy(self, name: str, description: str,
                       loader: Callable[[], Callable[[dict[str, Any]], Any]],
                       input_schema: dict[str, Any] | None = None,
