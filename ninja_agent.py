@@ -1883,11 +1883,11 @@ def _find_end_user_creator(end_user):
 
 def recipe_count_technician_role_users(q):
     """Count distinct users assigned to technician-type roles from the dedicated roles API."""
-    text = re.sub(r"\\s+", " ", str(q or "").strip()).casefold()
-    count_intent = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", text))
-    user_intent = bool(re.search(r"\\b(?:users?|people|members?)\\b", text))
+    text = re.sub(r"\s+", " ", str(q or "").strip()).casefold()
+    count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", text))
+    user_intent = bool(re.search(r"\b(?:users?|people|members?)\b", text))
     technician_role_intent = bool(
-        re.search(r"\\btechnician\\s+roles?\\b|\\broles?\\s+(?:for|of)\\s+technicians?\\b", text)
+        re.search(r"\btechnician\s+roles?\b|\broles?\s+(?:for|of)\s+technicians?\b", text)
     )
     if not (count_intent and user_intent and technician_role_intent):
         return None
@@ -2053,8 +2053,8 @@ def recipe_add_device_access(q):
     user = None
 
     person_first = re.search(
-        r"^(?:please\\s+)?(?:add|grant|give|provide)\\s+(?P<user>.+?)\\s+"
-        r"(?:device\\s+)?access\\s+to\\s+"
+        r"^(?:please\s+)?(?:add|grant|give|provide)\s+(?P<user>.+?)\s+"
+        r"(?:device\s+)?access\s+to\s+"
         r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)$",
         text, re.I,
     )
