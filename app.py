@@ -1355,6 +1355,25 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     if backend == "native":
         return await ninja_native.try_fast_path(session_id, message_content)
 
+    # Device-deletion investigations need the same evidence-complete lifecycle
+    # route in MCP and Native mode. Reuse the shared spec-driven NinjaOne read
+    # recipe before asking the MCP model to discover endpoints repeatedly.
+    if re.search(
+        r"\\b(?:who\\s+(?:deleted|removed)|deletion\\s+history\\s+for|history\\s+of)\\b",
+        message_text,
+        re.I,
+    ):
+        try:
+            lifecycle_result = await ninja_native.try_fast_path(session_id, message_content)
+            if lifecycle_result is not None:
+                await _record_mcp_direct_turn(session_id, message_content, lifecycle_result)
+                return lifecycle_result
+        except Exception as exc:
+            _logger.warning(
+                "Shared device lifecycle fast path failed; handing off to MCP: %s",
+                type(exc).__name__,
+            )
+
     tools = await get_tools()
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
