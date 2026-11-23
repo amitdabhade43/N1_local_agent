@@ -2154,27 +2154,26 @@ def recipe_add_device_access(q):
         except Exception as exc:
             return f"Could not resolve the end user: {type(exc).__name__}: {exc}"
         # Resolve the requested identity across every NinjaOne people inventory.
-        # /v2/users also contains technicians, so normalize that overlap by stable ID.
+        # /v2/users overlaps the technician endpoint; normalize those records by ID.
         people_records = []
         people_results = [("end_user", user_result)]
 
-        # A name-only target is checked across every people inventory before a
-        # write. Exact full names collapse duplicate API representations by
-        # NinjaOne userType; one-token searches retain source categories so all
-        # candidate records remain visible for explicit disambiguation.
-        if not email:
-            for kind in ("user", "technician", "contact"):
-                try:
-                    people_results.append((
-                        kind,
-                        json.loads(t_resolve({"kind": kind, "name": lookup})),
-                    ))
-                except Exception as exc:
-                    return (
-                        f'Could not verify all NinjaOne people records for "{user_label}": '
-                        f'{type(exc).__name__}: {exc}. The search is incomplete, so no person '
-                        "will be selected and no change was prepared."
-                    )
+        # Verify every selected identity across every people inventory, including
+        # email-qualified requests restored from older clarification histories.
+        # This prevents an unlabelled candidate from becoming an end-user write
+        # when the same email belongs to a console user or technician.
+        for kind in ("user", "technician", "contact"):
+            try:
+                people_results.append((
+                    kind,
+                    json.loads(t_resolve({"kind": kind, "name": lookup})),
+                ))
+            except Exception as exc:
+                return (
+                    f'Could not verify all NinjaOne people records for "{user_label}": '
+                    f'{type(exc).__name__}: {exc}. The search is incomplete, so no person '
+                    "will be selected and no change was prepared."
+                )
 
         for kind, result in people_results:
             if not isinstance(result, dict) or result.get("error"):
@@ -2223,24 +2222,26 @@ def recipe_add_device_access(q):
                 if not matched:
                     continue
 
-                # For exact full-name searches, use the documented userType
-                # to collapse the same identity returned by overlapping endpoints.
-                # For one-token searches, preserve the inventory source as a separate
-                # candidate so the user can inspect every matching NinjaOne record.
+                # The /v2/users endpoint can return technicians also exposed
+                # through /v2/user/technicians. Use userType to classify those
+                # overlaps consistently so a technician appears only once.
+                # For one-token searches, keep END_USER rows in the /v2/users
+                # inventory visible as console-user entries; exact names/emails
+                # normalize END_USER rows to the canonical end-user category.
+                user_type = str(row.get("userType") or "").upper()
                 if kind == "end_user":
                     category = "end-user"
-                elif kind == "technician":
+                elif kind == "technician" or (
+                    kind == "user" and user_type == "TECHNICIAN"
+                ):
                     category = "technician"
                 elif kind == "contact":
                     category = "contact"
-                elif len(user_name.split()) > 1:
-                    user_type = str(row.get("userType") or "").upper()
-                    if user_type == "END_USER":
-                        category = "end-user"
-                    elif user_type == "TECHNICIAN":
-                        category = "technician"
-                    else:
-                        category = "console user"
+                elif (
+                    (email or len(user_name.split()) > 1)
+                    and user_type == "END_USER"
+                ):
+                    category = "end-user"
                 else:
                     category = "console user"
 
