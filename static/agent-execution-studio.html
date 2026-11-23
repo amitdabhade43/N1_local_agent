@@ -93,11 +93,16 @@ function addStep(step){
 function classifyActivity(item){
  if(item.kind==="approval_required")return "pending";
  if(item.kind==="metric")return "success";
+ if(item.kind==="execution_plan")return "info";
+ if(item.kind==="verification"){
+  const status=String(item.status||item.verification_status||"").toLowerCase();
+  return /fail|error/.test(status)?"error":/partial|incomplete/.test(status)?"warning":"success";
+ }
  if(item.kind==="result"){
   const s=String(item.result||"").toLowerCase();
   if(/\b(error|exception|failed|traceback)\b/.test(s))return "error";
   if(/approval_required|pending approval/.test(s))return "pending";
-  return "success";
+  return item.success===false?"error":"success";
  }
  return "running";
 }
@@ -107,9 +112,14 @@ function endpointOf(item){
 }
 function titleOf(item){
  if(item.kind==="approval_required"){const a=item.action||{};return "Approval required · "+(a.method||"WRITE")+" "+(a.path||"");}
- if(item.kind==="metric")return "Execution metric · "+(item.stage||"stage");
+ if(item.kind==="execution_plan"){
+  const p=item.plan||{};
+  return "Execution plan · "+(p.intent||"request")+" · "+(p.route||"spec workflow");
+ }
+ if(item.kind==="verification")return "Verification · "+(item.tool||"operation")+" · "+(item.status||"checked");
+ if(item.kind==="metric")return "Performance · "+(item.stage||"stage");
  const name=item.tool||"Agent event";
- return (item.kind==="call"?"Tool call: ":item.kind==="result"?"Tool result: ":"")+name;
+ return (item.kind==="call"?"NinjaOne operation selected · ":item.kind==="result"?"NinjaOne response · ":"")+name;
 }
 function activityKey(item){try{return JSON.stringify(item)}catch{return String(item)}}
 function activityToSteps(activity){
@@ -119,8 +129,8 @@ function activityToSteps(activity){
   const status=classifyActivity(item),endpoint=endpointOf(item);
   const duration=item.elapsed_ms!=null?Number(item.elapsed_ms).toFixed(1)+" ms":"";
   const request=item.kind==="call"?item.arguments:(item.action||null);
-  const response=item.kind==="result"?item.result:(item.kind==="metric"?item:null);
-  addStep({kind:item.kind,title:titleOf(item),tool:item.tool||"",endpoint,status,duration,request,response,raw:item,category:item.kind==="call"?"api":status==="error"?"error":status==="warning"?"warning":"all"});
+  const response=item.kind==="result"?item.result:(item.kind==="execution_plan"?item.plan:(item.kind==="verification"?item:(item.kind==="metric"?item:null)));
+  addStep({kind:item.kind,title:titleOf(item),tool:item.tool||"",endpoint,status,duration,request,response,raw:item,category:item.kind==="call"||item.kind==="result"?"api":status==="error"?"error":status==="warning"?"warning":"all"});
  });
 }
 function filteredSteps(){
