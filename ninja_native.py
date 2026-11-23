@@ -332,7 +332,9 @@ def _resolve_device_access_clarification(question, history):
 
     if len(selected) != 1:
         choices = "\n".join(
-            f'{item["number"]}. {item["name"]}' + (f' <{item["email"]}>' if item["email"] else "")
+            f'{item["number"]}. {item["name"]}'
+            + (f' <{item["email"]}>' if item["email"] else "")
+            + (f' ({item["category"]})' if item["category"] else "")
             for item in candidates
         )
         if selected:
@@ -345,8 +347,8 @@ def _resolve_device_access_clarification(question, history):
         )
 
     user = selected[0]
-    if user.get("category") != "end-user":
-        category = user.get("category") or "unclassified"
+    category = user.get("category")
+    if category and category != "end-user":
         identity = user["name"] + (f' <{user["email"]}>' if user["email"] else "")
         return None, (
             f"The selected record {identity} is a {category}, not an end user. "
@@ -354,6 +356,9 @@ def _resolve_device_access_clarification(question, history):
             "I will not substitute a same-name or same-email end-user record. "
             "No change was prepared."
         )
+    # Older conversation histories may contain end-user candidate lists without
+    # an explicit category label. Resume those selections, but let the current
+    # recipe re-resolve the exact identity across every people inventory.
     target = user["name"]
     if user["email"]:
         target += f' <{user["email"]}>'
