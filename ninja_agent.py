@@ -2038,8 +2038,12 @@ def recipe_add_device_access(q):
 
     def exact_device_rows(label):
         result = json.loads(t_resolve({"kind": "device", "name": label}))
+        if not isinstance(result, dict):
+            raise ValueError("Device resolver returned an invalid response object.")
         exact = []
         for row in (result.get("matches") or []):
+            if not isinstance(row, dict):
+                continue
             labels = (
                 row.get("systemName"), row.get("displayName"), row.get("dnsName"),
                 row.get("netbiosName"), row.get("serialNumber"), row.get("name"),
@@ -2192,6 +2196,8 @@ def recipe_add_device_access(q):
                     "No person was selected. No change was prepared."
                 )
             for row in result_matches:
+                if not isinstance(row, dict):
+                    continue
                 if email:
                     matched = str(row.get("email", "")).strip().lower() == email
                 else:
@@ -2329,7 +2335,8 @@ def recipe_add_device_access(q):
 
     op = next((
         operation for operation in OPS.values()
-        if operation.get("method") == "PATCH"
+        if isinstance(operation, dict)
+        and operation.get("method") == "PATCH"
         and operation.get("path") == "/v2/user/end-user/{id}/device-access"
     ), None)
     if not op:
@@ -2348,6 +2355,8 @@ def recipe_add_device_access(q):
         prepared = json.loads(prepared_raw)
     except (TypeError, ValueError):
         return f"Could not prepare the access change: {prepared_raw}"
+    if not isinstance(prepared, dict):
+        return "Could not prepare the access change because the API validator returned a non-object response. No change was prepared."
     if not prepared.get("approval_required"):
         return f"Could not prepare the access change: {prepared_raw}"
 
