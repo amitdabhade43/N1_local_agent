@@ -52,6 +52,7 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         }
         device = {"id": 680, "systemName": "VM-680461"}
         user_result = json.dumps({"matches": [user]})
+        empty_people_result = json.dumps({"matches": []})
         device_result = json.dumps({"matches": [device]})
         operation = {
             "id": "patchEndUserDeviceAccess", "method": "PATCH",
@@ -66,8 +67,16 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
                     "operation_id": "patchEndUserDeviceAccess", "method": "PATCH",
                     "path": "/v2/user/end-user/42/device-access",
                     "body": {"addDeviceIds": [680]}, "expires_in_seconds": 600}
-        with patch.object(ninja_agent, "t_resolve", side_effect=[user_result, device_result]), \
-             patch.object(ninja_agent, "OPS", {"patchEndUserDeviceAccess": operation}), \
+        with patch.object(
+            ninja_agent, "t_resolve",
+            side_effect=[
+                user_result,
+                empty_people_result,  # /v2/users
+                empty_people_result,  # /v2/user/technicians
+                empty_people_result,  # /v2/contacts
+                device_result,
+            ],
+        ), patch.object(ninja_agent, "OPS", {"patchEndUserDeviceAccess": operation}), \
              patch.object(ninja_agent, "t_call", return_value=json.dumps(prepared)) as call:
             result = json.loads(ninja_agent.recipe_add_device_access(
                 "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
@@ -81,8 +90,13 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         user = {"id": 42, "firstName": "Rene", "lastName": "Piuk",
                 "email": "ing.rene.piuk@gmail.com", "accessibleDeviceIds": [680]}
         device = {"id": 680, "systemName": "VM-680461"}
+        empty_people_result = json.dumps({"matches": []})
         with patch.object(ninja_agent, "t_resolve", side_effect=[
-            json.dumps({"matches": [user]}), json.dumps({"matches": [device]})
+            json.dumps({"matches": [user]}),
+            empty_people_result,  # /v2/users
+            empty_people_result,  # /v2/user/technicians
+            empty_people_result,  # /v2/contacts
+            json.dumps({"matches": [device]}),
         ]), patch.object(ninja_agent, "t_call") as call:
             answer = ninja_agent.recipe_add_device_access(
                 "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
@@ -95,8 +109,13 @@ class NativePeopleFieldLookupTests(unittest.TestCase):
         user = {"id": 42, "firstName": "Rene", "lastName": "Piuk",
                 "email": "ing.rene.piuk@gmail.com", "accessibleDeviceIds": [24]}
         device = {"id": 680, "systemName": "VM-680461-OLD"}
+        empty_people_result = json.dumps({"matches": []})
         with patch.object(ninja_agent, "t_resolve", side_effect=[
-            json.dumps({"matches": [user]}), json.dumps({"matches": [device]})
+            json.dumps({"matches": [user]}),
+            empty_people_result,  # /v2/users
+            empty_people_result,  # /v2/user/technicians
+            empty_people_result,  # /v2/contacts
+            json.dumps({"matches": [device]}),
         ]), patch.object(ninja_agent, "t_call") as call:
             answer = ninja_agent.recipe_add_device_access(
                 "add VM-680461 device access to Rene Piuk <ing.rene.piuk@gmail.com>"
