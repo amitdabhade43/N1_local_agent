@@ -226,9 +226,11 @@ def test_person_first_device_access_rejects_non_object_write_validator_response(
     def fake_resolve(arguments):
         if arguments["kind"] == "end_user":
             return json.dumps({"matches": [end_user]})
+        if arguments["kind"] in {"user", "technician", "contact"}:
+            return json.dumps({"matches": []})
         if arguments["kind"] == "device":
             return json.dumps({"matches": [device]})
-        raise AssertionError("A full-name target should not need other people inventories.")
+        raise AssertionError(f"Unexpected resolver kind: {arguments['kind']}")
 
     monkeypatch.setattr(ninja_agent, "t_resolve", fake_resolve)
     monkeypatch.setattr(ninja_agent, "OPS", {
