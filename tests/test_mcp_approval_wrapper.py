@@ -41,6 +41,45 @@ def test_mcp_call_delete_method_is_identifiable_for_policy_guard():
     assert parsed == ("DELETE", "/v2/user/end-users/{id}", None)
 
 
+def test_wrapped_mcp_delete_is_blocked_before_schema_validation_or_execution(monkeypatch):
+    from pydantic import BaseModel
+
+    class CallArgs(BaseModel):
+        endpoint: str
+        path_params: dict | None = None
+        query: dict | None = None
+        body: dict | None = None
+
+    invoked = []
+
+    async def original_call(endpoint, path_params=None, query=None, body=None):
+        invoked.append(endpoint)
+        return {"unexpected": "execution"}
+
+    tool = app.StructuredTool.from_function(
+        coroutine=original_call,
+        name="ninjaone__call",
+        description="NinjaOne API call",
+        args_schema=CallArgs,
+        infer_schema=False,
+    )
+
+    def should_not_validate(*args, **kwargs):
+        raise AssertionError("DELETE must be blocked before schema validation")
+
+    monkeypatch.setattr(app, "_mcp_validate_call", should_not_validate)
+    wrapped = app.wrap_mcp_write_tools([tool])
+
+    result = asyncio.run(wrapped[0].ainvoke({
+        "endpoint": "DELETE /v2/user/end-users/{id}",
+    }))
+    payload = __import__("json").loads(result)
+
+    assert payload["blocked_delete"] is True
+    assert payload["executed"] is False
+    assert invoked == []
+
+
 def test_approved_direct_mcp_call_invokes_unwrapped_tool_without_token(monkeypatch):
     calls = []
 
