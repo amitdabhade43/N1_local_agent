@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import requests
 from openai import OpenAI
-from agent_runtime import AgentDefinition, AgentRegistry, SubagentManager, ToolDefinition, ToolRegistry
+from agent_runtime import AgentDefinition, AgentRegistry, EventBus, RuntimeEvent, SubagentManager, TaskRegistry, ToolDefinition, ToolRegistry
 from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog, compare_spec_documents, schema_field_entries, expand_refs)
 
 SPEC_URL = os.getenv("NINJA_SPEC_URL", "https://app.ninjarmm.com/apidocs/NinjaRMM-API-v2.json")
@@ -1240,7 +1240,7 @@ NINJA_AGENTS.register(AgentDefinition(
     instructions="Use the shared OpenAPI operation and field catalogs; do not assume a resource-specific recipe exists.",
     keywords=(), allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
 ))
-NINJA_SUBAGENTS = SubagentManager(max_depth=1, max_children=4)
+NINJA_TASKS = TaskRegistry(history_limit=250)\nNINJA_EVENT_BUS = EventBus()\nNINJA_SUBAGENTS = SubagentManager(\n    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4\n)
 
 
 def specialist_for_request(question):
