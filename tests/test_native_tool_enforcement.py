@@ -66,3 +66,10 @@ def test_api_error_or_approval_payload_is_not_a_verified_read():
     assert ninja_native._native_tool_result_succeeded(
         "call_api", '{"approval_required":true,"action_id":"x"}'
     ) is False
+
+
+
+def test_live_entity_resolution_counts_as_a_verified_tenant_lookup():
+    assert ninja_native._native_tool_result_succeeded(
+        "resolve_entity", '{"matches":[{"id":144,"name":"Rene Piuk"}]}'
+    ) is True

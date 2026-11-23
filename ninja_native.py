@@ -44,8 +44,8 @@ def _requires_ninjaone_tool(content):
 
 
 def _native_tool_result_succeeded(tool_name, output):
-    """Validate that a live call_api result is a successful structured response."""
-    if tool_name != "call_api":
+    """Validate tool results that carry live tenant data, before UI truncation."""
+    if tool_name not in {"call_api", "resolve_entity"}:
         return None
     try:
         parsed = json.loads(output or "{}")
@@ -661,7 +661,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     approval_events = [item for item in activity if item.get("kind") == "approval_required"]
     live_api_results = [
         item for item in activity
-        if item.get("kind") == "result" and item.get("tool") == "call_api"
+        if item.get("kind") == "result" and item.get("tool") in {"call_api", "resolve_entity"}
     ]
     verified_read_result = any(item.get("success") is True for item in live_api_results)
     if (
