@@ -128,3 +128,17 @@ Set `AGENT_BACKEND=mcp`. The app discovers tools exposed by the configured MCP s
 - Chat and pending-approval state are held in backend memory and cleared when the backend restarts.
 - Keep the web server bound to loopback unless authentication and network protections are added.
 - Local model tool-calling reliability varies; the Native backend uses deterministic API discovery and schema validation to reduce dependence on model-generated tool syntax.
+
+
+## Unified spec-driven agent workflow
+
+Native and MCP are execution interfaces to one user-facing agent workflow. The bundled ninja_spec.json is the executable source of truth: the agent searches the operation catalog, inspects the selected contract and fields, resolves entity IDs, validates parameters and request bodies, and uses the resulting live data to answer.
+
+- Reads: GET and specification-confirmed read-only POST queries may run directly. Pagination is followed only when the OpenAPI request and response schemas establish a safe cursor. Counts and lists disclose incomplete pagination or display truncation.
+- Writes: documented non-delete JSON and URL-encoded POST, PUT and PATCH operations are approval-gated. The exact method, path, query and body are presented before execution. A chat message such as "yes" does not approve a write; the user must press Approve and execute.
+- Safety: DELETE and explicit delete operations remain blocked. Ambiguous targets, missing required fields, unsupported payloads and incomplete identity searches fail closed rather than guessing.
+- MCP approval: the Local Agent intercepts both the NinjaOne gateway's call/raw_call tools and compatible execute_endpoint tools. The original call/raw_call request is held server-side and invoked only after the approval button is clicked; those upstream tools do not accept an approval-token argument.
+- Native tool use: requests that need live NinjaOne evidence trigger a tool-call retry if the model initially responds with prose. The Native backend requests tool_choice=required where the OpenAI-compatible local provider supports it, and otherwise falls back to an explicit tool-call instruction with fail-closed response checks.
+- Coverage limits: multipart and file-upload operations can be discovered in the specification but are not executed through the current chat transport. The agent must explain this boundary instead of claiming that an upload occurred.
+
+Simple unfiltered collection counts and lists can be routed from the loaded OpenAPI catalog without hard-coded endpoint tables. Filtered, relational, entity-specific and investigative requests use the full tool-using workflow.

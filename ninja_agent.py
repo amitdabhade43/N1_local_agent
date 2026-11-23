@@ -197,26 +197,33 @@ class Index:
         n = max(len(self.docs), 1)
         self.idf = {t: math.log(1 + n / c) for t, c in df.items()}
 
-    def search(self, q, k=5):
+    def search_scored(self, q, k=5):
+        """Return ranked (score, operation) pairs for confidence-aware spec routing."""
         qt = set()
-        for t in toks(q):
-            qt.add(t)
-            qt.update(toks(SYN.get(t, "")))
+        for token in toks(q):
+            qt.add(token)
+            qt.update(toks(SYN.get(token, "")))
         detail = bool(qt & {"detail", "id", "specific"})
         out = []
-        for i, o in self.ops.items():
-            if is_delete_operation(o["method"], o["path"], o["id"], o.get("summary", "")):
+        for operation_id, operation in self.ops.items():
+            if is_delete_operation(
+                operation["method"], operation["path"], operation["id"],
+                operation.get("summary", "")
+            ):
                 continue
-            segs = set(toks(o["path"])) - {"v2", "list"}
-            s = sum(self.idf.get(t, 0) for t in qt if t in self.docs[i])
-            s += sum(1.5 for t in qt if t in segs)
-            s -= 0.15 * o["path"].count("/") + (0.5 if "{" in o["path"] and not detail else 0)
-            if s > 0:
-                out.append((s, o))
-        out.sort(key=lambda x: -x[0])
-        return [o for _, o in out[:k]]
+            segments = set(toks(operation["path"])) - {"v2", "list"}
+            score = sum(self.idf.get(token, 0) for token in qt if token in self.docs[operation_id])
+            score += sum(1.5 for token in qt if token in segments)
+            score -= 0.15 * operation["path"].count("/") + (
+                0.5 if "{" in operation["path"] and not detail else 0
+            )
+            if score > 0:
+                out.append((score, operation))
+        out.sort(key=lambda item: -item[0])
+        return out[:max(1, int(k))]
 
-
+    def search(self, q, k=5):
+        return [operation for _score, operation in self.search_scored(q, k)]
 def describe(o):
     ps = ", ".join(f'{p["name"]}({p["in"]}{",req" if p["required"] else ""})' for p in o["params"])
     body = o.get("request_body") or {}
@@ -1231,12 +1238,12 @@ Descriptive summary behavior:
 
 
 def candidates(q):
-    hits = IDX.search(q, 3) if IDX else []
+    hits = IDX.search(q, 8) if IDX else []
     return ("\nLikely endpoints:\n" + "\n".join(describe(o) for o in hits)) if hits else ""
 
 
 PLAN = re.compile(r"(?m)^\s*\d+[.)]\s")  # numbered list = the model is describing a plan
-NUDGE = "Do not describe steps. Call a tool now, using an operation_id from the Likely endpoints list."
+NUDGE = "Do not describe steps or answer from memory. You MUST call the appropriate NinjaOne tool now. Search the specification, inspect the exact operation when parameters or fields are unclear, then call it and use only returned live data."
 
 
 # ---------------------------------------------------------------- fast path (no LLM)
@@ -2630,6 +2637,108 @@ def recipe_count_device_prefix(q):
     return f'{matched} devices have names starting with "{prefix}".'
 
 
+def recipe_catalog_collection_read(q):
+    """Answer simple unfiltered collection list/count requests using the OpenAPI catalog."""
+    if not IDX:
+        return None
+    lowered = re.sub(r"\s+", " ", str(q or "").strip()).casefold()
+    if re.search(
+        r"\b(?:create|add|assign|grant|remove|revoke|update|change|modify|edit|"
+        r"enable|disable|invite|delete|erase|purge|destroy|reset|rename|move)\b",
+        lowered,
+    ):
+        return None
+
+    count_intent = bool(re.search(r"\b(?:how many|count|number of|total)\b", lowered))
+    list_intent = bool(re.search(r"\b(?:list|show|display|enumerate|retrieve|fetch|get)\b", lowered))
+    if not (count_intent or list_intent):
+        return None
+
+    search_text = re.sub(r"\bin\s+(?:ninjaone|ninja\s*one|ninjarmm)\b", "", lowered)
+    # Filtered, relational, field-specific or per-entity requests need the model/tool route.
+    if re.search(
+        r"\b(?:per|each|every|by|for|from|with|where|whose|between|before|after|"
+        r"online|offline|active|inactive|enabled|disabled|open|closed|status|"
+        r"email|name|named|identifier|serial|hostname|id|ids|assigned|accessible)\b",
+        search_text,
+    ):
+        return None
+
+    resource_terms = set(toks(search_text)).intersection(NOUN_WORDS)
+    if not resource_terms:
+        return None
+
+    ranked = []
+    for score, operation in IDX.search_scored(search_text, 40):
+        if operation.get("method") != "GET" or not operation.get("read_only"):
+            continue
+        if operation.get("deprecated") or "{" in operation.get("path", ""):
+            continue
+        params = operation.get("params") or []
+        if any(param.get("in") == "path" and param.get("required") for param in params):
+            continue
+        if any(param.get("in") == "query" and param.get("required") for param in params):
+            continue
+        list_field = _response_list_field(operation)
+        collection_name = operation.get("path", "").rstrip("/").split("/")[-1]
+        if not list_field and not re.search(r"(?:s|ies|people|data)$", collection_name, re.I):
+            continue
+        searchable = set(toks(operation.get("path", "") + " " + operation.get("summary", "")))
+        if not resource_terms.intersection(searchable):
+            continue
+        ranked.append((score, operation))
+
+    if not ranked:
+        return None
+    ranked.sort(key=lambda item: -item[0])
+    best_score, best = ranked[0]
+    if best_score < 0.75:
+        return None
+    if len(ranked) > 1:
+        second_score, second = ranked[1]
+        if second.get("path") != best.get("path") and best_score - second_score < 0.35:
+            return None
+
+    try:
+        rows = fetch(best, best["path"], {})
+    except (requests.RequestException, RuntimeError, ValueError) as exc:
+        return (
+            f"I could not complete the {best.get('summary') or 'collection'} lookup: "
+            f"{type(exc).__name__}: {exc}. No complete total is available."
+        )
+
+    label = best.get("summary") or best["path"].rstrip("/").split("/")[-1].replace("-", " ")
+    label = re.sub(r"^(?:get|list|search|find|retrieve)\s+", "", label, flags=re.I).strip() or "records"
+    partial_note = _partial_note(rows)
+    if count_intent:
+        if partial_note:
+            return (
+                f"At least {len(rows)} {label} were returned by NinjaOne; the complete total is unknown."
+                f"{partial_note}"
+            )
+        return f"{len(rows)} {label} in NinjaOne."
+
+    if not rows:
+        return f"No {label} were returned by NinjaOne." + partial_note
+    display_limit = 50
+    displayed = rows[:display_limit]
+    names = [row_name(row) for row in displayed if row is not None]
+    if not names:
+        return (
+            f"NinjaOne returned {len(rows)} {label}, but no readable name field was present. "
+            "Use the operation's returned fields for details." + partial_note
+        )
+    scope = (
+        f"Returned page: {len(names)} {label}; tenant-wide total unknown."
+        if partial_note else f"{len(rows)} {label}; showing {len(names)}."
+    )
+    if len(rows) > display_limit:
+        scope += f" The display is limited to the first {display_limit} records."
+    return scope + partial_note + ":\n" + "\n".join(
+        f"{index}. {name}" for index, name in enumerate(names, 1)
+    )
+
+
 def fast_path(q, history=None):
     if GREET.match(q):
         return HELP
@@ -2670,7 +2779,7 @@ def fast_path(q, history=None):
         out = recipe_latest_end_user(q, include_creator=creator_question)
         if out:
             return out
-        for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in):
+        for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in, recipe_catalog_collection_read):
             out = rec(q)
             if out:
                 return out

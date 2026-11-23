@@ -21,6 +21,57 @@ _ready, _sessions, _clients = False, {}, {}
 
 
 # Cache clients by endpoint because Foundry can receive a new port after restart.
+def _requires_ninjaone_tool(content):
+    """Identify requests requiring live NinjaOne evidence rather than model-only prose."""
+    text = re.sub(r"\s+", " ", str(content or "").strip().casefold())
+    if not text or core.GREET.match(text):
+        return False
+    if _is_mutation_request(text):
+        return True
+    words = set(re.findall(r"[a-z0-9]+", text))
+    nouns = set(getattr(core, "NOUN_WORDS", set()))
+    resource_mentioned = any(
+        word in nouns or (word.endswith("s") and word[:-1] in nouns)
+        for word in words
+    )
+    operation_language = bool(re.search(
+        r"\b(?:how many|count|list|show|find|search|lookup|look up|get|retrieve|"
+        r"details|status|created|creator|assigned|accessible|access|online|offline|"
+        r"latest|newest|most recent|compare|investigate|check)\b",
+        text,
+    ))
+    return resource_mentioned or operation_language
+
+
+def _model_completion(client, model_id, messages, require_tool=False):
+    """Call the local OpenAI-compatible model, requiring a function call when supported."""
+    kwargs = {
+        "model": model_id,
+        "messages": messages,
+        "tools": core.TOOLS,
+        "temperature": 0,
+    }
+    if require_tool:
+        kwargs["tool_choice"] = "required"
+    try:
+        return client.chat.completions.create(**kwargs).choices[0].message
+    except Exception as exc:
+        message = str(exc).casefold()
+        unsupported = (
+            ("tool_choice" in message or "tool choice" in message)
+            and any(term in message for term in (
+                "unsupported", "unknown", "unrecognized", "not support",
+                "invalid parameter", "unexpected", "not allowed",
+            ))
+        )
+        if not (require_tool and unsupported):
+            raise
+        # Some OpenAI-compatible local runtimes do not implement tool_choice=required.
+        # Retry with the explicit tool-call instruction and fail closed if still no tool.
+        kwargs.pop("tool_choice", None)
+        return client.chat.completions.create(**kwargs).choices[0].message
+
+
 def _client(base, api_key=None):
     # Cache separately by endpoint and credential identity; never log credentials.
     credential_fingerprint = hashlib.sha256((api_key or os.getenv("FOUNDRY_API_KEY", "local")).encode("utf-8")).hexdigest()[:16]
@@ -277,8 +328,16 @@ def _try_fast_path(session_id, content):
     try:
         _ensure()
         question = _text(content)
+        if _is_delete_request(question):
+            refusal = (
+                "I can't delete NinjaOne records or perform destructive delete actions. "
+                "Delete requests are disabled by policy; no NinjaOne API operation was called."
+            )
+            return refusal, [{"kind": "policy", "stage": "blocked_delete",
+                              "message": "Delete requests are blocked; no NinjaOne API operation was called."}]
+        history = _sessions.get(session_id, [])
         resumed_question, clarification = _resolve_device_access_clarification(
-            question, _sessions.get(session_id, [])
+            question, history
         )
         if clarification:
             return clarification, [
@@ -316,7 +375,7 @@ def _try_fast_path(session_id, content):
                 {"kind": "result", "tool": "add_device_access", "result": str(write_result)[:2500]},
             ]
         try:
-            answer = core.fast_path(question)
+            answer = core.fast_path(question, history)
         except requests.RequestException:
             # A failed optional read shortcut must not prevent the model/tool route.
             return None
@@ -477,7 +536,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return write_result, [{"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
                              {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
 
-    fp = None if fast_path_checked else core.fast_path(q)  # preflight already checked when routed by app.py
+    fp = None if fast_path_checked else core.fast_path(q, hist)  # preflight already checked when routed by app.py
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
         return fp, [{"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
@@ -492,8 +551,10 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     for step in range(MAX_STEPS):
         emit(f'Analyzing the request (step {step + 1} of {MAX_STEPS}).', 'model')
         inference_started = time.perf_counter()
-        m = _client(base, api_key).chat.completions.create(
-            model=model_id, messages=msgs, tools=core.TOOLS, temperature=0).choices[0].message
+        require_tool = bool(nudged and not called and _requires_ninjaone_tool(q))
+        m = _model_completion(
+            _client(base, api_key), model_id, msgs, require_tool=require_tool
+        )
         activity.append({"kind": "metric", "stage": "llm_inference",
                          "elapsed_ms": round((time.perf_counter() - inference_started) * 1000, 1)})
         if not m.tool_calls:
@@ -575,6 +636,30 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 pass
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     approval_events = [item for item in activity if item.get("kind") == "approval_required"]
+    live_api_results = [
+        item for item in activity
+        if item.get("kind") == "result" and item.get("tool") == "call_api"
+    ]
+    verified_read_result = False
+    for item in live_api_results:
+        try:
+            parsed = json.loads(item.get("result") or "{}")
+        except (TypeError, ValueError):
+            parsed = {}
+        if isinstance(parsed, dict) and "error" not in parsed and "approval_required" not in parsed:
+            verified_read_result = True
+            break
+    if (
+        _requires_ninjaone_tool(q)
+        and not _is_mutation_request(q)
+        and not verified_read_result
+        and not _is_action_clarification(answer)
+    ):
+        answer = (
+            "I could not complete a verified live NinjaOne lookup for this request. "
+            "The specification or endpoint discovery alone is not tenant data, so I won't guess. "
+            "Please rephrase the target or request the relevant record details."
+        )
     if (
         _is_mutation_request(q)
         and not approval_events
