@@ -164,3 +164,25 @@ Deterministic recipes remain as fast paths for narrow, high-confidence workflows
 Open `/static/agent-execution-studio.html` for the detailed execution timeline. Native mode streams the specification plan, model-selected NinjaOne tool calls, tool responses, verification results, timing events and approval requests as the runtime reports them. Direct-route events are replayed into the same timeline format so the viewer remains consistent.
 
 The timeline is an operational trace, not a transcript of private model reasoning. It shows actual selected operations and their arguments/results, plus concise runtime status messages; it does not expose hidden chain-of-thought or invent progress for work that has not happened. Tool responses and verification details can be expanded per event. State-changing requests remain visibly pending until the user approves the exact action; DELETE remains blocked.
+
+## ClawSpring-inspired agent runtime
+
+The separate `feature/clawspring-inspired-agent-architecture` branch introduces reusable orchestration patterns while retaining NinjaOne's OpenAPI contract as the authority:
+
+- **Shared tool registry:** Native tools and dynamically discovered MCP execution tools are registered through one registry. It stores each tool's schema, handler, read-only/concurrency metadata and category; it supports lazy and asynchronous handlers and validates required arguments/types before dispatch.
+- **Specialist routing:** Requests are classified into inventory, people, access, policy, ticketing, automation or general specialist lanes. A specialist adds domain guidance, but all lanes use the same spec-backed tools and safety boundary. This is role routing, not a collection of independent API clients.
+- **Task lifecycle and events:** Native runs are tracked as queued/running/completed/failed tasks. Runtime events are published through an isolated event bus so UI subscribers cannot break execution.
+- **Subagent foundation:** Bounded child-task execution supports isolated context, a maximum spawn depth/concurrency, and inheritance of the parent's approval gate. Autonomous parallel specialist fan-out is intentionally not enabled yet; it will be added only for independent read-only tasks after the shared registry and task lifecycle are validated.
+- **Loop and budget controls:** Native model turns start with a configurable 20-iteration cap (maximum 40), a configurable wall-clock budget, and duplicate-tool-call detection. Repeating the same tool and arguments more than twice is blocked instead of burning the remaining model budget.
+- **Live chat activity:** The main chat renders real tool calls, results, verification, task status and approval requests as events arrive. The detailed Execution Studio remains available for the expanded operational trace.
+
+Native execution limits can be adjusted in the local, untracked `.env` file:
+
+```dotenv
+NINJA_AGENT_MAX_STEPS=20
+NINJA_AGENT_MAX_SECONDS=180
+```
+
+The step count is a model-turn budget, not a limit on the number of NinjaOne records returned. Pagination still follows the OpenAPI cursor contract, and the wall-clock/iteration guards do not weaken write approval or the DELETE block.
+
+The runtime deliberately does not import ClawSpring's coding-agent permission model, workspace manipulation, shell execution, or worktree behavior. Those concepts are not appropriate for a NinjaOne tenant-operations agent. Any future subagent must inherit the same NinjaOne tool registry, OpenAPI validation, entity-resolution rules, approval gate and destructive-operation policy.
