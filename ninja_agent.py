@@ -2216,6 +2216,15 @@ def recipe_add_device_access(q):
                 device_label, user_label = match.group(1), match.group(2)
 
         device_label = device_label.strip().strip("\\'").strip('"')
+        # Users commonly say "VM-123 system access". "system" describes the
+        # device; it is not part of the NinjaOne systemName or the person's name.
+        # Strip only a trailing generic device noun, preserving the exact ID.
+        device_label = re.sub(
+            r"\s+(?:system|device|computer|machine|endpoint)$",
+            "",
+            device_label,
+            flags=re.I,
+        ).strip()
         user_label = user_label.strip().strip(" .")
         email_match = re.search(r"<\s*([^<>@\s]+@[^<>\s]+)\s*>", user_label)
         email = email_match.group(1).strip().lower() if email_match else ""
