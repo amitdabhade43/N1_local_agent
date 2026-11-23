@@ -2420,9 +2420,44 @@ def recipe_add_device_access(q):
     if len(devices) > 100:
         return f"{len(devices)} devices were requested, but NinjaOne allows at most 100 device IDs per PATCH. No change was prepared."
 
+    # The collection endpoint may omit fields that the single-record endpoint
+    # documents. Always hydrate the selected end user by ID before relying on
+    # accessibleDeviceIds for a state-changing request.
     accessible_ids = user.get("accessibleDeviceIds")
     if not isinstance(accessible_ids, list):
-        return "The end-user lookup did not return accessibleDeviceIds. I cannot safely check for duplicate access; no change was prepared."
+        detail_op = op_by_path("/v2/user/end-user/{id}")
+        if not detail_op:
+            return (
+                "The API catalog does not contain the documented end-user details GET. "
+                "I cannot verify existing device access; no change was prepared."
+            )
+        try:
+            detail_rows = fetch(
+                detail_op,
+                f"/v2/user/end-user/{user_id}",
+                {},
+            )
+        except Exception as exc:
+            return (
+                "Could not retrieve the selected end-user details to verify existing device access: "
+                f"{type(exc).__name__}: {exc}. No change was prepared."
+            )
+        detail_matches = [
+            row for row in detail_rows
+            if isinstance(row, dict) and str(row.get("id")) == str(user_id)
+        ]
+        if len(detail_matches) != 1:
+            return (
+                "The end-user details lookup did not return exactly one record for "
+                f"ID {user_id}. I cannot verify existing device access; no change was prepared."
+            )
+        user = detail_matches[0]
+        accessible_ids = user.get("accessibleDeviceIds")
+    if not isinstance(accessible_ids, list):
+        return (
+            "The end-user details response did not contain accessibleDeviceIds. "
+            "I cannot safely check for duplicate access; no change was prepared."
+        )
     existing_ids = {int(value) for value in accessible_ids if str(value).isdigit()}
 
     unique_devices = {}
