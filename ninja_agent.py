@@ -2321,26 +2321,20 @@ def recipe_add_device_access(q):
                 if not matched:
                     continue
 
-                # The /v2/users endpoint can return technicians also exposed
-                # through /v2/user/technicians. Use userType to classify those
-                # overlaps consistently so a technician appears only once.
-                # For one-token searches, keep END_USER rows in the /v2/users
-                # inventory visible as console-user entries; exact names/emails
-                # normalize END_USER rows to the canonical end-user category.
-                user_type = str(row.get("userType") or "").upper()
-                if kind == "end_user":
+                # Normalize overlapping people inventories using the explicit
+                # resource endpoint first, then NinjaOne's userType metadata.
+                # In particular, every END_USER row from /v2/users is an end-user
+                # regardless of whether the search term is a first name or full name.
+                # This lets the (category, ID) key below merge the same end-user
+                # returned by both /v2/users and /v2/user/end-users, while keeping
+                # equal numeric IDs in genuinely different categories distinct.
+                user_type = str(row.get("userType") or row.get("type") or "").upper()
+                if kind == "end_user" or user_type in {"END_USER", "ENDUSER"}:
                     category = "end-user"
-                elif kind == "technician" or (
-                    kind == "user" and user_type == "TECHNICIAN"
-                ):
+                elif kind == "technician" or user_type == "TECHNICIAN":
                     category = "technician"
                 elif kind == "contact":
                     category = "contact"
-                elif (
-                    (email or len(user_name.split()) > 1)
-                    and user_type == "END_USER"
-                ):
-                    category = "end-user"
                 else:
                     category = "console user"
 
