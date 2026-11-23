@@ -794,7 +794,10 @@ def _mcp_local_schema_catalog_status() -> str:
         "primary_only_schemas",
         "schema_definition_conflicts",
     )
-    summary = {key: comparison[key] for key in comparison_keys if key in comparison}
+    summary = {
+        key: (comparison[key][:25] if isinstance(comparison[key], list) else comparison[key])
+        for key in comparison_keys if key in comparison
+    }
     schema_sources = sorted({source for source, _name in core.SCHEMA_INDEX})
     return json.dumps({
         "primary": report.get("primary"),
