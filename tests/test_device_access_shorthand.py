@@ -99,3 +99,28 @@ def test_shorthand_access_clarification_selection_recovers_original_device():
         "add VM-6804B761 to PC Admin Rene Piuk "
         "<admin_pr@hoerbiger.com> for device access"
     )
+
+def test_person_first_access_clarification_selection_recovers_original_device():
+    history = [
+        {"role": "user", "content": "Give Rene access to VM-6804B761"},
+        {
+            "role": "assistant",
+            "content": (
+                'Multiple NinjaOne people records matched "Rene". '
+                'Which user should receive the device access for "VM-6804B761"?\\n'
+                "1. Rene Piuk <ing.rene.piuk@gmail.com> (end-user ID 144)\\n"
+                "2. PC Admin Rene Piuk <admin_pr@hoerbiger.com> (end-user ID 31)\\n"
+                "3. Rene Piuk <rene.piuk@hoerbiger.com> (technician ID 2)\\n"
+                "4. Rene Piuk <ing.rene.piuk@gmail.com> (console user ID 144)\\n"
+                "Reply with the option number, full name, or email address. No change has been prepared."
+            ),
+        },
+    ]
+
+    resumed, clarification = ninja_native._resolve_device_access_clarification("1", history)
+
+    assert clarification is None
+    assert resumed == (
+        "add VM-6804B761 to Rene Piuk "
+        "<ing.rene.piuk@gmail.com> for device access"
+    )
