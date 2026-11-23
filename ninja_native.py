@@ -500,6 +500,50 @@ async def try_fast_path(session_id, content):
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Native NinjaOne fast path failed: {exc}")
 
+
+def _execute_parallel_read_batch(tool_calls, allowed_tools):
+    """Run a batch concurrently only when every call is a distinct documented read-only GET."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    if len(tool_calls or []) < 2 or "call_api" not in set(allowed_tools or ()):
+        return {}
+    prepared = []
+    fingerprints = set()
+    for tc in tool_calls:
+        function = getattr(tc, "function", None)
+        name = getattr(function, "name", "")
+        if name != "call_api":
+            return {}
+        try:
+            args = json.loads(getattr(function, "arguments", "") or "{}")
+        except (TypeError, ValueError):
+            return {}
+        operation = core.OPS.get(args.get("operation_id", ""))
+        if not operation or operation.get("method") != "GET" or not operation.get("read_only"):
+            return {}
+        fingerprint = hashlib.sha256(json.dumps(
+            [name, args], sort_keys=True, default=str
+        ).encode("utf-8")).hexdigest()
+        if fingerprint in fingerprints:
+            return {}
+        fingerprints.add(fingerprint)
+        prepared.append((tc, name, args))
+
+    started = time.perf_counter()
+    results = {}
+    # Keep the initial limit deliberately small for the local Foundry/API host.
+    with ThreadPoolExecutor(max_workers=min(2, len(prepared))) as pool:
+        futures = {
+            tc.id: pool.submit(core.exec_tool, name, args, allowed=allowed_tools)
+            for tc, name, args in prepared
+        }
+        for tc, _name, _args in prepared:
+            results[tc.id] = futures[tc.id].result()
+    elapsed = time.perf_counter() - started
+    per_call = elapsed * 1000 / max(1, len(prepared))
+    return {tool_id: (result, per_call) for tool_id, result in results.items()}
+
+
 def _run_inner(session_id, model_id, content, base, progress=None, api_key=None, fast_path_checked=False):
     def emit(message, stage='working'):
         if progress:
@@ -726,6 +770,20 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             break
         called = True
         msgs.append(m.model_dump(exclude_none=True))
+        parallel_read_results = _execute_parallel_read_batch(
+            m.tool_calls, specialist.allowed_tools
+        )
+        if parallel_read_results:
+            emit(
+                f"Running {len(parallel_read_results)} independent read-only NinjaOne calls concurrently (maximum 2).",
+                "tool",
+            )
+            record_activity({
+                "kind": "parallel_batch",
+                "mode": "read_only_get",
+                "concurrency_limit": 2,
+                "tools": [tc.function.name for tc in m.tool_calls],
+            })
         for tc in m.tool_calls:
             emit(f"Calling NinjaOne operation: {tc.function.name}", "tool")
             tool_started = time.perf_counter()
@@ -742,6 +800,9 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 out = core.err("Repeated identical tool call blocked by loop protection. Use the previous result or change the query.")
                 record_activity({"kind": "policy", "stage": "loop_guard",
                                  "message": f"Blocked repeated identical call to {tc.function.name}."})
+            elif tc.id in parallel_read_results:
+                out, parallel_elapsed_ms = parallel_read_results[tc.id]
+                tool_started = time.perf_counter() - (parallel_elapsed_ms / 1000)
             else:
                 out = core.exec_tool(
                     tc.function.name, args, allowed=specialist.allowed_tools
