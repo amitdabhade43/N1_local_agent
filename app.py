@@ -554,6 +554,32 @@ def wrap_mcp_write_tools(tools):
 
     for tool in tools:
         short_name = tool.name.rsplit("__", 1)[-1].casefold()
+        # Register dynamically discovered MCP tools in the same registry used
+        # by Native. The MCP adapter retains its spec validation and approval
+        # gate; the registry supplies one metadata/dispatch boundary.
+        registry = ninja_native.core.NINJA_TOOL_REGISTRY
+        registry_name = "mcp::" + tool.name
+        if registry.get(registry_name) is None:
+            schema = {}
+            args_schema = getattr(tool, "args_schema", None)
+            if args_schema is not None:
+                try:
+                    schema = (args_schema.model_json_schema()
+                              if hasattr(args_schema, "model_json_schema")
+                              else args_schema.schema())
+                except Exception:
+                    schema = {}
+            async def invoke_registered_mcp(arguments, _tool=tool):
+                return await _tool.ainvoke(arguments)
+            registry.register(ninja_native.core.ToolDefinition(
+                name=registry_name,
+                description=getattr(tool, "description", "") or tool.name,
+                handler=invoke_registered_mcp,
+                input_schema=schema if isinstance(schema, dict) else {},
+                read_only=short_name not in supported_names,
+                concurrent_safe=short_name not in supported_names,
+                category="mcp",
+            ))
         if short_name not in supported_names:
             wrapped.append(tool)
             continue
@@ -591,7 +617,7 @@ def wrap_mcp_write_tools(tools):
                 if method == "GET" or operation.get("read_only"):
                     # GET and spec-confirmed read-only POST queries are safe to run directly.
                     safe_arguments = {key: value for key, value in arguments.items() if key != "approval_token"}
-                    return await _tool.ainvoke(safe_arguments)
+                    return await ninja_native.core.NINJA_TOOL_REGISTRY.aexecute(\n                        "mcp::" + _tool.name, safe_arguments\n                    )
                 if method not in {"POST", "PUT", "PATCH"}:
                     return json.dumps({"error": f"Unsupported HTTP method {method}.", "executed": False})
 
