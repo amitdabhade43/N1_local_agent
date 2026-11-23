@@ -157,3 +157,10 @@ The Native activity stream includes an `execution_plan` event before model tool 
 This is a first reusable verification layer, not proof that every business-level interpretation is correct. The model must still match returned fields and filters to the user's request; write completion must still be established from the approval action's NinjaOne response. The verifier does not infer missing fields or silently promote a partial result to a complete tenant-wide count.
 
 Deterministic recipes remain as fast paths for narrow, high-confidence workflows. They should be treated as optimizations over the common specification-driven engine, not as the only way the agent can support an API operation. New resource support should preferentially use the OpenAPI operation/field index, shared entity resolution, request validation, pagination handling and shared verification instead of adding another question-specific regex recipe.
+
+
+## Live Execution Studio
+
+Open `/static/agent-execution-studio.html` for the detailed execution timeline. Native mode streams the specification plan, model-selected NinjaOne tool calls, tool responses, verification results, timing events and approval requests as the runtime reports them. Direct-route events are replayed into the same timeline format so the viewer remains consistent.
+
+The timeline is an operational trace, not a transcript of private model reasoning. It shows actual selected operations and their arguments/results, plus concise runtime status messages; it does not expose hidden chain-of-thought or invent progress for work that has not happened. Tool responses and verification details can be expanded per event. State-changing requests remain visibly pending until the user approves the exact action; DELETE remains blocked.
