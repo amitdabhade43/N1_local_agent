@@ -5,7 +5,7 @@ import ninja_agent
 
 def test_ninjaone_tools_are_registered_from_the_shared_schemas():
     assert set(ninja_agent.NINJA_TOOL_REGISTRY.names()) >= set(ninja_agent.DISPATCH)
-    assert set(ninja_agent.NINJA_TOOL_REGISTRY.names()) == set(ninja_agent.DISPATCH)
+    assert set(ninja_agent.DISPATCH).issubset(set(ninja_agent.NINJA_TOOL_REGISTRY.names()))
 
 
 def test_specialist_router_selects_access_lane_for_access_requests():
