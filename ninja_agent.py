@@ -1557,11 +1557,11 @@ def text_call(txt):
     return None
 
 
-def exec_tool(name, args):
+def exec_tool(name, args, allowed=None):
     try:
         if name not in DISPATCH:
             return err("unknown tool")
-        return NINJA_TOOL_REGISTRY.execute(name, args)
+        return NINJA_TOOL_REGISTRY.execute(name, args, allowed=allowed)
     except requests.HTTPError as e:
         return err(f"HTTP {e.response.status_code}: {e.response.text[:200]}")
     except Exception as e:
