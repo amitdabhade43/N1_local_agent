@@ -2214,13 +2214,16 @@ def recipe_add_device_access(q):
                 if not matched:
                     continue
 
-                user_type = str(row.get("userType") or row.get("type") or "").upper()
-                if kind == "contact" or user_type == "CONTACT":
-                    category = "contact"
-                elif kind == "end_user" or user_type == "END_USER":
+                # Keep the inventory category explicit. The /v2/users response
+                # can include END_USER and TECHNICIAN userType values, but it is
+                # still a distinct console-user inventory result for ambiguity
+                # resolution. Do not collapse identities across inventories.
+                if kind == "end_user":
                     category = "end-user"
-                elif kind == "technician" or user_type == "TECHNICIAN":
+                elif kind == "technician":
                     category = "technician"
+                elif kind == "contact":
+                    category = "contact"
                 else:
                     category = "console user"
 
