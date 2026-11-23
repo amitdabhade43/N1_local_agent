@@ -1359,7 +1359,7 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     # route in MCP and Native mode. Reuse the shared spec-driven NinjaOne read
     # recipe before asking the MCP model to discover endpoints repeatedly.
     if re.search(
-        r"\\b(?:who\\s+(?:deleted|removed)|deletion\\s+history\\s+for|history\\s+of)\\b",
+        r"\b(?:who\s+(?:deleted|removed)|deletion\s+history\s+for|history\s+of)\b",
         message_text,
         re.I,
     ):
