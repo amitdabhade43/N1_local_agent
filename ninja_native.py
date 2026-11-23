@@ -197,11 +197,11 @@ def _resolve_device_access_clarification(question, history):
         r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
         r"[A-Za-z0-9][A-Za-z0-9._-]*\s+to\s+.+?\s+"
         r"(?:for\s+)?(?:the\s+)?(?:device\s+)?access(?:\s+list)?\s*$"
-        r"|^\s*(?:please\s+)?(?:add|grant|give|provide)\s+.+?\s+"
-        r"(?:device\s+)?access\s+to\s+[A-Za-z0-9][A-Za-z0-9._-]*\s*[.!?]*$"
         r"|^\s*(?:please\s+)?(?:add|grant|give|provide)\s+"
         r"[A-Za-z0-9][A-Za-z0-9._-]*\s+"
         r"(?:system|device|computer|machine|endpoint)\s+access\s+(?:to|for)\s+.+?[.!?]*$"
+        r"|^\s*(?:please\s+)?(?:add|grant|give|provide)\s+.+?\s+"
+        r"(?:device\s+)?access\s+to\s+[A-Za-z0-9][A-Za-z0-9._-]*\s*[.!?]*$"
         r")"
     )
     original_request = next(
@@ -228,16 +228,16 @@ def _resolve_device_access_clarification(question, history):
     )
     if not request_match:
         request_match = re.search(
-            r"^\s*(?:please\s+)?(?:add|grant|give|provide)\s+.+?\s+"
-            r"(?:device\s+)?access\s+to\s+(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s*[.!?]*$",
-            original_text, re.I,
-        )
-    if not request_match:
-        request_match = re.search(
             r"^\s*(?:please\s+)?(?:add|grant|give|provide)\s+"
             r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+"
             r"(?:system|device|computer|machine|endpoint)\s+"
             r"access\s+(?:to|for)\s+.+?[.!?]*$",
+            original_text, re.I,
+        )
+    if not request_match:
+        request_match = re.search(
+            r"^\s*(?:please\s+)?(?:add|grant|give|provide)\s+.+?\s+"
+            r"(?:device\s+)?access\s+to\s+(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s*[.!?]*$",
             original_text, re.I,
         )
     if not request_match:
