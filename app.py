@@ -1484,7 +1484,9 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         tool_name, arguments, operation, fields = direct_request
         if progress_callback:
             progress_callback({'stage': 'tool', 'message': f'Calling MCP tool: {tool_name}'})
-        direct_answer, direct_activity = await run_direct_mcp_tool(\n            tool_name, arguments, operation, fields, progress_callback\n        )
+        direct_answer, direct_activity = await run_direct_mcp_tool(
+            tool_name, arguments, operation, fields, progress_callback
+        )
         if progress_callback:
             progress_callback({'stage': 'result', 'message': f'Received results from {tool_name}.'})
         return direct_answer, direct_activity
