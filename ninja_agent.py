@@ -2680,8 +2680,15 @@ def recipe_catalog_collection_read(q):
         if any(param.get("in") == "query" and param.get("required") for param in params):
             continue
         list_field = _response_list_field(operation)
-        collection_name = operation.get("path", "").rstrip("/").split("/")[-1]
-        if not list_field and not re.search(r"(?:s|ies|people|data)$", collection_name, re.I):
+        direct_array = any(
+            isinstance(response, dict)
+            and (
+                (((response.get("content") or {}).get("application/json") or {}).get("schema") or {}).get("type")
+                == "array"
+            )
+            for response in (operation.get("responses") or {}).values()
+        )
+        if not list_field and not direct_array:
             continue
         searchable = set(toks(operation.get("path", "") + " " + operation.get("summary", "")))
         if not resource_terms.intersection(searchable):

@@ -52,3 +52,17 @@ def test_model_completion_falls_back_when_provider_rejects_tool_choice():
     assert len(completions.calls) == 2
     assert completions.calls[0]["tool_choice"] == "required"
     assert "tool_choice" not in completions.calls[1]
+
+
+
+def test_large_truncated_live_api_result_can_still_be_marked_successful():
+    payload = '{"total": 400, "rows": [' + (" " * 4000) + ']}'
+    assert ninja_native._native_tool_result_succeeded("call_api", payload) is True
+    assert ninja_native._native_tool_result_succeeded("search_api", payload) is None
+
+
+def test_api_error_or_approval_payload_is_not_a_verified_read():
+    assert ninja_native._native_tool_result_succeeded("call_api", '{"error":"denied"}') is False
+    assert ninja_native._native_tool_result_succeeded(
+        "call_api", '{"approval_required":true,"action_id":"x"}'
+    ) is False

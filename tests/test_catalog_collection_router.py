@@ -88,3 +88,17 @@ def test_catalog_router_defers_ambiguous_endpoint_matches(monkeypatch):
     monkeypatch.setattr(ninja_agent, "_response_list_field", lambda op: "results")
 
     assert ninja_agent.recipe_catalog_collection_read("How many software products?") is None
+
+
+
+def test_catalog_router_does_not_infer_a_collection_from_a_plural_path_alone(monkeypatch):
+    candidate = operation()
+    candidate["responses"] = {
+        "200": {"content": {"application/json": {"schema": {"type": "object", "properties": {
+            "metadata": {"type": "object"}
+        }}}}}
+    }
+    monkeypatch.setattr(ninja_agent, "IDX", FakeIndex([ (2.0, candidate) ]))
+    monkeypatch.setattr(ninja_agent, "_response_list_field", lambda op: None)
+
+    assert ninja_agent.recipe_catalog_collection_read("How many software products?") is None

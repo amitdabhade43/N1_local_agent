@@ -43,6 +43,21 @@ def _requires_ninjaone_tool(content):
     return resource_mentioned or operation_language
 
 
+def _native_tool_result_succeeded(tool_name, output):
+    """Validate that a live call_api result is a successful structured response."""
+    if tool_name != "call_api":
+        return None
+    try:
+        parsed = json.loads(output or "{}")
+    except (TypeError, ValueError):
+        return False
+    return (
+        isinstance(parsed, dict)
+        and "error" not in parsed
+        and "approval_required" not in parsed
+    )
+
+
 def _model_completion(client, model_id, messages, require_tool=False):
     """Call the local OpenAI-compatible model, requiring a function call when supported."""
     kwargs = {
@@ -326,7 +341,6 @@ def _try_fast_path(session_id, content):
     """Execute only a deterministic read fast path without resolving an LLM provider."""
     core.set_active_session(session_id)
     try:
-        _ensure()
         question = _text(content)
         if _is_delete_request(question):
             refusal = (
@@ -335,6 +349,7 @@ def _try_fast_path(session_id, content):
             )
             return refusal, [{"kind": "policy", "stage": "blocked_delete",
                               "message": "Delete requests are blocked; no NinjaOne API operation was called."}]
+        _ensure()
         history = _sessions.get(session_id, [])
         resumed_question, clarification = _resolve_device_access_clarification(
             question, history
@@ -567,7 +582,11 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 out = core.exec_tool(*tc)
                 emit(f'Received a response from {tc[0]}.', 'result')
                 activity.append({"kind": "call", "tool": tc[0], "arguments": tc[1]})
-                activity.append({"kind": "result", "tool": tc[0], "result": out[:2500]})
+                result_event = {"kind": "result", "tool": tc[0], "result": out[:2500]}
+                result_ok = _native_tool_result_succeeded(tc[0], out)
+                if result_ok is not None:
+                    result_event["success"] = result_ok
+                activity.append(result_event)
                 activity.append({"kind": "metric", "stage": "ninjaone_tool",
                                  "tool": tc[0], "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
                 try:
@@ -625,7 +644,11 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 args, out = {}, core.err(f"{type(e).__name__}: {e}")
             activity.append({"kind": "call", "tool": tc.function.name, "arguments": args})
             emit(f"Received a response from {tc.function.name}.", "result")
-            activity.append({"kind": "result", "tool": tc.function.name, "result": out[:2500]})
+            result_event = {"kind": "result", "tool": tc.function.name, "result": out[:2500]}
+            result_ok = _native_tool_result_succeeded(tc.function.name, out)
+            if result_ok is not None:
+                result_event["success"] = result_ok
+            activity.append(result_event)
             activity.append({"kind": "metric", "stage": "ninjaone_tool",
                              "tool": tc.function.name, "elapsed_ms": round((time.perf_counter() - tool_started) * 1000, 1)})
             try:
@@ -640,15 +663,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         item for item in activity
         if item.get("kind") == "result" and item.get("tool") == "call_api"
     ]
-    verified_read_result = False
-    for item in live_api_results:
-        try:
-            parsed = json.loads(item.get("result") or "{}")
-        except (TypeError, ValueError):
-            parsed = {}
-        if isinstance(parsed, dict) and "error" not in parsed and "approval_required" not in parsed:
-            verified_read_result = True
-            break
+    verified_read_result = any(item.get("success") is True for item in live_api_results)
     if (
         _requires_ninjaone_tool(q)
         and not _is_mutation_request(q)

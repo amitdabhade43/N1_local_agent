@@ -1056,6 +1056,15 @@ def _recover_unprepared_mcp_mutation(session_id: str, question: str):
     return None, False
 
 
+def _mcp_tool_result_succeeded(tool_name: str, raw_result: Any) -> bool | None:
+    """Validate success for a live NinjaOne executor result before UI truncation."""
+    short_name = str(tool_name or "").rsplit("__", 1)[-1].casefold()
+    if short_name not in {"call", "raw_call", "execute_endpoint", "execute_raw_request"}:
+        return None
+    parsed = parse_mcp_result(raw_result)
+    return bool(isinstance(parsed, dict) and parsed.get("endpoint") and not parsed.get("error"))
+
+
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
@@ -1146,11 +1155,16 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 })
         elif getattr(msg, "type", "") == "tool":
             tool_result = getattr(msg, "content", "")
-            activity.append({
+            tool_name = getattr(msg, "name", "tool")
+            result_event = {
                 "kind": "result",
-                "tool": getattr(msg, "name", "tool"),
+                "tool": tool_name,
                 "result": str(tool_result)[:2500],
-            })
+            }
+            result_ok = _mcp_tool_result_succeeded(tool_name, tool_result)
+            if result_ok is not None:
+                result_event["success"] = result_ok
+            activity.append(result_event)
             parsed_tool_result = parse_mcp_result(tool_result)
             if isinstance(parsed_tool_result, dict) and parsed_tool_result.get("approval_required"):
                 activity.append({
@@ -1165,23 +1179,10 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         message_text,
         re.I,
     ) or re.search(r"\bwho\s+created\b|\bcreator\b", message_text, re.I))
-    live_execution_calls = [
+    successful_live_results = [
         item for item in activity
-        if item.get("kind") == "call"
-        and str(item.get("tool", "")).rsplit("__", 1)[-1].casefold()
-        in {"call", "raw_call", "execute_endpoint", "execute_raw_request"}
+        if item.get("kind") == "result" and item.get("success") is True
     ]
-    live_execution_results = [
-        item for item in activity
-        if item.get("kind") == "result"
-        and str(item.get("tool", "")).rsplit("__", 1)[-1].casefold()
-        in {"call", "raw_call", "execute_endpoint", "execute_raw_request"}
-    ]
-    successful_live_results = []
-    for item in live_execution_results:
-        parsed = parse_mcp_result(item.get("result"))
-        if isinstance(parsed, dict) and parsed.get("endpoint") and not parsed.get("error"):
-            successful_live_results.append(parsed)
     approval_events = [item for item in activity if item.get("kind") == "approval_required"]
     if approval_events:
         action = approval_events[-1].get("action", {})
@@ -1199,7 +1200,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
     elif lookup_question and not successful_live_results:
         final_text = (
             "I couldn't execute a NinjaOne lookup for that request. "
-            "No MCP tool was called, so I won't report unverified data. "
+            "No successful live NinjaOne API execution was confirmed, so I won't report unverified data. "
             "Please retry or simplify the question."
         )
 

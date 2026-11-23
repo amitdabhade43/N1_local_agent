@@ -70,3 +70,19 @@ def test_explicit_access_grants_remain_mutations():
     assert ninja_native._is_mutation_request("grant device access to Rene")
     assert ninja_native._is_mutation_request("add VM-123 to Rene access")
     assert ninja_native._is_mutation_request("remove device access from Rene")
+
+
+
+def test_delete_preflight_blocks_before_loading_the_api_catalog(monkeypatch):
+    monkeypatch.setattr(
+        ninja_native,
+        "_ensure",
+        lambda: (_ for _ in ()).throw(AssertionError("blocked delete must not load the API catalog")),
+    )
+    monkeypatch.setattr(ninja_native.core, "set_active_session", lambda session_id: None)
+    monkeypatch.setattr(ninja_native.core, "clear_active_session", lambda: None)
+
+    answer, activity = ninja_native._try_fast_path("delete-before-init", "delete device 123")
+
+    assert "can't delete" in answer.lower()
+    assert activity[0]["stage"] == "blocked_delete"
