@@ -559,8 +559,7 @@ def wrap_mcp_write_tools(tools):
         # gate; the registry supplies one metadata/dispatch boundary.
         registry = ninja_native.core.NINJA_TOOL_REGISTRY
         registry_name = "mcp::" + tool.name
-        if registry.get(registry_name) is None:
-            schema = {}
+        schema = {}
             args_schema = getattr(tool, "args_schema", None)
             if args_schema is not None:
                 try:
@@ -571,15 +570,15 @@ def wrap_mcp_write_tools(tools):
                     schema = {}
             async def invoke_registered_mcp(arguments, _tool=tool):
                 return await _tool.ainvoke(arguments)
-            registry.register(ninja_native.core.ToolDefinition(
-                name=registry_name,
-                description=getattr(tool, "description", "") or tool.name,
-                handler=invoke_registered_mcp,
-                input_schema=schema if isinstance(schema, dict) else {},
-                read_only=short_name not in supported_names,
-                concurrent_safe=short_name not in supported_names,
-                category="mcp",
-            ))
+        registry.replace(ninja_native.core.ToolDefinition(
+            name=registry_name,
+            description=getattr(tool, "description", "") or tool.name,
+            handler=invoke_registered_mcp,
+            input_schema=schema if isinstance(schema, dict) else {},
+            read_only=short_name not in supported_names,
+            concurrent_safe=short_name not in supported_names,
+            category="mcp",
+        ))
         if short_name not in supported_names:
             wrapped.append(tool)
             continue
