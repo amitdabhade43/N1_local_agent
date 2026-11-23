@@ -1203,42 +1203,42 @@ NINJA_AGENTS.register(AgentDefinition(
     name="inventory", description="Device, organization and inventory specialist",
     instructions="Focus on inventory scope, complete pagination, organization boundaries, device identity and current live fields.",
     keywords=("device", "devices", "computer", "endpoint", "machine", "organization", "organizations", "inventory", "asset"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=True,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="people", description="People, technician and account specialist",
     instructions="Resolve people across all relevant NinjaOne identity categories. Distinguish end users, console users, technicians and contacts; never merge different entity types by numeric ID.",
     keywords=("user", "users", "person", "people", "technician", "technicians", "contact", "contacts", "email", "account"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=True,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="access", description="Device access and permissions specialist",
     instructions="Distinguish accessible devices from assigned devices and role membership. Resolve every target unambiguously. Prepare changes only through the shared approval-gated API path.",
     keywords=("access", "accessible", "assigned", "permission", "permissions", "grant", "revoke", "device-access"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=False,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="policy", description="Policy and configuration specialist",
     instructions="Use exact policy and configuration schemas. Treat every state-changing operation as approval-required.",
     keywords=("policy", "policies", "configuration", "settings", "maintenance"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=False,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="tickets", description="Ticket and service-desk specialist",
     instructions="Use ticket-board and ticket schemas, follow documented cursors, and distinguish ticket counts from page sizes.",
     keywords=("ticket", "tickets", "board", "boards", "service desk", "case", "cases"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=True,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="automation", description="Scripts and automation specialist",
     instructions="Inspect the exact script or automation operation before use. Script execution and other side effects require explicit approval.",
     keywords=("script", "scripts", "automation", "execute", "run script", "job", "jobs"),
-    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=False,
+    allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=False,
 ))
 NINJA_AGENTS.register(AgentDefinition(
     name="general", description="General NinjaOne API specialist",
     instructions="Use the shared OpenAPI operation and field catalogs; do not assume a resource-specific recipe exists.",
-    keywords=(), allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=20, read_only=True,
+    keywords=(), allowed_tools=_COMMON_NINJA_TOOLS, max_iterations=40, read_only=True,
 ))
 NINJA_TASKS = TaskRegistry(history_limit=250)\nNINJA_EVENT_BUS = EventBus()\nNINJA_SUBAGENTS = SubagentManager(\n    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4\n)
 
