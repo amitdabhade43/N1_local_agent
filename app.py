@@ -1499,7 +1499,7 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         specialist_context = ninja_native.core.specialist_instructions(message_text)
         history.append(SystemMessage(content=(
             "Request-specific specialist guidance. Use the shared NinjaOne tools and "
-            "retain all OpenAPI, approval and DELETE safeguards.\\n" + specialist_context
+            "retain all OpenAPI, approval and DELETE safeguards.\n" + specialist_context
         )))
         history.append(HumanMessage(content=message_content))
 
