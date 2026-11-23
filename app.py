@@ -1537,7 +1537,14 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
                 break
 
     async with _session_lock:
-        _sessions[session_id] = messages[-MAX_STORED_MESSAGES:]
+        stored_messages = [
+            msg for msg in messages
+            if not (
+                getattr(msg, "type", "") == "system"
+                and "Request-specific specialist guidance." in str(getattr(msg, "content", ""))
+            )
+        ]
+        _sessions[session_id] = stored_messages[-MAX_STORED_MESSAGES:]
 
     activity = [{"kind": "metric", "stage": "llm_agent",
                  "elapsed_ms": round(inference_elapsed * 1000, 1)}]
