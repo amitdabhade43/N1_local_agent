@@ -401,7 +401,7 @@ class SkillRegistry:
             raw = resolved.read_text(encoding="utf-8")
             if not raw.startswith("---"):
                 continue
-            closing = raw.find("\\n---", 3)
+            closing = raw.find("\n---", 3)
             if closing < 0:
                 continue
             metadata_text = raw[3:closing].strip()
@@ -431,10 +431,10 @@ class SkillRegistry:
         ]
         matches.sort(key=lambda skill: skill.name)
         sections = [
-            f"## Skill: {skill.name}\\n{skill.description}\\n{skill.instructions}"
+            f"## Skill: {skill.name}\n{skill.description}\n{skill.instructions}"
             for skill in matches
         ]
-        return "\\n\\n".join(sections)[:max(0, int(max_chars))]
+        return "\n\n".join(sections)[:max(0, int(max_chars))]
 
     def names(self) -> list[str]:
         return sorted(self._skills)
