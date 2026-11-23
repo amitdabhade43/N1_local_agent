@@ -198,7 +198,7 @@ def _resolve_device_access_clarification(question, history):
     )
     # Some stored assistant turns may carry escaped newline sequences rather
     # than actual line breaks. Normalize both forms before parsing numbered choices.
-    assistant_text = assistant_text.replace("\\\\n", "\\n")
+    assistant_text = assistant_text.replace("\\n", "\n")
     request_pattern = (
         r"(?:"
         r"\b(?:add|grant|give|provide)\s+(?:the\s+)?(?:device\s+)?"
