@@ -188,7 +188,13 @@ function renderOutput(){$("outputText").textContent=selectedOutput();$("outputCa
 function renderAll(){renderSteps();renderFlow();renderOutput();updateMetrics()}
 function pushProgress(ev){
  const stage=ev.stage||"progress";
- if(ev.activity_event){activityToSteps([ev.activity_event])}
+ if(ev.activity_event){
+  const item=ev.activity_event;
+  if(item.kind==="approval_required"){
+   const key="approval:"+activityKey(item);
+   if(!state.activityKeys.has(key)){state.activityKeys.add(key);renderApproval(item.action||{})}
+  }else activityToSteps([item]);
+ }
  else{
   const status=stage==="complete"?"success":stage==="error"?"error":"running";
   addStep({kind:"progress",title:ev.message||"Execution update",tool:"Agent runtime",status,duration:"",request:{stage},response:null,category:"all"});
@@ -198,7 +204,10 @@ function pushProgress(ev){
 function showActivity(activity){
  activityToSteps(activity||[]);
  const approvals=(activity||[]).filter(x=>x.kind==="approval_required");
- approvals.forEach(a=>renderApproval(a.action||{}));
+ approvals.forEach(a=>{
+  const key="approval:"+activityKey(a);
+  if(!state.activityKeys.has(key)){state.activityKeys.add(key);renderApproval(a.action||{})}
+ });
 }
 function renderApproval(action){
  addStep({kind:"approval",title:"Approval required · "+(action.method||"WRITE")+" "+(action.path||""),status:"pending",tool:"Human approval",endpoint:action.path||"",duration:"Awaiting decision",request:{method:action.method,path:action.path,query:action.query,body:action.body,summary:action.summary},response:"No write has been executed. Review the exact request and choose Approve and execute or Reject.",raw:action});
