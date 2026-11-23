@@ -500,6 +500,30 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     def emit(message, stage='working'):
         if progress:
             progress({'stage': stage, 'message': message})
+
+    activity = []
+
+    def record_activity(event):
+        record_activity(event)
+        if progress:
+            kind = event.get("kind", "activity")
+            tool = event.get("tool") or ""
+            labels = {
+                "execution_plan": "Execution plan prepared",
+                "call": f"Calling {tool}" if tool else "Calling NinjaOne operation",
+                "result": f"Received result from {tool}" if tool else "Received operation result",
+                "verification": f"Verified result from {tool}" if tool else "Verification completed",
+                "metric": f"Timing recorded for {event.get('stage', 'operation')}",
+                "approval_required": "Approval request prepared; no change executed",
+                "policy": "Policy check",
+                "clarification": "Clarification required",
+            }
+            progress({
+                "stage": "activity",
+                "message": labels.get(kind, "Execution activity"),
+                "activity_event": event,
+            })
+
     q = _text(content)
     hist = _sessions.get(session_id, [])[-6:]
     emit("Checking whether this question can be answered directly.", "understanding")
@@ -556,6 +580,7 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             emit("Resuming the previous change request to create its approval card.", "understanding")
     execution_plan = core.build_execution_plan(q, hist)
     plan_event = {"kind": "execution_plan", "plan": execution_plan}
+    record_activity(plan_event)
     emit(
         f'Plan: {execution_plan["intent"]} via {execution_plan["route"]}; '
         f'{len(execution_plan["candidate_operations"])} specification candidate(s) ranked.',
@@ -571,16 +596,13 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
             prepared = {}
         if prepared.get("approval_required"):
             emit("Resolved the end user and device; preparing the approval request.", "tool")
-            activity = [
-                plan_event,
-                {"kind": "call", "tool": "call_api", "arguments": {
-                    "operation_id": prepared.get("operation_id"),
-                    "method": prepared.get("method"), "path": prepared.get("path"),
-                    "body": prepared.get("body"),
-                }},
-                {"kind": "result", "tool": "call_api", "result": write_result[:2500]},
-                {"kind": "approval_required", "action": prepared},
-            ]
+            record_activity({"kind": "call", "tool": "call_api", "arguments": {
+                "operation_id": prepared.get("operation_id"),
+                "method": prepared.get("method"), "path": prepared.get("path"),
+                "body": prepared.get("body"),
+            }})
+            record_activity({"kind": "result", "tool": "call_api", "result": write_result[:2500]})
+            record_activity({"kind": "approval_required", "action": prepared})
             emit("The PATCH is prepared and waiting for your approval; it has not been executed.", "approval")
             return (
                 f'Approval required: {prepared.get("summary", "Add the requested device access")}. '
@@ -588,16 +610,16 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
                 "No change has been made yet.",
                 activity,
             )
-        return write_result, [plan_event,
-                             {"kind": "call", "tool": "add_device_access", "arguments": {"question": q}},
-                             {"kind": "result", "tool": "add_device_access", "result": write_result[:2500]}]
+        record_activity({"kind": "call", "tool": "add_device_access", "arguments": {"question": q}})
+        record_activity({"kind": "result", "tool": "add_device_access", "result": write_result[:2500]})
+        return write_result, activity
 
     fp = None if fast_path_checked else core.fast_path(q, hist)  # preflight already checked when routed by app.py
     if fp:
         emit("Direct answer prepared; no model or API call was needed.", "complete")
-        return fp, [plan_event, {"kind": "call", "tool": "fast_path", "arguments": {"question": q}}]
+        record_activity({"kind": "call", "tool": "fast_path", "arguments": {"question": q}})
+        return fp, activity
 
-    activity = [plan_event]
     clarification_guidance = _CLARIFICATION_GUIDANCE if _has_pending_clarification(hist) else ""
     system = core.SYSTEM + core.candidates(q) + clarification_guidance + ("\n/no_think" if core.NO_THINK else "")
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
