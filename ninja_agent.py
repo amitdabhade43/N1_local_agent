@@ -2063,6 +2063,15 @@ def recipe_add_device_access(q):
         text, re.I,
     )
 
+    # Normalize natural person-first wording into the shared device-first parser
+    # so both forms use exactly the same identity verification and write guards.
+    if person_first and not multi:
+        text = (
+            f"add {person_first.group('device')} to "
+            f"{person_first.group('user')} for device access"
+        )
+        person_first = None
+
     if multi:
         # System names are single whitespace-delimited identifiers in NinjaOne.
         # Try each possible user/device boundary, accepting only an exact user
@@ -2103,12 +2112,6 @@ def recipe_add_device_access(q):
         if len(partitions) != 1:
             return "More than one exact end-user/device interpretation matched. Please clarify the end-user and device names. No change was prepared."
         user_label, user, device_labels, devices = partitions[0]
-    elif person_first:
-        # Natural person-first phrasing: "Give Rene access to VM-123".
-        # Keep the person and device slots explicit; never feed the device ID
-        # into a people resolver.
-        device_label = person_first.group("device")
-        user_label = person_first.group("user")
     else:
         # Accept conversational variants such as "add X to Y for device access",
         # while retaining the existing explicit access-list forms.
@@ -2155,11 +2158,11 @@ def recipe_add_device_access(q):
         people_records = []
         people_results = [("end_user", user_result)]
 
-        # Cross-category disambiguation is essential for shorthand/first-name
-        # requests (for example, "Rene"). An explicit email or full name is an
-        # identity-qualified request; keep that fast path to the end-user record
-        # and avoid redundant API calls.
-        if not email and len(user_name.split()) == 1:
+        # A name-only target is checked across every people inventory before a
+        # write. Exact full names collapse duplicate API representations by
+        # NinjaOne userType; one-token searches retain source categories so all
+        # candidate records remain visible for explicit disambiguation.
+        if not email:
             for kind in ("user", "technician", "contact"):
                 try:
                     people_results.append((
@@ -2220,16 +2223,24 @@ def recipe_add_device_access(q):
                 if not matched:
                     continue
 
-                # Keep the inventory category explicit. The /v2/users response
-                # can include END_USER and TECHNICIAN userType values, but it is
-                # still a distinct console-user inventory result for ambiguity
-                # resolution. Do not collapse identities across inventories.
+                # For exact full-name searches, use the documented userType
+                # to collapse the same identity returned by overlapping endpoints.
+                # For one-token searches, preserve the inventory source as a separate
+                # candidate so the user can inspect every matching NinjaOne record.
                 if kind == "end_user":
                     category = "end-user"
                 elif kind == "technician":
                     category = "technician"
                 elif kind == "contact":
                     category = "contact"
+                elif len(user_name.split()) > 1:
+                    user_type = str(row.get("userType") or "").upper()
+                    if user_type == "END_USER":
+                        category = "end-user"
+                    elif user_type == "TECHNICIAN":
+                        category = "technician"
+                    else:
+                        category = "console user"
                 else:
                     category = "console user"
 
@@ -2299,6 +2310,9 @@ def recipe_add_device_access(q):
         if len(devices) != 1:
             return f'Multiple exact device records matched "{device_label}". Please clarify before changing access.'
         device_labels = [device_label]
+
+    if not isinstance(user, dict):
+        return "The end-user identity was not resolved to one verified record. No change was prepared."
 
     user_id = user.get("id")
     if not isinstance(user_id, int) and not str(user_id or "").isdigit():
