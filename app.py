@@ -350,7 +350,11 @@ def _mcp_write_request(tool_name: str, arguments: dict[str, Any]):
             return None
         path = re.sub(
             r"\{([^}]+)\}",
-            lambda match: quote(str(path_params[match.group(1)]), safe=""),
+            lambda match: (
+                quote(str(path_params[match.group(1)]), safe="")
+                if match.group(1) in path_params and path_params[match.group(1)] is not None
+                else match.group(0)
+            ),
             template,
         )
         return method, path, arguments.get("body")
