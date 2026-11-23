@@ -8,6 +8,7 @@ Keeps the UI contract of app.py: returns (answer, activity) where activity is a 
 Reuses the spec index, tools and fast path from ninja_agent.py.
 """
 import asyncio, hashlib, json, os, re, time
+from agent_runtime import RuntimeEvent
 
 import requests
 import httpx
@@ -796,9 +797,41 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
 
 def _run(session_id, model_id, content, base, progress=None, api_key=None, fast_path_checked=False):
     core.set_active_session(session_id)
+    task = core.NINJA_TASKS.create(
+        "orchestrator", _text(content), metadata={"backend": "native", "model": model_id}
+    )
+    core.NINJA_TASKS.start(task.task_id)
+
+    def forward_event(event):
+        if progress and event.task_id == task.task_id:
+            progress(event.to_dict())
+
+    unsubscribe = core.NINJA_EVENT_BUS.subscribe(forward_event)
+
+    def publish(payload):
+        payload = dict(payload or {})
+        stage = str(payload.pop("stage", "working"))
+        message = str(payload.pop("message", "Agent update"))
+        core.NINJA_EVENT_BUS.publish(RuntimeEvent(
+            "progress", task.task_id, stage=stage, message=message, data=payload
+        ))
+
     try:
-        return _run_inner(session_id, model_id, content, base, progress, api_key, fast_path_checked)
+        publish({"stage": "task_start", "message": "Agent task started"})
+        result = _run_inner(
+            session_id, model_id, content, base, publish, api_key, fast_path_checked
+        )
+        core.NINJA_TASKS.complete(task.task_id, {
+            "answer": result[0] if isinstance(result, tuple) else str(result)
+        })
+        publish({"stage": "task_complete", "message": "Agent task completed"})
+        return result
+    except Exception as exc:
+        core.NINJA_TASKS.fail(task.task_id, str(exc))
+        publish({"stage": "task_failed", "message": "Agent task failed safely"})
+        raise
     finally:
+        unsubscribe()
         core.clear_active_session()
 
 
