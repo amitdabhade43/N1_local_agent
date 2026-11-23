@@ -98,3 +98,34 @@ def test_native_result_success_uses_shared_verification():
         "call_api", json.dumps({"partial": True, "rows": []})
     ) is True
     assert ninja_native._native_tool_result_succeeded("call_api", "null") is False
+
+
+
+def test_native_fast_path_publishes_execution_events_live(monkeypatch):
+    monkeypatch.setattr(ninja_native, "_ensure", lambda: None)
+    monkeypatch.setattr(
+        ninja_agent,
+        "build_execution_plan",
+        lambda question, history=None: {
+            "intent": "read",
+            "route": "spec_ranked_tool_workflow",
+            "candidate_operations": [],
+        },
+    )
+    monkeypatch.setattr(ninja_agent, "recipe_add_device_access", lambda question: None)
+    monkeypatch.setattr(ninja_agent, "fast_path", lambda question, history=None: "Direct answer")
+    events = []
+
+    answer, activity = ninja_native._run_inner(
+        "stream-test-session",
+        "test-model",
+        "hello",
+        "http://127.0.0.1:1234/v1",
+        progress=events.append,
+    )
+
+    assert answer == "Direct answer"
+    assert any(item.get("kind") == "execution_plan" for item in activity)
+    streamed = [item.get("activity_event") for item in events if item.get("activity_event")]
+    assert any(item.get("kind") == "execution_plan" for item in streamed)
+    assert any(item.get("kind") == "call" and item.get("tool") == "fast_path" for item in streamed)
