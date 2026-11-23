@@ -17,7 +17,10 @@ from openai import OpenAI
 
 import ninja_agent as core
 
-MAX_STEPS = max(1, min(int(os.getenv("NINJA_AGENT_MAX_STEPS", "20")), 40))
+try:
+    MAX_STEPS = max(1, min(int(os.getenv("NINJA_AGENT_MAX_STEPS", "20")), 40))
+except (TypeError, ValueError):
+    MAX_STEPS = 20
 _ready, _sessions, _clients = False, {}, {}
 
 
@@ -632,7 +635,10 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
     msgs = [{"role": "system", "content": system}] + hist + [{"role": "user", "content": content}]
     answer = "I couldn't finish within the step limit. Try a more specific question."
     max_steps = min(MAX_STEPS, max(1, int(specialist.max_iterations)))
-    max_seconds = max(15.0, min(float(os.getenv("NINJA_AGENT_MAX_SECONDS", "180")), 600.0))
+    try:
+        max_seconds = max(15.0, min(float(os.getenv("NINJA_AGENT_MAX_SECONDS", "180")), 600.0))
+    except (TypeError, ValueError):
+        max_seconds = 180.0
     run_started = time.monotonic()
     tool_fingerprints = {}
     called = nudged = False
