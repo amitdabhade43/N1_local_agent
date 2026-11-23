@@ -171,3 +171,22 @@ def test_device_lifecycle_uses_documented_cursor_to_search_older_activity_pages(
     assert calls[1]["newerThan"] == 8001
     assert "Activity **7999**" in answer
     assert "node ID **5988**" in answer
+
+
+def test_device_lifecycle_reads_actor_from_activity_user_details():
+    actor, actor_id = ninja_agent._device_lifecycle_actor({
+        "userDetails": {
+            "id": 2,
+            "name": "Rene Piuk",
+            "email": "rene.piuk@hoerbiger.com",
+        }
+    })
+    assert actor == "Rene Piuk (rene.piuk@hoerbiger.com)"
+    assert actor_id == 2
+
+
+def test_fast_path_routes_deletion_question_to_lifecycle_recipe(monkeypatch):
+    monkeypatch.setattr(ninja_agent, "recipe_latest_end_user", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ninja_agent, "recipe_count_technician_role_users", lambda *args, **kwargs: None)
+    monkeypatch.setattr(ninja_agent, "recipe_device_lifecycle", lambda question: "lifecycle evidence")
+    assert ninja_agent.fast_path("Who deleted B82ZST3?") == "lifecycle evidence"
