@@ -73,3 +73,71 @@ def test_approved_direct_mcp_call_invokes_unwrapped_tool_without_token(monkeypat
     assert len(calls) == 1
     assert "approval_token" not in calls[0]
     assert action_id not in app._mcp_pending_actions
+
+
+
+def test_mcp_call_is_checked_against_local_json_operation_and_typed_query(monkeypatch):
+    core = app.ninja_native.core
+    spec = {
+        "paths": {
+            "/v2/things/{id}": {
+                "patch": {
+                    "operationId": "patchThing",
+                    "summary": "Update thing",
+                }
+            }
+        }
+    }
+    operation = {
+        "id": "patchThing",
+        "method": "PATCH",
+        "path": "/v2/things/{id}",
+        "read_only": False,
+        "params": [
+            {"name": "id", "in": "path", "required": True, "schema": {"type": "integer"}},
+            {"name": "enabled", "in": "query", "required": True, "schema": {"type": "boolean"}},
+        ],
+        "request_body": {
+            "required": True,
+            "media_type": "application/json",
+            "schema": {"type": "object", "required": ["name"],
+                       "properties": {"name": {"type": "string"}}},
+        },
+    }
+    monkeypatch.setattr(core, "SPEC_DATA", spec)
+    monkeypatch.setattr(core, "OPS", {"patchThing": operation})
+    monkeypatch.setattr(core, "_argument_errors", lambda op, args: (
+        ["invalid"] if not isinstance(args["query"].get("enabled"), bool) else []
+    ))
+
+    valid = app._mcp_validate_call("PATCH", "/v2/things/42", "ninjaone__call", {
+        "endpoint": "PATCH /v2/things/{id}",
+        "path_params": {"id": 42},
+        "query": {"enabled": "true"},
+        "body": {"name": "Thing"},
+    })
+    assert valid["ok"] is True
+    assert valid["query"] == {"enabled": True}
+
+
+def test_mcp_local_spec_contract_blocks_post_delete_semantics(monkeypatch):
+    core = app.ninja_native.core
+    monkeypatch.setattr(core, "SPEC_DATA", {
+        "paths": {"/v2/things/delete": {
+            "post": {"operationId": "deleteThings", "summary": "Delete things"}
+        }}
+    })
+    monkeypatch.setattr(core, "OPS", {})
+
+    result = app._mcp_validate_call("POST", "/v2/things/delete", "ninjaone__call", {
+        "endpoint": "POST /v2/things/delete", "body": {}
+    })
+    assert result["ok"] is False
+    assert result["blocked_delete"] is True
+
+
+def test_raw_mcp_query_preserves_repeated_values():
+    result = app._mcp_request_query("ninjaone__raw_call", {
+        "request": "GET /v2/devices?type=WINDOWS&type=MAC"
+    })
+    assert result == {"type": ["WINDOWS", "MAC"]}
