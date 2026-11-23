@@ -156,3 +156,51 @@ def test_mcp_spec_validation_rejects_unknown_endpoint_without_execution(monkeypa
 
     assert result["ok"] is False
     assert "not present" in result["error"]
+
+
+
+def test_wrapped_mcp_write_prepares_card_without_invoking_the_underlying_tool(monkeypatch):
+    from pydantic import BaseModel
+
+    class CallArgs(BaseModel):
+        endpoint: str
+        path_params: dict | None = None
+        query: dict | None = None
+        body: dict | None = None
+
+    invoked = []
+
+    async def original_call(endpoint, path_params=None, query=None, body=None):
+        invoked.append({"endpoint": endpoint, "path_params": path_params, "query": query, "body": body})
+        return {"endpoint": endpoint, "data": {"updated": True}}
+
+    tool = app.StructuredTool.from_function(
+        coroutine=original_call,
+        name="ninjaone__call",
+        description="NinjaOne API call",
+        args_schema=CallArgs,
+        infer_schema=False,
+    )
+    monkeypatch.setattr(app, "_mcp_validate_call", lambda *args: {
+        "ok": True,
+        "operation": {"read_only": False},
+    })
+    wrapped = app.wrap_mcp_write_tools([tool])
+    token = app._mcp_active_session.set("wrapper-approval-test")
+    try:
+        result = asyncio.run(wrapped[0].ainvoke({
+            "endpoint": "PATCH /v2/user/end-user/{id}/device-access",
+            "path_params": {"id": 144},
+            "body": {"addDeviceIds": [22]},
+        }))
+    finally:
+        app._mcp_active_session.reset(token)
+
+    card = __import__("json").loads(result)
+    assert card["approval_required"] is True
+    assert card["method"] == "PATCH"
+    assert card["path"] == "/v2/user/end-user/144/device-access"
+    assert invoked == []
+    pending = app._mcp_pending_actions[card["action_id"]]
+    assert pending["execution_mode"] == "direct_mcp_call"
+    app._mcp_pending_actions.pop(card["action_id"], None)
