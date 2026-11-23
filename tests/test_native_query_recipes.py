@@ -151,19 +151,19 @@ def test_person_first_device_access_request_resolves_user_and_device_separately(
     monkeypatch.setattr(ninja_agent, "t_call", fake_t_call)
 
     result = json.loads(
-        ninja_agent.recipe_add_device_access("Give Rene access to VM-6804B761")
+        ninja_agent.recipe_add_device_access("Give Rene Piuk access to VM-6804B761")
     )
 
     assert result["approval_required"] is True
     assert result["body"] == {"addDeviceIds": [50]}
     assert "Rene Piuk" in result["summary"]
     assert "VM-6804B761" in result["summary"]
-    assert ("end_user", "Rene") in calls
-    assert ("user", "Rene") in calls
-    assert ("technician", "Rene") in calls
-    assert ("contact", "Rene") in calls
-    assert ("device", "VM-6804B761") in calls
-    assert ("end_user", "VM-6804B761") not in calls
+    # A full name is identity-qualified: resolve that exact end-user first,
+    # then resolve the device separately. No first-name cross-inventory scan.
+    assert calls == [
+        ("end_user", "Rene Piuk"),
+        ("device", "VM-6804B761"),
+    ]
     assert len(prepared_calls) == 1
 
 
@@ -204,7 +204,7 @@ def test_person_first_device_access_request_stops_for_ambiguous_rene(monkeypatch
         AssertionError("No write may be prepared for an ambiguous person.")
     ))
 
-    answer = ninja_agent.recipe_add_device_access("Give Rene access to VM-6804B761")
+    answer = ninja_agent.recipe_add_device_access("Give Rene Piuk access to VM-6804B761")
 
     assert "Multiple NinjaOne people records matched" in answer
     assert "Which user should receive the device access" in answer
