@@ -342,7 +342,11 @@ def _mcp_write_request(tool_name: str, arguments: dict[str, Any]):
         if not isinstance(path_params, dict):
             return None
         missing = re.findall(r"\{([^}]+)\}", template)
-        if any(name not in path_params or path_params[name] is None for name in missing):
+        # DELETE is forbidden regardless of whether its target IDs are complete.
+        # Preserve the template so the wrapper can reject the method explicitly.
+        if method != "DELETE" and any(
+            name not in path_params or path_params[name] is None for name in missing
+        ):
             return None
         path = re.sub(
             r"\{([^}]+)\}",
@@ -564,6 +568,14 @@ def wrap_mcp_write_tools(tools):
                     })
 
                 method, path, body = target
+                # Never route DELETE through schema validation or the MCP tool:
+                # destructive operations are categorically disabled in this agent.
+                if method == "DELETE":
+                    return json.dumps({
+                        "error": "Delete operations are blocked by policy. No NinjaOne request was sent.",
+                        "blocked_delete": True,
+                        "executed": False,
+                    }, ensure_ascii=False)
                 validation = _mcp_validate_call(method, path, _tool.name, arguments)
                 if not validation.get("ok"):
                     return json.dumps({
