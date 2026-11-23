@@ -55,6 +55,73 @@ def approval():
     })
 
 
+def test_missing_access_list_is_hydrated_from_end_user_details_before_approval():
+    rene = {
+        "id": 31,
+        "firstName": "Rene",
+        "lastName": "Piuk",
+        "email": "rene.piuk@example.com",
+        "organizationId": 7,
+        "match": 1.0,
+    }
+    detail_op = {
+        "id": "getEndUser",
+        "method": "GET",
+        "path": "/v2/user/end-user/{id}",
+    }
+    detail = {**rene, "accessibleDeviceIds": [], "assignedDeviceIds": []}
+    with patch.object(core, "OPS", {
+             OPERATION["id"]: OPERATION,
+             detail_op["id"]: detail_op,
+         }), \
+         patch.object(core, "t_resolve", side_effect=resolver_for([rene])), \
+         patch.object(core, "fetch", return_value=[detail]) as fetch, \
+         patch.object(core, "t_call", return_value=approval()) as call:
+        result = json.loads(core.recipe_add_device_access(
+            "add VM-6804B761 to rene for device access"
+        ))
+
+    assert result["approval_required"] is True
+    assert fetch.call_args.args == (
+        detail_op,
+        "/v2/user/end-user/31",
+        {},
+    )
+    assert call.call_count == 1
+    assert call.call_args.args[0]["path_params"] == {"id": 31}
+    assert call.call_args.args[0]["body"] == {"addDeviceIds": [50]}
+
+
+def test_missing_access_list_and_failed_detail_read_never_prepare_patch():
+    rene = {
+        "id": 31,
+        "firstName": "Rene",
+        "lastName": "Piuk",
+        "email": "rene.piuk@example.com",
+        "organizationId": 7,
+        "match": 1.0,
+    }
+    detail_op = {
+        "id": "getEndUser",
+        "method": "GET",
+        "path": "/v2/user/end-user/{id}",
+    }
+    with patch.object(core, "OPS", {
+             OPERATION["id"]: OPERATION,
+             detail_op["id"]: detail_op,
+         }), \
+         patch.object(core, "t_resolve", side_effect=resolver_for([rene])), \
+         patch.object(core, "fetch", side_effect=RuntimeError("read failed")), \
+         patch.object(core, "t_call") as call:
+        result = core.recipe_add_device_access(
+            "add VM-6804B761 to rene for device access"
+        )
+
+    assert "Could not retrieve the selected end-user details" in result
+    assert "No change was prepared" in result
+    call.assert_not_called()
+
+
 def test_conversational_device_access_request_prepares_approval():
     rene = person(31, "Rene", "Piuk", "rene.piuk@example.com")
     with patch.object(core, "OPS", {OPERATION["id"]: OPERATION}), \
