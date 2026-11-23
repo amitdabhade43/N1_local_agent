@@ -3089,6 +3089,222 @@ def recipe_catalog_collection_read(q):
     )
 
 
+
+def _device_lifecycle_exact_name(record, target):
+    """Match a device name only against explicit device-name fields or the audit message."""
+    if not isinstance(record, dict):
+        return False
+    wanted = re.sub(r"[^a-z0-9]", "", str(target or "").casefold())
+    if not wanted:
+        return False
+    values = []
+    for key in ("systemName", "deviceName", "name", "displayName", "dnsName", "hostname", "netbiosName"):
+        value = record.get(key)
+        if isinstance(value, (str, int)):
+            values.append(str(value))
+    message = record.get("message")
+    if isinstance(message, str):
+        values.append(message)
+    data = record.get("data")
+    if isinstance(data, dict):
+        for key in ("message", "subject", "deviceName", "systemName", "name"):
+            value = data.get(key)
+            if isinstance(value, str):
+                values.append(value)
+        nested_message = data.get("message")
+        if isinstance(nested_message, dict):
+            for key in ("text", "message", "description", "deviceName", "systemName"):
+                value = nested_message.get(key)
+                if isinstance(value, str):
+                    values.append(value)
+    # Device-name fields require an exact normalized match. Audit messages may
+    # wrap the name in quotes, e.g. Device 'HOST' deleted.
+    for value in values:
+        normalized = re.sub(r"[^a-z0-9]", "", value.casefold())
+        if normalized == wanted:
+            return True
+        if value is message or value in values and value not in (
+            record.get("systemName"), record.get("deviceName"), record.get("name"),
+            record.get("displayName"), record.get("dnsName"), record.get("hostname"),
+            record.get("netbiosName"),
+        ):
+            if re.search(r"(?<![A-Za-z0-9])" + re.escape(str(target)) + r"(?![A-Za-z0-9])", value, re.I):
+                return True
+    return False
+
+
+def _device_lifecycle_actor(activity):
+    data = activity.get("data") if isinstance(activity, dict) else {}
+    message = data.get("message") if isinstance(data, dict) else {}
+    params = message.get("params") if isinstance(message, dict) else {}
+    params = params if isinstance(params, dict) else {}
+    name = params.get("appUserName") or params.get("userName") or params.get("name")
+    email = params.get("appUserEmail") or params.get("email")
+    actor_id = params.get("appUserId") or params.get("userId") or activity.get("userId")
+    if name and email:
+        return f"{name} ({email})", actor_id
+    if name or email:
+        return str(name or email), actor_id
+    if actor_id not in (None, "", 0, "0"):
+        return f"unresolved user ID {actor_id}", actor_id
+    return "not identified in the activity record", None
+
+
+def _device_lifecycle_org(record):
+    if not isinstance(record, dict):
+        return "not provided"
+    data = record.get("data") if isinstance(record.get("data"), dict) else {}
+    message = data.get("message") if isinstance(data.get("message"), dict) else {}
+    params = message.get("params") if isinstance(message.get("params"), dict) else {}
+    for source in (record, data, params):
+        name = source.get("organizationName") or source.get("organization")
+        if isinstance(name, dict):
+            name = name.get("name") or name.get("displayName") or name.get("id")
+        if name:
+            return str(name)
+        org_id = source.get("organizationId") or source.get("clientId")
+        if org_id not in (None, ""):
+            return f"organization ID {org_id}"
+    return "not provided"
+
+
+def recipe_device_lifecycle(q):
+    """Correlate current inventory with every matching NODE_DELETED audit event."""
+    match = re.search(
+        r"\b(?:who\s+(?:deleted|removed)|(?:was|has\s+been)\s+deleted|deletion\s+history\s+for|history\s+of)\s+(?:the\s+)?(?:device|computer|machine|endpoint)?\s*['\"]?([A-Za-z0-9][A-Za-z0-9._-]{1,})['\"]?\s*(?:\?|$)",
+        str(q or "").strip(),
+        re.I,
+    )
+    if not match:
+        return None
+    device_name = match.group(1).strip(" .?!'\"")
+    if not device_name:
+        return None
+
+    activity_path = "/v2/activities"
+    activity_op = op_by_path(activity_path)
+    if not activity_op:
+        return "I cannot verify deletion history: GET /v2/activities is not available in the loaded NinjaOne API specification."
+    documented = {parameter.get("name") for parameter in activity_op.get("params", [])}
+    if not {"pageSize", "olderThan", "status"}.issubset(documented):
+        return "I cannot verify deletion history: the loaded NinjaOne specification does not document the required activity filters and pagination."
+
+    # Retrieve current inventory separately: an active record does not erase
+    # historical deletion events, and a deletion event does not prove identity.
+    current_rows = []
+    inventory_complete = False
+    device_op = op_by_path("/v2/devices")
+    if device_op:
+        current_rows = fetch(device_op, "/v2/devices", {})
+        inventory_complete = getattr(current_rows, "complete", True) is not False
+
+    exact_current = []
+    wanted = re.sub(r"[^a-z0-9]", "", device_name.casefold())
+    for row in current_rows:
+        if not isinstance(row, dict):
+            continue
+        labels = [row.get(key) for key in (
+            "systemName", "deviceName", "name", "displayName", "dnsName",
+            "hostname", "netbiosName",
+        )]
+        if any(
+            re.sub(r"[^a-z0-9]", "", str(value).casefold()) == wanted
+            for value in labels if value not in (None, "")
+        ):
+            exact_current.append(row)
+
+    query = {"pageSize": 1000, "status": "NODE_DELETED"}
+    if "class" in documented:
+        query["class"] = "ALL"
+    cursor = None
+    deletion_events = []
+    complete = False
+    for _ in range(200):
+        if cursor is not None:
+            query["olderThan"] = cursor
+        result = http_get(activity_path, dict(query))
+        if not isinstance(result, dict) or not isinstance(result.get("activities"), list):
+            return "I cannot verify deletion history: NinjaOne returned an unexpected activity response."
+        page = result["activities"]
+        for event in page:
+            if not isinstance(event, dict):
+                continue
+            if str(event.get("statusCode") or "").upper() != "NODE_DELETED":
+                continue
+            if _device_lifecycle_exact_name(event, device_name):
+                deletion_events.append(event)
+        if not page or len(page) < query["pageSize"]:
+            complete = True
+            break
+        last_id = page[-1].get("id")
+        try:
+            next_cursor = int(last_id)
+        except (TypeError, ValueError):
+            return "I cannot confirm a complete deletion search: the activity page did not provide a valid activity ID cursor."
+        if next_cursor <= 0 or (cursor is not None and next_cursor >= cursor):
+            return "I cannot confirm a complete deletion search: the activity pagination cursor did not move to older records."
+        cursor = next_cursor
+    if not complete:
+        return (
+            f"I found {len(deletion_events)} matching deletion event(s) for {device_name}, "
+            "but the activity search reached its 200-page safety limit. The history may be incomplete."
+        )
+
+    def fmt_time(value):
+        try:
+            return time.strftime("%Y-%m-%d %H:%M:%S %Z", time.localtime(float(value)))
+        except (TypeError, ValueError, OverflowError):
+            return str(value or "not provided")
+
+    lines = [f"## Device lifecycle investigation: {device_name}"]
+    if exact_current:
+        lines.append(f"**Current inventory:** {len(exact_current)} exact-name record(s) found.")
+        for row in exact_current:
+            org = row.get("organizationName") or row.get("organization") or row.get("organizationId") or row.get("clientId") or "not provided"
+            if isinstance(org, dict):
+                org = org.get("name") or org.get("id") or "not provided"
+            node_id = row.get("id", "not provided")
+            serial = row.get("serialNumber") or row.get("biosSerialNumber")
+            lines.append(f"- Current record ID **{node_id}**, organization **{org}**"
+                         + (f", serial **{serial}**" if serial else "") + ".")
+    elif inventory_complete:
+        lines.append("**Current inventory:** no exact-name device record found in the completed inventory search.")
+    else:
+        lines.append("**Current inventory:** search was incomplete; current registration status is unknown.")
+
+    if deletion_events:
+        deletion_events.sort(key=lambda event: float(event.get("activityTime") or 0))
+        lines.append(f"**Historical deletion events:** {len(deletion_events)} exact-name NODE_DELETED event(s) found.")
+        for index, event in enumerate(deletion_events, 1):
+            actor, actor_id = _device_lifecycle_actor(event)
+            node_id = event.get("deviceId")
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            message = data.get("message") if isinstance(data.get("message"), dict) else {}
+            params = message.get("params") if isinstance(message.get("params"), dict) else {}
+            node_id = node_id or params.get("nodeId") or params.get("deviceId") or "not provided"
+            lines.append(
+                f"{index}. Activity **{event.get('id', 'not provided')}** — "
+                f"{fmt_time(event.get('activityTime'))}; node ID **{node_id}**; "
+                f"deleted by **{actor}**; organization **{_device_lifecycle_org(event)}**."
+            )
+    else:
+        lines.append("**Historical deletion events:** no matching deletion event was found in the completed activity search.")
+
+    if exact_current and deletion_events:
+        lines.append(
+            "**Interpretation:** the device name has both a current inventory record and historical deletion event(s). "
+            "These may represent repeated registrations. The name alone does not prove that the records are the same physical device; "
+            "compare serial number or other hardware identifiers and organization before asserting identity."
+        )
+    elif not complete:
+        lines.append("**Interpretation:** the audit search is incomplete, so no definitive conclusion about deletion history is possible.")
+    elif not deletion_events:
+        lines.append("**Interpretation:** no matching deletion was found in the completed activity search. This is not proof of absence outside the activity history exposed by this API.")
+    if not inventory_complete:
+        lines.append("**Coverage note:** the current device inventory response was partial; the current-state section may be incomplete.")
+    return "\n".join(lines)
+
+
 def fast_path(q, history=None):
     if GREET.match(q):
         return HELP
@@ -3110,6 +3326,9 @@ def fast_path(q, history=None):
             heading = f"{len(rows)} {label} in the returned result"
             return heading + partial + ": " + ", ".join(names) + (" ..." if len(rows) > 50 else "")
     try:
+        lifecycle = recipe_device_lifecycle(q)
+        if lifecycle:
+            return lifecycle
         creator_question = bool(re.search(r"\b(?:who|which person|what user)\b.{0,30}\b(?:created|added|registered|creator)\b|\bcreator\b", q, re.I))
         context = " ".join(
             str(item.get("content", "")) for item in (history or [])[-6:]
