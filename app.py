@@ -1612,6 +1612,22 @@ async def chat_stream(req: ChatRequest):
                 direct_result = await try_direct_backend_request(session_id, req.message)
                 if direct_result is not None:
                     answer, activity = direct_result
+                    # Direct routes may finish before model discovery. Replay their
+                    # recorded events through the same timeline contract so the
+                    # Execution Studio presents one consistent event format.
+                    for item in activity or []:
+                        kind = item.get("kind", "activity") if isinstance(item, dict) else "activity"
+                        tool = item.get("tool", "") if isinstance(item, dict) else ""
+                        label = (
+                            f"Calling {tool}" if kind == "call" and tool else
+                            f"Received result from {tool}" if kind == "result" and tool else
+                            "Approval request prepared; no change executed" if kind == "approval_required" else
+                            "Execution plan prepared" if kind == "execution_plan" else
+                            f"Verified result from {tool}" if kind == "verification" and tool else
+                            "Execution activity"
+                        )
+                        publish({"type": "progress", "stage": "activity", "message": label,
+                                 "activity_event": item})
                     _logger.info("chat_complete backend=%s route=direct provider=%s elapsed_ms=%.1f", os.getenv("AGENT_BACKEND", "mcp").lower(), provider, (time.perf_counter() - request_started) * 1000)
                     publish({"type": "complete", "session_id": session_id, "provider": provider, "model": req.model,
                              "answer": answer, "activity": activity})
