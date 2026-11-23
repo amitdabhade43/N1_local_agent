@@ -1881,6 +1881,81 @@ def _find_end_user_creator(end_user):
     )
 
 
+def recipe_count_technician_role_users(q):
+    """Count distinct users assigned to technician-type roles from the dedicated roles API."""
+    text = re.sub(r"\\s+", " ", str(q or "").strip()).casefold()
+    count_intent = bool(re.search(r"\\b(?:how many|count|number of|total)\\b", text))
+    user_intent = bool(re.search(r"\\b(?:users?|people|members?)\\b", text))
+    technician_role_intent = bool(
+        re.search(r"\\btechnician\\s+roles?\\b|\\broles?\\s+(?:for|of)\\s+technicians?\\b", text)
+    )
+    if not (count_intent and user_intent and technician_role_intent):
+        return None
+
+    path = "/v2/user/roles"
+    operation = op_by_path(path)
+    if not operation:
+        return f"The NinjaOne user-role listing endpoint GET {path} is not present in the loaded API specification."
+
+    try:
+        roles = fetch(operation, path, {"roleType": "TECHNICIAN"})
+    except Exception as exc:
+        return f"Could not count users in technician-type roles: {type(exc).__name__}: {exc}"
+
+    identities = set()
+    membership_count = 0
+    missing_member_lists = []
+    unverifiable_members = 0
+    role_names = []
+    for role in roles:
+        if not isinstance(role, dict):
+            continue
+        role_names.append(str(role.get("name") or role.get("id") or "unnamed role"))
+        members = role.get("members")
+        if not isinstance(members, list):
+            missing_member_lists.append(role_names[-1])
+            continue
+        membership_count += len(members)
+        for member in members:
+            if not isinstance(member, dict):
+                unverifiable_members += 1
+                continue
+            member_id = member.get("id")
+            email = str(member.get("email") or "").strip().casefold()
+            if member_id is not None:
+                identities.add(("id", str(member_id)))
+            elif email:
+                identities.add(("email", email))
+            else:
+                unverifiable_members += 1
+
+    if missing_member_lists or unverifiable_members:
+        details = []
+        if missing_member_lists:
+            details.append("members were not returned for: " + ", ".join(missing_member_lists[:10]))
+        if unverifiable_members:
+            details.append(f"{unverifiable_members} member record(s) had neither a user ID nor email")
+        return (
+            "I cannot provide a verified unique-user count for technician-type roles because "
+            + "; ".join(details) + "."
+            + _partial_note(roles)
+        )
+
+    unique_count = len(identities)
+    role_count = len(roles)
+    partial = _partial_note(roles)
+    if partial:
+        return (
+            f"At least {unique_count} distinct user(s) appear in {role_count} technician-type role(s) "
+            f"({membership_count} role membership(s) in the returned data); the complete total is unknown."
+            f"{partial}"
+        )
+    return (
+        f"{unique_count} distinct user(s) are members of {role_count} technician-type role(s) "
+        f"({membership_count} role membership(s))."
+    )
+
+
 def recipe_count_named(q):
     """Count matching user records for natural questions such as 'how many users with name Rene?'."""
     text = str(q).strip().rstrip("?.! ")
@@ -1977,6 +2052,13 @@ def recipe_add_device_access(q):
     device_labels = []
     user = None
 
+    person_first = re.search(
+        r"^(?:please\\s+)?(?:add|grant|give|provide)\\s+(?P<user>.+?)\\s+"
+        r"(?:device\\s+)?access\\s+to\\s+"
+        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)$",
+        text, re.I,
+    )
+
     if multi:
         # System names are single whitespace-delimited identifiers in NinjaOne.
         # Try each possible user/device boundary, accepting only an exact user
@@ -2017,6 +2099,12 @@ def recipe_add_device_access(q):
         if len(partitions) != 1:
             return "More than one exact end-user/device interpretation matched. Please clarify the end-user and device names. No change was prepared."
         user_label, user, device_labels, devices = partitions[0]
+    elif person_first:
+        # Natural person-first phrasing: "Give Rene access to VM-123".
+        # Keep the person and device slots explicit; never feed the device ID
+        # into a people resolver.
+        device_label = person_first.group("device")
+        user_label = person_first.group("user")
     else:
         # Accept conversational variants such as "add X to Y for device access",
         # while retaining the existing explicit access-list forms.
@@ -2126,11 +2214,12 @@ def recipe_add_device_access(q):
                 if not matched:
                     continue
 
-                if kind == "end_user":
-                    category = "end-user"
-                elif kind == "contact":
+                user_type = str(row.get("userType") or row.get("type") or "").upper()
+                if kind == "contact" or user_type == "CONTACT":
                     category = "contact"
-                elif kind == "technician" or str(row.get("userType", "")).upper() == "TECHNICIAN":
+                elif kind == "end_user" or user_type == "END_USER":
+                    category = "end-user"
+                elif kind == "technician" or user_type == "TECHNICIAN":
                     category = "technician"
                 else:
                     category = "console user"
@@ -2784,6 +2873,9 @@ def fast_path(q, history=None):
             if out:
                 return out
         out = recipe_latest_end_user(q, include_creator=creator_question)
+        if out:
+            return out
+        out = recipe_count_technician_role_users(q)
         if out:
             return out
         for rec in (recipe_count_device_prefix, recipe_device_summary, recipe_device_details, recipe_person_device_access, recipe_list_entity_fields, recipe_list_organizations, recipe_list_technician_names, recipe_per_org, recipe_search_people, recipe_count_named, recipe_find, recipe_devices_in, recipe_catalog_collection_read):
