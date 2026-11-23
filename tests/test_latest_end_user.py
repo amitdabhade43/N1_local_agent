@@ -67,7 +67,7 @@ def test_activity_match_requires_target_and_creation_event():
 def test_latest_end_user_creator_is_resolved_from_activity_actor(monkeypatch):
     target = {"id": 185, "firstName": "Alexander", "lastName": "Dinkel", "email": "alex@example.com"}
     operations = {
-        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "olderThan"}, {"name": "class"}]},
+        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "newerThan"}, {"name": "class"}]},
         "/v2/users": {"params": []},
     }
     monkeypatch.setattr(ninja_agent, "op_by_path", lambda path: operations.get(path))
@@ -105,13 +105,13 @@ def test_latest_end_user_creator_followup_reuses_previous_latest_user_context(mo
 def test_creator_search_pages_back_with_older_than_cursor(monkeypatch):
     target = {"id": 185, "firstName": "Alexander", "lastName": "Dinkel", "email": "alex@example.com"}
     operations = {
-        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "olderThan"}, {"name": "class"}]},
+        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "newerThan"}, {"name": "class"}]},
         "/v2/users": {"params": []},
     }
     calls = []
     def fake_http_get(path, query):
         calls.append(dict(query))
-        if "olderThan" not in query:
+        if "newerThan" not in query:
             return {"activities": [{"id": 6000 - index} for index in range(1000)]}
         return {"activities": [{
             "id": 4000,
@@ -129,13 +129,13 @@ def test_creator_search_pages_back_with_older_than_cursor(monkeypatch):
     assert "associated with **Morgan Administrator" in answer
     assert len(calls) == 2
     assert calls[0]["pageSize"] == 1000
-    assert calls[1]["olderThan"] == 5001
+    assert calls[1]["newerThan"] == 5001
 
 
 def test_creator_uses_app_user_identity_from_matching_audit_event(monkeypatch):
     target = {"id": 185, "firstName": "Alexander", "lastName": "Dinkel", "email": "alex@example.com"}
     operations = {
-        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "olderThan"}, {"name": "class"}]},
+        "/v2/activities": {"params": [{"name": "pageSize"}, {"name": "newerThan"}, {"name": "class"}]},
     }
     monkeypatch.setattr(ninja_agent, "op_by_path", lambda path: operations.get(path))
     monkeypatch.setattr(ninja_agent, "http_get", lambda path, query: {
