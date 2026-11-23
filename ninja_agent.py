@@ -2134,10 +2134,10 @@ def recipe_add_device_access(q):
     # person-first form below; otherwise the device identifier is mistaken
     # for the person's name and the final person token for the device.
     system_access = re.match(
-        r"^(?:please\\s+)?(?:add|grant|give|provide)\\s+"
-        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\\s+"
-        r"(?:system|device|computer|machine|endpoint)\\s+"
-        r"access\\s+(?:to|for)\\s+(?P<user>.+?)\\s*$",
+        r"^(?:please\s+)?(?:add|grant|give|provide)\s+"
+        r"(?P<device>[A-Za-z0-9][A-Za-z0-9._-]*)\s+"
+        r"(?:system|device|computer|machine|endpoint)\s+"
+        r"access\s+(?:to|for)\s+(?P<user>.+?)\s*$",
         text, re.I,
     )
     if system_access and not multi:
