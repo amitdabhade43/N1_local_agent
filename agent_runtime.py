@@ -446,6 +446,8 @@ class SubagentManager:
     EXCLUDED_CONTEXT_KEYS = frozenset({
         "messages", "history", "trajectory", "session", "session_id",
         "pending_actions", "approval_token", "approval_secret",
+        "api_key", "client_secret", "credentials", "authorization",
+        "access_token", "refresh_token", "password",
     })
 
     def __init__(self, tasks: TaskRegistry | None = None, events: EventBus | None = None,
@@ -466,8 +468,13 @@ class SubagentManager:
                   if task.status in {"queued", "running"}]
         if len(active) >= self.max_children:
             raise RuntimeError("Subagent concurrency limit reached.")
-        context = {key: value for key, value in (parent_context or {}).items()
-                   if key not in self.EXCLUDED_CONTEXT_KEYS}
+        context = {
+            key: value for key, value in (parent_context or {}).items()
+            if key.casefold() not in self.EXCLUDED_CONTEXT_KEYS
+            and not any(secret_term in key.casefold() for secret_term in (
+                "secret", "token", "credential", "password", "api_key", "authorization"
+            ))
+        }
         task = self.tasks.create(agent.name, prompt, parent_task_id,
                                  {"depth": depth + 1, "allowed_tools": sorted(agent.allowed_tools)})
         self.tasks.start(task.task_id)
