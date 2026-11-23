@@ -342,6 +342,15 @@ def _resolve_device_access_clarification(question, history):
         )
 
     user = selected[0]
+    if user.get("category") != "end-user":
+        category = user.get("category") or "unclassified"
+        identity = user["name"] + (f' <{user["email"]}>' if user["email"] else "")
+        return None, (
+            f"The selected record {identity} is a {category}, not an end user. "
+            "The documented NinjaOne device-access PATCH supports end-user records only. "
+            "I will not substitute a same-name or same-email end-user record. "
+            "No change was prepared."
+        )
     target = user["name"]
     if user["email"]:
         target += f' <{user["email"]}>'
