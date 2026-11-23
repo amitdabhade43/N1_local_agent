@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -1375,6 +1376,59 @@ def _mcp_tool_result_succeeded(tool_name: str, raw_result: Any) -> bool | None:
     return bool(isinstance(parsed, dict) and parsed.get("endpoint") and not parsed.get("error"))
 
 
+class _MCPStreamCallbacks(AsyncCallbackHandler):
+    """Publish actual MCP tool lifecycle events to the live chat stream."""
+
+    def __init__(self, progress_callback):
+        self.progress_callback = progress_callback
+        self.tool_names = {}
+
+    def _publish(self, event, message):
+        if not self.progress_callback:
+            return
+        try:
+            self.progress_callback({
+                "stage": "activity",
+                "message": message,
+                "activity_event": event,
+            })
+        except Exception:
+            # UI streaming must never interrupt an MCP operation.
+            return
+
+    async def on_tool_start(self, serialized, input_str, *, run_id, inputs=None, **kwargs):
+        name = (serialized or {}).get("name") or kwargs.get("name") or "MCP tool"
+        arguments = inputs if isinstance(inputs, dict) else None
+        if arguments is None:
+            try:
+                parsed = json.loads(input_str or "{}")
+                arguments = parsed if isinstance(parsed, dict) else {"input": parsed}
+            except (TypeError, ValueError):
+                arguments = {"input": str(input_str or "")[:1000]}
+        self.tool_names[str(run_id)] = name
+        self._publish({"kind": "call", "tool": name, "arguments": arguments},
+                      f"Calling MCP tool {name}")
+
+    async def on_tool_end(self, output, *, run_id, **kwargs):
+        name = self.tool_names.pop(str(run_id), kwargs.get("name") or "MCP tool")
+        result_text = str(output)
+        event = {"kind": "result", "tool": name, "result": result_text[:2500]}
+        succeeded = _mcp_tool_result_succeeded(name, output)
+        if succeeded is not None:
+            event["success"] = succeeded
+        self._publish(event, f"Received result from MCP tool {name}")
+        parsed = parse_mcp_result(output)
+        if isinstance(parsed, dict) and parsed.get("approval_required"):
+            self._publish({"kind": "approval_required", "action": parsed},
+                          "Approval request prepared; no change executed")
+
+    async def on_tool_error(self, error, *, run_id, **kwargs):
+        name = self.tool_names.pop(str(run_id), kwargs.get("name") or "MCP tool")
+        self._publish({"kind": "result", "tool": name,
+                       "result": f"{type(error).__name__}: {error}", "success": False},
+                      f"MCP tool {name} failed")
+
+
 async def run_agent(session_id: str, model_id: str, message_content: Any, base_url: str, progress_callback=None, api_key: str | None = None, fast_path_checked: bool = False):
     if os.getenv("AGENT_BACKEND", "mcp").lower() == "native":
         # Native backend receives the same discovered endpoint as MCP mode.
@@ -1424,9 +1478,10 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
             progress_callback({'stage': 'model', 'message': 'The agent is working through the request.'})
         session_context_token = _mcp_active_session.set(session_id)
         try:
+            callbacks = [_MCPStreamCallbacks(progress_callback)] if progress_callback else []
             result = await agent.ainvoke(
                 {"messages": history},
-                config={"recursion_limit": AGENT_RECURSION_LIMIT},
+                config={"recursion_limit": AGENT_RECURSION_LIMIT, "callbacks": callbacks},
             )
         finally:
             _mcp_active_session.reset(session_context_token)
