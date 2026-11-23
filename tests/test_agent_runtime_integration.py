@@ -34,3 +34,9 @@ def test_shared_tool_registry_enforces_specialist_allowlist():
     result = ninja_agent.exec_tool("search_api", {"query": "devices"}, allowed=set())
     parsed = json.loads(result)
     assert "not permitted" in parsed["error"]
+
+def test_ninjaone_specialist_instructions_load_the_matching_skill():
+    instructions = ninja_agent.specialist_instructions("grant device access to Rene")
+    assert "Active specialist: access" in instructions
+    assert "Device access and permissions" in instructions
+    assert "explicit UI approval" in instructions
