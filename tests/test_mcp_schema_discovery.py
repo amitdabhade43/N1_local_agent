@@ -94,6 +94,8 @@ def test_mcp_schema_catalog_initializes_without_ninjaone_oauth_credentials(monke
         return {"exampleOperation": {"method": "GET"}}
 
     monkeypatch.setattr(core, "SPEC_DATA", {})
+    monkeypatch.setattr(core, "OPS", {})
+    monkeypatch.setattr(core, "IDX", None)
     monkeypatch.setattr(core, "FIELD_INDEX", [])
     monkeypatch.setattr(core, "FIELD_SEARCH_INDEX", [])
     monkeypatch.setattr(core, "SCHEMA_INDEX", {})
