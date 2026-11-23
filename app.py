@@ -21,7 +21,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.callbacks import AsyncCallbackHandler
 from langchain_core.tools import StructuredTool
 from langchain_openai import ChatOpenAI
@@ -1496,6 +1496,11 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         progress_callback({'stage': 'model', 'message': 'Analyzing the request and selecting relevant tools.'})
     async with _session_lock:
         history = list(_sessions.get(session_id, []))[-MAX_HISTORY_MESSAGES:]
+        specialist_context = ninja_native.core.specialist_instructions(message_text)
+        history.append(SystemMessage(content=(
+            "Request-specific specialist guidance. Use the shared NinjaOne tools and "
+            "retain all OpenAPI, approval and DELETE safeguards.\\n" + specialist_context
+        )))
         history.append(HumanMessage(content=message_content))
 
     started = time.perf_counter()
