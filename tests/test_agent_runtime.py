@@ -123,8 +123,8 @@ def test_skill_registry_loads_only_matching_specialist_context(tmp_path):
     skills = tmp_path / "skills"
     skills.mkdir()
     (skills / "access.md").write_text(
-        "---\\nname: access\\ndescription: Access rules\\nagents: access\\n---\\n"
-        "# Access\\nAlways require approval for writes.\\n",
+        "---\nname: access\ndescription: Access rules\nagents: access\n---\n"
+        "# Access\nAlways require approval for writes.\n",
         encoding="utf-8",
     )
     registry = SkillRegistry()
