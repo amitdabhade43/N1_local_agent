@@ -44,6 +44,13 @@ AGENT_RECURSION_LIMIT = max(8, min(32, int(os.getenv("AGENT_RECURSION_LIMIT", "2
 SYSTEM_PROMPT = """You are NinjaOne Expert Agent, an advanced IT operations analyst.
 Use connected NinjaOne MCP tools to retrieve current information and investigate issues.
 
+Schema discovery:
+- For field, property, component-schema or schema-definition questions, use the Local Agent's local_search_fields tool. It searches the same combined field catalog used by Native: the primary ninja_spec.json plus the supplemental ninjaOne-API-core-resources.yaml when that YAML file is present.
+- Use local_inspect_schema to inspect the complete nested schema and paginate its field list. When a schema exists in both sources, specify schema_source='json' or schema_source='yaml' and compare the definitions when relevant.
+- Use local_schema_catalog_status when you need to establish which schema files were loaded or whether the catalogs report conflicts.
+- These local tools read the Local Agent's bundled specifications only; they do not query NinjaOne or return live tenant data.
+- ninja_spec.json remains authoritative for executable endpoints, request validation and writes. YAML supplements schema/field discovery only. Never execute an operation or infer a live value solely from a YAML-only definition. Report material JSON/YAML conflicts instead of silently choosing one.
+
 Execution strategy:
 - Simple counts, IDs, exact lookups, straightforward lists and small predictable requests should use the direct MCP route when available; do not invoke the LLM unnecessarily.
 - For fuzzy, multi-condition, cross-resource or investigative requests, use the model to select MCP tools and reason over their actual results.
@@ -115,6 +122,7 @@ _gateway_discovery_lock = threading.Lock()
 _mcp_pending_actions: dict[str, dict[str, Any]] = {}
 _mcp_pending_lock = threading.Lock()
 _mcp_active_session: ContextVar[str | None] = ContextVar("mcp_active_session", default=None)
+_MCP_SCHEMA_CATALOG_LOCK = threading.Lock()
 
 
 class ChatRequest(BaseModel):
@@ -712,14 +720,147 @@ def get_model(model_id: str, base_url: str, api_key: str | None = None):
     )
 
 
+def _ensure_mcp_schema_catalog():
+    """Load the same JSON+YAML schema indexes used by Native, without initializing API credentials."""
+    core = ninja_native.core
+
+    def ready():
+        return bool(
+            core.SPEC_DATA
+            and core.FIELD_SEARCH_INDEX
+            and core.SCHEMA_INDEX
+            and core.SPEC_SOURCE_REPORT
+        )
+
+    if ready():
+        return core
+    with _MCP_SCHEMA_CATALOG_LOCK:
+        if not ready():
+            # load_ops uses the bundled JSON when available and augments its
+            # field/schema indexes from ninjaOne-API-core-resources.yaml.
+            # It does not require NinjaOne OAuth credentials for local catalog reads.
+            core.OPS = core.load_ops()
+            core.IDX = core.Index(core.OPS)
+    return core
+
+
+def _mcp_local_search_fields(
+    query: str,
+    schema_name: str = "",
+    operation_id: str = "",
+    schema_source: str = "",
+    limit: int = 20,
+) -> str:
+    """Search the shared Native/MCP JSON+YAML field catalog."""
+    core = _ensure_mcp_schema_catalog()
+    return core.t_search_fields({
+        "query": query,
+        "schema_name": schema_name,
+        "operation_id": operation_id,
+        "schema_source": schema_source,
+        "limit": limit,
+    })
+
+
+def _mcp_local_inspect_schema(
+    schema_name: str,
+    schema_source: str = "",
+    offset: int = 0,
+    limit: int = 80,
+) -> str:
+    """Inspect a complete nested schema from the shared JSON+YAML catalog."""
+    core = _ensure_mcp_schema_catalog()
+    return core.t_inspect_schema({
+        "schema_name": schema_name,
+        "schema_source": schema_source,
+        "offset": offset,
+        "limit": limit,
+    })
+
+
+def _mcp_local_schema_catalog_status() -> str:
+    """Report loaded local schema sources and their comparison metadata."""
+    core = _ensure_mcp_schema_catalog()
+    report = core.SPEC_SOURCE_REPORT or {}
+    comparison = report.get("comparison") or {}
+    comparison_keys = (
+        "primary_version",
+        "supplemental_version",
+        "primary_operations",
+        "supplemental_operations",
+        "matching_operation_ids",
+        "operation_route_conflicts",
+        "supplemental_only_schemas",
+        "primary_only_schemas",
+        "schema_definition_conflicts",
+    )
+    summary = {key: comparison[key] for key in comparison_keys if key in comparison}
+    schema_sources = sorted({source for source, _name in core.SCHEMA_INDEX})
+    return json.dumps({
+        "primary": report.get("primary"),
+        "supplemental": report.get("supplemental"),
+        "yaml_loaded": bool(report.get("supplemental")),
+        "schema_sources": schema_sources,
+        "schema_count_by_source": {
+            source: sum(1 for item_source, _name in core.SCHEMA_INDEX if item_source == source)
+            for source in schema_sources
+        },
+        "comparison": summary or None,
+        "execution_authority": "ninja_spec.json",
+        "note": "YAML supplements field and component-schema discovery. Executable endpoint and request validation remain governed by ninja_spec.json.",
+    }, ensure_ascii=False, default=str)
+
+
+def build_mcp_schema_tools(existing_tools=None):
+    """Build local read-only schema tools and avoid duplicate tool names."""
+    existing_names = {getattr(tool, "name", "").casefold() for tool in (existing_tools or [])}
+    definitions = (
+        (
+            "local_search_fields",
+            _mcp_local_search_fields,
+            "Search the shared NinjaOne JSON+YAML field catalog by concept or exact field. "
+            "Returns field names, schema paths, types, required flags, descriptions, enums, source and conflicts. "
+            "Use schema_source='yaml' to focus on supplemental YAML. This is schema metadata, not live NinjaOne data.",
+        ),
+        (
+            "local_inspect_schema",
+            _mcp_local_inspect_schema,
+            "Inspect a complete nested NinjaOne component schema from the shared JSON+YAML catalog. "
+            "Use local_search_fields first; set schema_source to json or yaml when the schema exists in both. "
+            "Use offset and limit to retrieve additional field pages. This does not query NinjaOne.",
+        ),
+        (
+            "local_schema_catalog_status",
+            _mcp_local_schema_catalog_status,
+            "Report which local NinjaOne JSON and supplemental YAML schema catalogs are loaded, "
+            "their schema counts, and JSON/YAML comparison conflicts. This does not query NinjaOne.",
+        ),
+    )
+    tools = []
+    for name, function, description in definitions:
+        if name.casefold() in existing_names:
+            continue
+        tools.append(StructuredTool.from_function(
+            func=function,
+            name=name,
+            description=description,
+        ))
+    return tools
+
+
 async def get_agent(model_id: str, base_url: str, tools, api_key: str | None = None):
     credential_fingerprint = hashlib.sha256((api_key or "").encode("utf-8")).hexdigest()[:16]
-    cache_key = f"{base_url}|{model_id}|{credential_fingerprint}"
+    prepared_tools = wrap_mcp_write_tools(tools)
+    prepared_tools.extend(build_mcp_schema_tools(prepared_tools))
+    tool_fingerprint = hashlib.sha256(
+        "|".join(sorted(getattr(tool, "name", "") for tool in prepared_tools)).encode("utf-8")
+    ).hexdigest()[:12]
+    cache_key = f"{base_url}|{model_id}|{credential_fingerprint}|{tool_fingerprint}"
     async with _agents_lock:
         if cache_key not in _agents:
             _agents[cache_key] = create_agent(
                 model=get_model(model_id, base_url, api_key),
-                tools=wrap_mcp_write_tools(tools),
+                tools=prepared_tools,
                 system_prompt=SYSTEM_PROMPT,
             )
         return _agents[cache_key]
