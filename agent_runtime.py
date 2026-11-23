@@ -368,6 +368,78 @@ class AgentRegistry:
         return list(self._agents.values())
 
 
+@dataclass(frozen=True)
+class SkillDefinition:
+    name: str
+    description: str
+    instructions: str
+    agents: frozenset[str] = frozenset({"general"})
+
+
+class SkillRegistry:
+    """Loads trusted, repository-local Markdown skills on demand."""
+
+    def __init__(self) -> None:
+        self._skills: dict[str, SkillDefinition] = {}
+
+    def register(self, skill: SkillDefinition) -> None:
+        if not skill.name or not skill.instructions.strip():
+            raise ValueError("A skill needs a name and non-empty instructions.")
+        self._skills[skill.name] = skill
+
+    def load_directory(self, directory: str) -> int:
+        from pathlib import Path
+
+        root = Path(directory).resolve()
+        if not root.is_dir():
+            return 0
+        loaded = 0
+        for path in sorted(root.glob("*.md")):
+            resolved = path.resolve()
+            if root not in resolved.parents or not resolved.is_file():
+                continue
+            raw = resolved.read_text(encoding="utf-8")
+            if not raw.startswith("---"):
+                continue
+            closing = raw.find("\\n---", 3)
+            if closing < 0:
+                continue
+            metadata_text = raw[3:closing].strip()
+            body = raw[closing + 4:].strip()
+            metadata: dict[str, str] = {}
+            for line in metadata_text.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                metadata[key.strip().lower()] = value.strip().strip('"').strip("'")
+            name = metadata.get("name") or resolved.stem
+            description = metadata.get("description", "")
+            agents = frozenset(
+                item.strip() for item in metadata.get("agents", "general").split(",")
+                if item.strip()
+            )
+            if not body:
+                continue
+            self.register(SkillDefinition(name, description, body, agents))
+            loaded += 1
+        return loaded
+
+    def for_agent(self, agent_name: str, max_chars: int = 5000) -> str:
+        matches = [
+            skill for skill in self._skills.values()
+            if agent_name in skill.agents or "*" in skill.agents
+        ]
+        matches.sort(key=lambda skill: skill.name)
+        sections = [
+            f"## Skill: {skill.name}\\n{skill.description}\\n{skill.instructions}"
+            for skill in matches
+        ]
+        return "\\n\\n".join(sections)[:max(0, int(max_chars))]
+
+    def names(self) -> list[str]:
+        return sorted(self._skills)
+
+
 class SubagentManager:
     """Bounded child execution with isolated context and inherited approval gate."""
 
