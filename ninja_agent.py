@@ -1249,18 +1249,31 @@ NINJA_SKILLS = SkillRegistry()
 NINJA_SKILLS.load_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills"))
 
 
+def specialists_for_request(question, limit=3):
+    """Return a bounded specialist team for requests spanning multiple NinjaOne domains."""
+    return NINJA_AGENTS.route_many(question, limit=limit)
+
+
 def specialist_for_request(question):
-    """Return the specialist lane selected for a user request."""
-    return NINJA_AGENTS.route(question)
+    """Return the highest-ranked specialist for compatibility with single-lane callers."""
+    return specialists_for_request(question, limit=1)[0]
 
 
 def specialist_instructions(question):
-    """Return specialist guidance plus only the matching repository-local skill."""
-    agent = specialist_for_request(question)
-    skill_context = NINJA_SKILLS.for_agent(agent.name, max_chars=5000)
+    """Combine relevant specialist guidance without spawning parallel local-model calls."""
+    agents = specialists_for_request(question, limit=3)
+    sections = []
+    for agent in agents:
+        skill_context = NINJA_SKILLS.for_agent(agent.name, max_chars=3000)
+        section = f"### {agent.name}: {agent.description}\n{agent.instructions}"
+        if skill_context:
+            section += f"\n\n{skill_context}"
+        sections.append(section)
+    names = ", ".join(agent.name for agent in agents)
     return (
-        f"\n\nActive specialist: {agent.name} — {agent.description}\n{agent.instructions}"
-        + (f"\n\n{skill_context}" if skill_context else "")
+        f"\n\nActive specialist team: {names}. "
+        "Use one coordinated investigation; do not duplicate API calls or infer missing evidence.\n"
+        + "\n\n".join(sections)
     )
 
 
@@ -1365,7 +1378,8 @@ def build_execution_plan(question, history=None):
         route = "spec_discovery_required"
     else:
         route = "spec_ranked_tool_workflow"
-    specialist = specialist_for_request(text)
+    specialist_team = specialists_for_request(text, limit=3)
+    specialist = specialist_team[0]
     return {
         "intent": intent,
         "route": route,
@@ -1374,6 +1388,11 @@ def build_execution_plan(question, history=None):
             "description": specialist.description,
             "max_iterations": specialist.max_iterations,
         },
+        "specialist_team": [
+            {"name": agent.name, "description": agent.description,
+             "read_only": agent.read_only}
+            for agent in specialist_team
+        ],
         "candidate_operations": candidates_out,
         "guardrails": guardrails,
         "history_turns_considered": min(len(history or []), 6),
