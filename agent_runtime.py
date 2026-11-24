@@ -493,3 +493,60 @@ class SubagentManager:
                                              message=f"{agent.name} failed",
                                              data={"error": str(exc)[:500]}))
             raise
+
+    def run_many(self, jobs: list[tuple[AgentDefinition, str]],
+                 runner: Callable[[AgentDefinition, str, dict[str, Any], Any], Any],
+                 parent_context: dict[str, Any] | None = None,
+                 parent_task_id: str | None = None, depth: int = 0,
+                 approval_gate: Any = None) -> list[dict[str, Any]]:
+        """Execute independent read-only specialists concurrently with bounded fan-out.
+
+        Each job gets a separate child task and sanitized context. Failures are
+        returned per job so one unavailable specialist does not discard other
+        completed evidence. Mutating specialists are deliberately rejected here;
+        writes must remain in the foreground approval workflow.
+        """
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        jobs = list(jobs or [])
+        if not jobs:
+            return []
+        if len(jobs) > self.max_children:
+            raise RuntimeError(
+                f"Specialist fan-out exceeds the configured limit of {self.max_children}."
+            )
+        if depth >= self.max_depth:
+            raise PermissionError("Subagent spawn depth limit reached.")
+        names = [agent.name for agent, _prompt in jobs]
+        if len(set(names)) != len(names):
+            raise ValueError("A specialist may appear only once in a fan-out batch.")
+        unsafe = [agent.name for agent, _prompt in jobs if not agent.read_only]
+        if unsafe:
+            raise PermissionError(
+                "Parallel specialist execution is read-only; mutation specialists are blocked: "
+                + ", ".join(unsafe)
+            )
+
+        active = [task for task in self.tasks.list(parent_task_id)
+                  if task.status in {"queued", "running"}]
+        if len(active) + len(jobs) > self.max_children:
+            raise RuntimeError("Subagent concurrency limit reached.")
+
+        results: dict[str, dict[str, Any]] = {}
+        with ThreadPoolExecutor(max_workers=min(self.max_children, len(jobs))) as pool:
+            futures = {
+                pool.submit(
+                    self.run, agent, prompt, runner, parent_context,
+                    parent_task_id, depth, approval_gate,
+                ): agent.name
+                for agent, prompt in jobs
+            }
+            for future in as_completed(futures):
+                name = futures[future]
+                try:
+                    results[name] = {"agent": name, "status": "completed",
+                                     "result": future.result(), "error": None}
+                except Exception as exc:
+                    results[name] = {"agent": name, "status": "failed",
+                                     "result": None, "error": f"{type(exc).__name__}: {exc}"}
+        return [results[agent.name] for agent, _prompt in jobs]
