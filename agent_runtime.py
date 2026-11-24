@@ -364,6 +364,25 @@ class AgentRegistry:
         ranked.sort(key=lambda item: (-item[0], item[1]))
         return ranked[0][2]
 
+    def route_many(self, request: str, limit: int = 3) -> list[AgentDefinition]:
+        """Select a small team of relevant specialists for cross-resource requests."""
+        folded = str(request or "").casefold()
+        ranked = []
+        for agent in self._agents.values():
+            if agent.name == self.default_agent:
+                continue
+            score = sum(
+                3 if keyword in {"access", "accessible", "permission", "permissions", "grant", "revoke"}
+                else 2 if keyword in {"policy", "policies", "ticket", "tickets", "script", "scripts", "automation"}
+                else 1
+                for keyword in agent.keywords if keyword in folded
+            )
+            if score:
+                ranked.append((score, agent.name, agent))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        selected = [item[2] for item in ranked[:max(1, int(limit))]]
+        return selected or [self._agents[self.default_agent]]
+
     def all(self) -> list[AgentDefinition]:
         return list(self._agents.values())
 
