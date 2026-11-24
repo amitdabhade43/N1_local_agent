@@ -1271,7 +1271,8 @@ def specialist_instructions(question):
         sections.append(section)
     names = ", ".join(agent.name for agent in agents)
     return (
-        f"\n\nActive specialist team: {names}. "
+        f"\n\nActive specialist: {agents[0].name}. "
+        f"Active specialist team: {names}. "
         "Use one coordinated investigation; do not duplicate API calls or infer missing evidence.\n"
         + "\n\n".join(sections)
     )
