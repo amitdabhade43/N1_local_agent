@@ -40,3 +40,28 @@ def test_ninjaone_specialist_instructions_load_the_matching_skill():
     assert "Active specialist: access" in instructions
     assert "Device access and permissions" in instructions
     assert "explicit UI approval" in instructions
+
+
+
+def test_cross_resource_request_builds_bounded_specialist_team():
+    plan = ninja_agent.build_execution_plan(
+        "show accessible devices for user Rene"
+    )
+    names = [item["name"] for item in plan["specialist_team"]]
+
+    assert len(names) <= 3
+    assert "access" in names
+    assert "inventory" in names
+    assert "people" in names
+
+
+def test_specialist_instructions_coordinate_team_without_parallel_model_fanout():
+    instructions = ninja_agent.specialist_instructions(
+        "show accessible devices for user Rene"
+    )
+
+    assert "Active specialist team:" in instructions
+    assert "inventory:" in instructions
+    assert "people:" in instructions
+    assert "access:" in instructions
+    assert "one coordinated investigation" in instructions
