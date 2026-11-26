@@ -96,6 +96,7 @@ def test_bulk_device_move_does_not_prepare_partial_or_ambiguous_inventory(monkey
 
 
 def test_batch_approval_executes_each_exact_patch_once(monkeypatch):
+    monkeypatch.setattr(core, "SCOPE", "monitoring management")
     op = {"id": "updateDevice", "method": "PATCH", "path": "/v2/device/{id}", "summary": "Update"}
     requests = [
         {"device_name": "PC-A", "path_params": {"id": 11}, "query": {},
