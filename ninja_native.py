@@ -373,6 +373,44 @@ def _resolve_device_access_clarification(question, history):
     return f"add {device} to {target} for device access", None
 
 
+def try_bulk_device_organization_change(session_id, content):
+    """Shared Native/MCP deterministic preflight for arbitrary-size device moves."""
+    core.set_active_session(session_id)
+    try:
+        prepared_text = core.recipe_move_devices_to_organization(_text(content))
+    finally:
+        core.clear_active_session()
+    if not prepared_text:
+        return None
+    try:
+        prepared = json.loads(prepared_text)
+    except (TypeError, ValueError):
+        prepared = {}
+    if prepared.get("approval_required"):
+        total = int(prepared.get("batch_total") or 0)
+        activity = [
+            {"kind": "call", "tool": "resolve_bulk_devices",
+             "arguments": {"requested_count": total, "source": "complete NinjaOne inventory"}},
+            {"kind": "result", "tool": "resolve_bulk_devices",
+             "result": {"resolved_count": total, "complete": True}},
+            {"kind": "call", "tool": "prepare_bulk_update",
+             "arguments": {"operation_id": prepared.get("operation_id"), "target_count": total}},
+            {"kind": "result", "tool": "prepare_bulk_update",
+             "result": {"approval_required": True, "batch_total": total}},
+            {"kind": "approval_required", "action": prepared},
+        ]
+        return (
+            f'Approval required: {prepared.get("summary", f"Update {total} devices")}. '
+            f'All {total} device names were resolved to unique NinjaOne IDs from the complete inventory. '
+            "Review the consolidated approval card and choose Approve and execute. No changes have been made.",
+            activity,
+        )
+    return str(prepared_text), [
+        {"kind": "call", "tool": "resolve_bulk_devices", "arguments": {"source": "complete NinjaOne inventory"}},
+        {"kind": "result", "tool": "resolve_bulk_devices", "result": str(prepared_text)[:5000]},
+    ]
+
+
 def _try_fast_path(session_id, content):
     """Execute only a deterministic read fast path without resolving an LLM provider."""
     core.set_active_session(session_id)
@@ -407,6 +445,9 @@ def _try_fast_path(session_id, content):
                 "stage": "approval_not_pending",
                 "message": "Chat confirmation was not treated as approval; no mutation was executed.",
             }]
+        bulk_result = try_bulk_device_organization_change(session_id, question)
+        if bulk_result is not None:
+            return bulk_result
         history = _sessions.get(session_id, [])
         resumed_question, clarification = _resolve_device_access_clarification(
             question, history
