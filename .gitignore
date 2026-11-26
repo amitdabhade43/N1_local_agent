@@ -9,3 +9,6 @@ __pycache__/
 .idea/
 dist/
 build/
+
+# Runtime audit log
+logs/

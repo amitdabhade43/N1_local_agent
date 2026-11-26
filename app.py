@@ -29,7 +29,9 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel
 
 load_dotenv()
+import n1_audit
 import n1_security
+import n1_state
 import ninja_native  # after load_dotenv so NINJA_* settings from .env are visible
 from foundry_discovery import discover_foundry, is_vision_model
 
@@ -110,7 +112,7 @@ _tools = None
 _tools_lock = asyncio.Lock()
 _agents: dict[str, Any] = {}
 _agents_lock = asyncio.Lock()
-_sessions: dict[str, list[Any]] = {}
+_sessions: dict[str, list[Any]] = n1_state.BoundedSessionStore()
 _session_lock = asyncio.Lock()
 _logger = logging.getLogger("n1_local_agent")
 _GATEWAY_CACHE_TTL_SECONDS = max(5.0, float(os.getenv("LLM_GATEWAY_DISCOVERY_CACHE_SECONDS", "30")))
@@ -124,8 +126,8 @@ _gateway_discovery_lock = threading.Lock()
 
 # MCP mutations are held in this process until the user clicks the approval card.
 # The approval secret is never passed to the model or exposed in tool schemas.
-_mcp_pending_actions: dict[str, dict[str, Any]] = {}
-_mcp_pending_lock = threading.Lock()
+_mcp_pending_actions = n1_state.ApprovalStore(max_pending=100)
+_mcp_pending_lock = _mcp_pending_actions.lock
 _mcp_active_session: ContextVar[str | None] = ContextVar("mcp_active_session", default=None)
 _MCP_SCHEMA_CATALOG_LOCK = threading.Lock()
 
@@ -528,14 +530,12 @@ def _mcp_approval_action(session_id: str, tool: Any, arguments: dict[str, Any],
         "expires_at": time.time() + 600,
     }
     with _mcp_pending_lock:
-        now = time.time()
-        expired = [key for key, value in _mcp_pending_actions.items()
-                   if now > value.get("expires_at", 0)]
-        for key in expired:
-            _mcp_pending_actions.pop(key, None)
-        if len(_mcp_pending_actions) >= 100:
+        _mcp_pending_actions.purge_expired()
+        if _mcp_pending_actions.is_full():
             raise RuntimeError("Too many pending MCP approvals. Approve, reject, or clear an existing request first.")
         _mcp_pending_actions[action_id] = action
+    n1_audit.audit("action_prepared", session_id, action_id=action_id, method=method,
+                   path=path, backend="mcp")
     return {
         "approval_required": True,
         "action_id": action_id,
@@ -691,14 +691,20 @@ async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[st
     with _mcp_pending_lock:
         action = _mcp_pending_actions.get(action_id)
         if not action:
+            n1_audit.audit("action_not_found", session_id, action_id=action_id, backend="mcp")
             return {"ok": False, "error": "Approval request not found or already used."}
         if action.get("session_id") != session_id:
+            n1_audit.audit("action_session_mismatch", session_id, action_id=action_id, backend="mcp")
             return {"ok": False, "error": "Approval request belongs to a different chat session."}
         if time.time() > action.get("expires_at", 0):
             _mcp_pending_actions.pop(action_id, None)
+            n1_audit.audit("action_expired", session_id, action_id=action_id,
+                           method=action.get("method"), path=action.get("path"), backend="mcp")
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
         # Consume before execution: repeated clicks cannot submit the write twice.
         _mcp_pending_actions.pop(action_id, None)
+    n1_audit.audit("action_approved", session_id, action_id=action_id, method=action.get("method"),
+                   path=action.get("path"), backend="mcp")
 
     try:
         arguments = dict(action["arguments"])
@@ -738,17 +744,29 @@ async def execute_mcp_pending_action(action_id: str, session_id: str) -> dict[st
                         "added_ids_present": all(value in accessible for value in adds),
                         "removed_ids_absent": all(value not in accessible for value in removes),
                     }
+            n1_audit.audit("action_executed" if ok else "action_failed", session_id,
+                           action_id=action_id, method=action.get("method"), path=action.get("path"),
+                           ok=ok, backend="mcp")
             return response
+        n1_audit.audit("action_failed", session_id, action_id=action_id, method=action.get("method"),
+                       path=action.get("path"), ok=False, reason="unrecognized response", backend="mcp")
         return {"ok": False, "error": "MCP write tool returned an unrecognized response.", "result": result}
     except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        _logger.error("Unexpected error executing an approved MCP action", exc_info=exc)
+        n1_audit.audit("action_failed", session_id, action_id=action_id, method=action.get("method"),
+                       path=action.get("path"), ok=False, error_class=type(exc).__name__, backend="mcp")
+        return {"ok": False, "error": f"The approved MCP action failed ({type(exc).__name__}); see the server log."}
+
+
 def reject_mcp_pending_action(action_id: str, session_id: str) -> bool:
     with _mcp_pending_lock:
         action = _mcp_pending_actions.get(action_id)
         if not action or action.get("session_id") != session_id:
             return False
         _mcp_pending_actions.pop(action_id, None)
-        return True
+    n1_audit.audit("action_rejected", session_id, action_id=action_id, method=action.get("method"),
+                   path=action.get("path"), backend="mcp")
+    return True
 
 
 def get_model(model_id: str, base_url: str, api_key: str | None = None):
@@ -1382,7 +1400,7 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
         except Exception as exc:
             _logger.exception("Shared bulk device organization preflight failed")
             return (
-                f"Bulk device resolution failed safely ({type(exc).__name__}: {exc}). "
+                f"Bulk device resolution failed safely ({type(exc).__name__}; see the server log). "
                 "No NinjaOne changes were executed or prepared."
             ), [{"kind": "policy", "stage": "bulk_resolution_failed",
                  "message": "Bulk resolution failed before any write request was prepared."}]
@@ -1924,11 +1942,7 @@ async def clear_session(session_id: str):
     async with _session_lock:
         _sessions.pop(session_id, None)
     ninja_native.clear_session(session_id)
-    with _mcp_pending_lock:
-        stale_actions = [key for key, value in _mcp_pending_actions.items()
-                         if value.get("session_id") == session_id]
-        for key in stale_actions:
-            _mcp_pending_actions.pop(key, None)
+    _mcp_pending_actions.clear_session(session_id)
     return {"ok": True}
 
 

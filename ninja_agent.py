@@ -6,12 +6,14 @@ POST/PUT/PATCH requests are schema-validated and prepared for explicit UI approv
 DELETE and explicit delete actions are blocked.
 The local model selects operations; the OpenAPI catalog validates their contracts.
 """
-import ast, difflib, json, math, os, re, sys, time, threading, secrets, tempfile
+import ast, difflib, json, logging, math, os, re, sys, time, threading, secrets, tempfile
 from collections import Counter
 from urllib.parse import quote
 
 import requests
 from openai import OpenAI
+import n1_audit
+from n1_state import ApprovalStore
 from agent_runtime import AgentDefinition, AgentRegistry, EventBus, RuntimeEvent, SkillRegistry, SubagentManager, TaskRegistry, ToolDefinition, ToolRegistry
 from ninja_openapi import (build_operations, describe_operation, operation_document, validate_payload, is_delete_operation, operation_field_entries, build_field_catalog, compare_spec_documents, schema_field_entries, expand_refs)
 
@@ -28,7 +30,9 @@ MAX_STEPS, MAX_ROWS, MAX_CHARS, TTL = 6, 25, 6000, 60
 OPS, IDX, SPEC_DATA, FIELD_INDEX, FIELD_SEARCH_INDEX = {}, None, {}, [], []
 SCHEMA_SOURCES, SCHEMA_INDEX, SPEC_SOURCE_REPORT = {}, {}, {}
 _tok, _cache = {"v": None, "exp": 0.0}, {}
-_pending_actions, _pending_lock = {}, threading.Lock()
+_log = logging.getLogger("n1.agent")
+_pending_actions = ApprovalStore(max_pending=50)
+_pending_lock = _pending_actions.lock
 _active_session = threading.local()
 
 
@@ -806,12 +810,13 @@ def _prepare_batch_mutation(op, requests_to_prepare, summary, skipped_items=None
         "expires_at": time.time() + 600,
     }
     with _pending_lock:
-        expired = [key for key, value in _pending_actions.items() if time.time() > value.get("expires_at", 0)]
-        for key in expired:
-            _pending_actions.pop(key, None)
-        if len(_pending_actions) >= 50:
+        _pending_actions.purge_expired()
+        if _pending_actions.is_full():
             return err("Too many pending approval requests. Approve, reject or clear an existing request first.")
         _pending_actions[action_id] = action
+    n1_audit.audit("batch_prepared", session_id, action_id=action_id, operation_id=op["id"],
+                   method=op["method"], path=op["path"], backend="native",
+                   item_count=len(requests_to_prepare), skipped_count=len(skipped_items or []))
     return json.dumps({
         "approval_required": True,
         "action_id": action_id,
@@ -859,12 +864,13 @@ def _prepare_mutation(op, path, query, body, headers=None):
         "expires_at": time.time() + 600,
     }
     with _pending_lock:
-        expired = [key for key, value in _pending_actions.items() if time.time() > value.get("expires_at", 0)]
-        for key in expired:
-            _pending_actions.pop(key, None)
-        if len(_pending_actions) >= 50:
+        _pending_actions.purge_expired()
+        if _pending_actions.is_full():
             return err("Too many pending approval requests. Approve, reject or clear an existing request first.")
         _pending_actions[action_id] = action
+    n1_audit.audit("action_prepared", session_id, action_id=action_id,
+                   operation_id=action.get("operation_id"), method=action["method"],
+                   path=action["path"], backend="native")
     return json.dumps({
         "approval_required": True,
         "action_id": action_id,
@@ -880,20 +886,47 @@ def _prepare_mutation(op, path, query, body, headers=None):
     }, default=str)
 
 
+def _execution_error(exc, limit=3000):
+    """Client-safe error text for a failed approved write.
+
+    Our own validation messages and NinjaOne HTTP statuses are shown. Anything else is
+    logged server-side and reported generically instead of leaking internals to the UI.
+    """
+    if isinstance(exc, requests.HTTPError) and exc.response is not None:
+        return f"NinjaOne HTTP {exc.response.status_code}: {exc.response.text[:limit]}"
+    if isinstance(exc, requests.RequestException):
+        return f"NinjaOne request failed ({type(exc).__name__}). See the audit log."
+    if isinstance(exc, ValueError):
+        return str(exc)
+    _log.error("Unexpected error executing an approved action", exc_info=exc)
+    return "Unexpected error while executing the approved action; see the server log."
+
+
+def _status_of(exc):
+    return getattr(getattr(exc, "response", None), "status_code", None)
+
+
 def execute_pending_action(action_id, session_id):
     with _pending_lock:
         action = _pending_actions.get(action_id)
         if not action:
+            n1_audit.audit("action_not_found", session_id, action_id=action_id, backend="native")
             return {"ok": False, "error": "Approval request not found or already used."}
         if action["session_id"] != session_id:
+            n1_audit.audit("action_session_mismatch", session_id, action_id=action_id, backend="native")
             return {"ok": False, "error": "Approval request belongs to a different chat session."}
         if time.time() > action["expires_at"]:
             _pending_actions.pop(action_id, None)
+            n1_audit.audit("action_expired", session_id, action_id=action_id,
+                           operation_id=action.get("operation_id"), backend="native")
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
         # Check scope BEFORE consuming: a configuration problem must not destroy the
         # prepared action; the user can fix .env and approve the same card again.
         scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
         if "management" not in scopes:
+            n1_audit.audit("action_blocked", session_id, action_id=action_id,
+                           operation_id=action.get("operation_id"), reason="management scope missing",
+                           backend="native")
             return {
                 "ok": False,
                 "error": (
@@ -906,11 +939,16 @@ def execute_pending_action(action_id, session_id):
         # Consume before execution: repeated clicks cannot submit the write twice.
         _pending_actions.pop(action_id, None)
 
+    batch = action.get("batch_requests")
+    n1_audit.audit("action_approved", session_id, action_id=action_id,
+                   operation_id=action.get("operation_id"), method=action["method"],
+                   path=action["path"], backend="native",
+                   item_count=len(batch) if batch is not None else None)
     try:
-        if action.get("batch_requests") is not None:
+        if batch is not None:
             results = []
             failures = []
-            for item in action["batch_requests"]:
+            for item in batch:
                 path = action["path"]
                 for name, value in (item.get("path_params") or {}).items():
                     path = path.replace("{" + name + "}", quote(str(value), safe=""))
@@ -922,11 +960,24 @@ def execute_pending_action(action_id, session_id):
                     )
                     results.append({"device_name": item["device_name"], "device_id": item["path_params"]["id"],
                                     "ok": True, "result": result})
+                    n1_audit.audit("batch_item_executed", session_id, action_id=action_id,
+                                   operation_id=action["operation_id"], method=action["method"],
+                                   path=action["path"], device_id=item["path_params"]["id"],
+                                   ok=True, backend="native")
                 except Exception as exc:
                     failure = {"device_name": item["device_name"], "device_id": item["path_params"]["id"],
-                               "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                               "ok": False, "error": _execution_error(exc, 500)}
                     results.append(failure)
                     failures.append(failure)
+                    n1_audit.audit("batch_item_failed", session_id, action_id=action_id,
+                                   operation_id=action["operation_id"], method=action["method"],
+                                   path=action["path"], device_id=item["path_params"]["id"], ok=False,
+                                   status_code=_status_of(exc), error_class=type(exc).__name__,
+                                   backend="native")
+            n1_audit.audit("batch_executed", session_id, action_id=action_id,
+                           operation_id=action["operation_id"], ok=not failures,
+                           item_count=len(results), succeeded=len(results) - len(failures),
+                           failed=len(failures), backend="native")
             return {
                 "ok": not failures,
                 "partial": bool(failures) and len(failures) < len(results),
@@ -945,6 +996,9 @@ def execute_pending_action(action_id, session_id):
             action["method"], action["path"], action["query"], action["body"],
             action["media_type"], action.get("headers"), approved=True
         )
+        n1_audit.audit("action_executed", session_id, action_id=action_id,
+                       operation_id=action.get("operation_id"), method=action["method"],
+                       path=action["path"], ok=True, backend="native")
         return {
             "ok": True,
             "operation_id": action["operation_id"],
@@ -952,11 +1006,12 @@ def execute_pending_action(action_id, session_id):
             "path": action["path"],
             "result": result,
         }
-    except requests.HTTPError as exc:
-        response = exc.response
-        return {"ok": False, "error": f"NinjaOne HTTP {response.status_code}: {response.text[:3000]}"}
     except Exception as exc:
-        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+        n1_audit.audit("action_failed", session_id, action_id=action_id,
+                       operation_id=action.get("operation_id"), method=action.get("method"),
+                       path=action.get("path"), ok=False, status_code=_status_of(exc),
+                       error_class=type(exc).__name__, backend="native")
+        return {"ok": False, "error": _execution_error(exc)}
 
 
 def reject_pending_action(action_id, session_id):
@@ -965,14 +1020,14 @@ def reject_pending_action(action_id, session_id):
         if not action or action.get("session_id") != session_id:
             return False
         _pending_actions.pop(action_id, None)
-        return True
+    n1_audit.audit("action_rejected", session_id, action_id=action_id,
+                   operation_id=action.get("operation_id"), method=action.get("method"),
+                   path=action.get("path"), backend="native")
+    return True
 
 
 def clear_pending_session(session_id):
-    with _pending_lock:
-        stale = [key for key, value in _pending_actions.items() if value.get("session_id") == session_id]
-        for key in stale:
-            _pending_actions.pop(key, None)
+    _pending_actions.clear_session(session_id)
 
 
 def _has_cursor_post_schema(op):
