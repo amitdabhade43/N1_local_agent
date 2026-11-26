@@ -1489,19 +1489,24 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
 
     message_text = _text_from_content(message_content)
     recovered_request, approval_already_pending = _recover_unprepared_mcp_mutation(session_id, message_text)
-    if approval_already_pending:
-        return (
-            "A NinjaOne approval request is already pending in this conversation. "
-            "Use its Approve and execute or Reject button; a chat reply cannot approve it.",
-            [],
-        )
-    if recovered_request:
-        # The prior turn produced prose instead of an approval event. Re-submit
-        # the original intent to the tool agent so it can prepare the real action.
-        message_text = recovered_request
-        message_content = recovered_request
-        if progress_callback:
-            progress_callback({"stage": "understanding", "message": "Resuming the previous change request to prepare its approval card."})
+    if _AFFIRMATIVE_REPLY_RE.fullmatch(message_text.strip()):
+        if approval_already_pending:
+            answer = (
+                "A real NinjaOne approval request is pending. Use its Approve and execute "
+                "or Reject button; a chat reply cannot approve it."
+            )
+        else:
+            answer = (
+                "There is no active NinjaOne approval request to approve. The previous "
+                "response did not create a real approval card, and no change was made. "
+                "Please resend the original change request; I must create the approval card "
+                "before you can approve it."
+            )
+        return answer, [{
+            "kind": "policy",
+            "stage": "approval_not_pending",
+            "message": "Chat confirmation was not treated as approval; no mutation was executed.",
+        }]
     direct_request = detect_direct_tool_request(message_text, tools)
     if direct_request:
         tool_name, arguments, operation, fields = direct_request
