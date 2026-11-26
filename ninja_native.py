@@ -386,6 +386,27 @@ def _try_fast_path(session_id, content):
             return refusal, [{"kind": "policy", "stage": "blocked_delete",
                               "message": "Delete requests are blocked; no NinjaOne API operation was called."}]
         _ensure()
+        # Chat text is never an approval action. Check this before clarification
+        # handling and, critically, before any write recipe can prepare a new
+        # pending action from the literal word "approve".
+        if _AFFIRMATIVE_REPLY_RE.fullmatch(question.strip()):
+            if _pending_for_session(session_id):
+                message = (
+                    "A real NinjaOne approval request is pending. Use its Approve and execute "
+                    "or Reject button; a chat reply cannot approve it."
+                )
+            else:
+                message = (
+                    "There is no active NinjaOne approval request to approve. The previous "
+                    "response did not create a real approval card, and no change was made. "
+                    "Please resend the original change request; I must create the approval card "
+                    "before you can approve it."
+                )
+            return message, [{
+                "kind": "policy",
+                "stage": "approval_not_pending",
+                "message": "Chat confirmation was not treated as approval; no mutation was executed.",
+            }]
         history = _sessions.get(session_id, [])
         resumed_question, clarification = _resolve_device_access_clarification(
             question, history
