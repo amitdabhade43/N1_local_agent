@@ -1699,9 +1699,25 @@ async def list_tools():
     return {"tools": [{"name": t.name, "description": t.description} for t in tools]}
 
 
+def _pending_approval_backend(action_id: str) -> str | None:
+    """Resolve an approval by its stored action ID, not the currently selected backend.
+
+    A card can remain visible while the operator changes Native/MCP mode. The
+    action ID is authoritative and routes the decision to the store that
+    actually owns the prepared request.
+    """
+    with ninja_native.core._pending_lock:
+        if action_id in ninja_native.core._pending_actions:
+            return "native"
+    with _mcp_pending_lock:
+        if action_id in _mcp_pending_actions:
+            return "mcp"
+    return None
+
+
 @app.post("/api/actions/{action_id}/approve")
 async def approve_native_action(action_id: str, req: ActionApprovalRequest):
-    backend = os.getenv("AGENT_BACKEND", "mcp").lower()
+    backend = _pending_approval_backend(action_id)
     if backend == "native":
         result = await asyncio.to_thread(
             ninja_native.core.execute_pending_action, action_id, req.session_id
@@ -1710,12 +1726,12 @@ async def approve_native_action(action_id: str, req: ActionApprovalRequest):
         return result
     if backend == "mcp":
         return await execute_mcp_pending_action(action_id, req.session_id)
-    raise HTTPException(status_code=400, detail=f"Unsupported backend for approvals: {backend}.")
+    return {"ok": False, "error": "Approval request not found or already used."}
 
 
 @app.post("/api/actions/{action_id}/reject")
 async def reject_native_action(action_id: str, req: ActionApprovalRequest):
-    backend = os.getenv("AGENT_BACKEND", "mcp").lower()
+    backend = _pending_approval_backend(action_id)
     if backend == "native":
         rejected = await asyncio.to_thread(
             ninja_native.core.reject_pending_action, action_id, req.session_id
@@ -1726,7 +1742,7 @@ async def reject_native_action(action_id: str, req: ActionApprovalRequest):
     if backend == "mcp":
         rejected = reject_mcp_pending_action(action_id, req.session_id)
         return {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
-    raise HTTPException(status_code=400, detail=f"Unsupported backend for approvals: {backend}.")
+    return {"ok": False, "message": "Approval request not found or already used."}
 
 
 @app.post("/api/chat/stream")
@@ -1739,8 +1755,13 @@ async def chat_stream(req: ChatRequest):
         loop = asyncio.get_running_loop()
 
         def publish(event: dict):
+            # Every streamed event carries the server-created session ID. Approval
+            # cards can arrive before the final "complete" event and must capture
+            # the same session ID that owns the pending action.
+            payload = dict(event)
+            payload.setdefault("session_id", session_id)
             # Native execution runs in a worker thread; marshal events onto this loop.
-            loop.call_soon_threadsafe(queue.put_nowait, event)
+            loop.call_soon_threadsafe(queue.put_nowait, payload)
 
         async def execute():
             try:
