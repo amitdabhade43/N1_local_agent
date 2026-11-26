@@ -2286,6 +2286,164 @@ def recipe_find(q):
     return f'Found {len(found)} match(es) for "{name}":\n' + "\n".join(lines)
 
 
+def _bulk_device_names_from_request(question):
+    """Extract a user-supplied device list without asking the LLM to resolve each item."""
+    text = str(question or "").replace("\r", "")
+    lines = text.split("\n")
+    candidates = []
+    for index, raw in enumerate(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        if index == 0 and re.search(r"\b(?:devices?|endpoints?)\b", line, re.I):
+            tail = re.split(r"\b(?:devices?|endpoints?)\b\s*[:\-]?\s*", line, maxsplit=1, flags=re.I)
+            if len(tail) > 1 and re.search(r"[,;]", tail[1]):
+                line = tail[1]
+            else:
+                continue
+        if re.search(r"\b(?:organization|org)\b|\b(?:please|move|update|transfer|assign)\b", line, re.I):
+            if not re.search(r"[,;]", line):
+                continue
+        line = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+        line = re.sub(r"\s+(?:to|into)\s+(?:the\s+)?(?:organization|org)\b.*$", "", line, flags=re.I)
+        for part in re.split(r"[,;]", line):
+            name = part.strip().strip("\"'")
+            if not name or re.search(r"\b(?:organization|org|devices?|please|update|move|transfer|target)\b", name, re.I):
+                continue
+            if len(name) > 128 or not re.search(r"[A-Za-z0-9]", name):
+                continue
+            candidates.append(name)
+    unique, seen = [], set()
+    for name in candidates:
+        key = name.casefold()
+        if key not in seen:
+            seen.add(key)
+            unique.append(name)
+    return unique
+
+
+def recipe_move_devices_to_organization(question):
+    """Resolve an arbitrary-size device list in one inventory read and prepare one approval."""
+    text = str(question or "").strip()
+    if not re.search(r"\b(?:organization|org)\b", text, re.I):
+        return None
+    if not re.search(r"\b(?:move|update|transfer|assign|change)\b", text, re.I):
+        return None
+    if not re.search(r"\b(?:devices?|endpoints?)\b", text, re.I):
+        return None
+    target_match = re.search(
+        r"\b(?:organization|org)\b[^\n]*?\b(?:id\s*[:#=]?\s*)(\d+)\b",
+        text, re.I
+    )
+    if not target_match:
+        target_match = re.search(r"\(\s*id\s*[:#=]?\s*(\d+)\s*\)", text, re.I)
+    if not target_match:
+        return "I can identify this as a bulk organization change, but I need the target organization ID before preparing approval. No change was prepared."
+    organization_id = int(target_match.group(1))
+    names = _bulk_device_names_from_request(text)
+    if not names:
+        return "I could not extract any device names from the request. Please provide one device name per line or a comma-separated list. No change was prepared."
+
+    list_op = OPS.get("getDevices")
+    org_op = OPS.get("getOrganizations")
+    update_op = OPS.get("updateDevice")
+    if not list_op or not org_op or not update_op:
+        return "The bundled NinjaOne specification does not expose the required list-organizations, list-devices, and update-device operations. No change was prepared."
+
+    try:
+        organizations = fetch(org_op, org_op["path"], {})
+        organization = next(
+            (row for row in organizations if isinstance(row, dict)
+             and str(row.get("id", "")) == str(organization_id)),
+            None
+        )
+        if not organization:
+            return f"Organization ID {organization_id} was not found in the live NinjaOne organization inventory. No change was prepared."
+        target_name = str(organization.get("name") or organization.get("displayName") or "").strip()
+        requested_target = re.search(r"\b(?:in|to|into)\s+(?:the\s+)?(.+?)\s*\(\s*id\s*[:#=]?\s*\d+\s*\)", text, re.I)
+        if requested_target and target_name and requested_target.group(1).strip().casefold() != target_name.casefold():
+            return (
+                f"Target verification failed: organization ID {organization_id} is '{target_name}', "
+                f"but the request names '{requested_target.group(1).strip()}'. No change was prepared."
+            )
+        devices = fetch(list_op, list_op["path"], {"pageSize": 1000})
+    except Exception as exc:
+        return f"Live inventory resolution failed ({type(exc).__name__}: {exc}). No change was prepared."
+
+    def device_name(row):
+        if not isinstance(row, dict):
+            return ""
+        for field in ("systemName", "nodeName", "displayName", "name", "hostname"):
+            value = row.get(field)
+            if value not in (None, ""):
+                return str(value).strip()
+        return ""
+
+    by_name = {}
+    for row in devices:
+        if isinstance(row, dict):
+            label = device_name(row)
+            if label:
+                by_name.setdefault(label.casefold(), []).append(row)
+
+    resolved, missing, ambiguous = [], [], []
+    for requested in names:
+        matches = by_name.get(requested.casefold(), [])
+        if not matches:
+            missing.append(requested)
+        elif len(matches) != 1:
+            ambiguous.append({"name": requested, "matches": [
+                {"id": item.get("id"), "name": device_name(item),
+                 "organizationId": item.get("organizationId")}
+                for item in matches[:10]
+            ]})
+        else:
+            row = matches[0]
+            if row.get("id") is None:
+                missing.append(requested + " (inventory record has no device ID)")
+            else:
+                resolved.append({
+                    "name": device_name(row), "id": int(row["id"]),
+                    "organization_id": row.get("organizationId")
+                })
+
+    if missing or ambiguous:
+        details = []
+        if missing:
+            details.append("Not found: " + ", ".join(missing[:100]))
+        if ambiguous:
+            details.append("Ambiguous names: " + "; ".join(
+                f'{item["name"]} -> IDs {", ".join(str(match["id"]) for match in item["matches"])}'
+                for item in ambiguous
+            ))
+        return (
+            f"I resolved {len(resolved)} of {len(names)} requested device names against the complete "
+            f"inventory, but will not prepare a partial bulk change. " + " | ".join(details) +
+            ". No changes were prepared."
+        )
+    if getattr(devices, "complete", True) is False:
+        return "NinjaOne returned an incomplete device inventory. I will not prepare a bulk update from partial results."
+
+    requests_to_prepare = []
+    body = {"organizationId": organization_id}
+    for device in resolved:
+        args = {"path_params": {"id": device["id"]}, "query": {}, "headers": {}, "body": body}
+        errors = _argument_errors(update_op, args)
+        if errors:
+            return "The update-device request failed OpenAPI validation: " + "; ".join(errors) + ". No change was prepared."
+        requests_to_prepare.append({
+            "device_name": device["name"],
+            "path_params": {"id": device["id"]},
+            "query": {},
+            "headers": {},
+            "body": body,
+            "media_type": (update_op.get("request_body") or {}).get("media_type") or "application/json",
+        })
+    target_label = target_name or f"organization ID {organization_id}"
+    summary = f"Move {len(resolved)} devices to {target_label} (ID: {organization_id})"
+    return _prepare_batch_mutation(update_op, requests_to_prepare, summary)
+
+
 def recipe_add_device_access(q):
     """Prepare exact end-user device-access grants as one approval-only PATCH.
 
