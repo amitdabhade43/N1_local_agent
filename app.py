@@ -1374,6 +1374,10 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
             if bulk_result is not None:
                 if os.getenv("AGENT_BACKEND", "mcp").strip().lower() != "native":
                     await _record_mcp_direct_turn(session_id, message_content, bulk_result)
+                else:
+                    await asyncio.to_thread(
+                        ninja_native._record_fast_path_turn, session_id, message_content, bulk_result
+                    )
                 return bulk_result
         except Exception as exc:
             _logger.exception("Shared bulk device organization preflight failed")
