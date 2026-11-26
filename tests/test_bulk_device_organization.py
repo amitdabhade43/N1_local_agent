@@ -6,7 +6,7 @@ import ninja_agent as core
 def test_bulk_device_move_resolves_1000_names_and_prepares_one_approval(monkeypatch):
     names = [f"PC-{index:05d}" for index in range(1000)]
     question = (
-        "Please move the following devices to organization **HOERBIGER - Unattended** (ID: 7)\n"
+        "Please update below devices in **HOERBIGER - Unattended** (ID: 7)\n"
         + "\n".join(names)
     )
     update_op = {
