@@ -399,9 +399,10 @@ def try_bulk_device_organization_change(session_id, content):
              "result": {"approval_required": True, "batch_total": total}},
             {"kind": "approval_required", "action": prepared},
         ]
+        summary = prepared.get("summary") or f"Update {total} devices"
         return (
-            f'Approval required: {prepared.get("summary", f"Update {total} devices")}. '
-            f'All {total} device names were resolved to unique NinjaOne IDs from the complete inventory. '
+            f"Approval required: {summary}. "
+            f"All {total} device names were resolved to unique NinjaOne IDs from the complete inventory. "
             "Review the consolidated approval card and choose Approve and execute. No changes have been made.",
             activity,
         )
