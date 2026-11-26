@@ -175,6 +175,32 @@ function renderApprovalCard(parent,action){
   null,2
  );
  details.append(summaryLine,pre);card.append(details);
+ if(Array.isArray(action.skipped_items)&&action.skipped_items.length){
+  const skippedCard=document.createElement('section');skippedCard.className='approval-card';
+  const skippedHeading=document.createElement('div');skippedHeading.className='approval-heading';
+  const skippedTitle=document.createElement('b');skippedTitle.textContent='Not included · '+action.skipped_items.length;
+  const skippedPill=document.createElement('span');skippedPill.className='approval-pill';skippedPill.textContent='NOT EXECUTED';
+  skippedHeading.append(skippedTitle,skippedPill);
+  const skippedIntro=document.createElement('p');skippedIntro.className='approval-explanation';
+  skippedIntro.textContent='These entries are excluded from the approval batch and will not be changed. Resolve them separately if needed.';
+  const skippedDetails=document.createElement('details');skippedDetails.className='approval-details';skippedDetails.open=true;
+  const skippedSummary=document.createElement('summary');skippedSummary.textContent='Review missing, duplicate and ambiguous devices';
+  const skippedList=document.createElement('ul');
+  action.skipped_items.forEach(item=>{
+   const li=document.createElement('li');
+   const name=document.createElement('b');name.textContent=item.name||'Unknown device';
+   const reason=document.createElement('span');reason.textContent=' — '+(item.reason||'Not eligible for this batch');
+   li.append(name,reason);
+   if(Array.isArray(item.matches)&&item.matches.length){
+    const matches=document.createElement('div');matches.textContent='Possible matches: '+item.matches.map(m=>(m.name||'Device')+' (ID '+m.id+')').join(', ');
+    li.append(matches);
+   }
+   skippedList.append(li);
+  });
+  skippedDetails.append(skippedSummary,skippedList);
+  skippedCard.append(skippedHeading,skippedIntro,skippedDetails);
+  parent.append(skippedCard);
+ }
  const controls=document.createElement('div');controls.className='approval-controls';
  const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
  const reject=document.createElement('button');reject.className='reject';reject.textContent='Reject';
