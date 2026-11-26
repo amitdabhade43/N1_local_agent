@@ -399,13 +399,26 @@ def try_bulk_device_organization_change(session_id, content):
              "result": {"approval_required": True, "batch_total": total}},
             {"kind": "approval_required", "action": prepared},
         ]
+        skipped = prepared.get("skipped_items") or []
+        skipped_count = len(skipped)
+        if skipped_count:
+            activity[1]["result"] = {
+                "resolved_count": total, "skipped_count": skipped_count,
+                "complete_inventory": True,
+            }
+            activity[3]["result"]["skipped_count"] = skipped_count
         summary = prepared.get("summary") or f"Update {total} devices"
-        return (
-            f"Approval required: {summary}. "
-            f"All {total} device names were resolved to unique NinjaOne IDs from the complete inventory. "
-            "Review the consolidated approval card and choose Approve and execute. No changes have been made.",
-            activity,
+        answer = (
+            f"Approval required for {total} uniquely resolved devices: {summary}. "
+            "The approval card contains only these validated devices. "
+            "No changes have been made yet."
         )
+        if skipped_count:
+            answer += (
+                f" {skipped_count} supplied entries were excluded and are shown separately "
+                "under 'Not included'; they will not be changed."
+            )
+        return answer, activity
     return str(prepared_text), [
         {"kind": "call", "tool": "resolve_bulk_devices", "arguments": {"source": "complete NinjaOne inventory"}},
         {"kind": "result", "tool": "resolve_bulk_devices", "result": str(prepared_text)[:5000]},
