@@ -211,7 +211,13 @@ function renderApprovalCard(parent,action){
     const raw=document.createElement('details');const rawSummary=document.createElement('summary');rawSummary.textContent='View API response';
     const rawPre=document.createElement('pre');rawPre.textContent=JSON.stringify(result,null,2);raw.append(rawSummary,rawPre);
     resultBox.append(resultTitle,resultText,raw);card.append(resultBox);
-   }else if(!ok){approve.disabled=false;reject.disabled=false;}
+   }else if(!ok){
+    if(result.total!=null){
+     const failedDetails=document.createElement('details');const failedSummary=document.createElement('summary');
+     failedSummary.textContent='View per-device execution results';const failedPre=document.createElement('pre');
+     failedPre.textContent=JSON.stringify(result.results||[],null,2);failedDetails.append(failedSummary,failedPre);card.append(failedDetails);
+    }else{approve.disabled=false;reject.disabled=false;}
+   }
   }catch(error){status.textContent='Approval request failed: '+error.message;approve.disabled=false;reject.disabled=false;}
  }
  approve.onclick=()=>submitDecision('approve');
