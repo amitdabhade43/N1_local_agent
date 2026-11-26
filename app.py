@@ -1488,8 +1488,12 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         raise HTTPException(status_code=502, detail="MCP server returned no tools")
 
     message_text = _text_from_content(message_content)
-    recovered_request, approval_already_pending = _recover_unprepared_mcp_mutation(session_id, message_text)
     if _AFFIRMATIVE_REPLY_RE.fullmatch(message_text.strip()):
+        with _mcp_pending_lock:
+            approval_already_pending = any(
+                item.get("session_id") == session_id
+                for item in _mcp_pending_actions.values()
+            )
         if approval_already_pending:
             answer = (
                 "A real NinjaOne approval request is pending. Use its Approve and execute "
