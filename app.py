@@ -1358,22 +1358,27 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     # Device organization moves share one deterministic bulk resolver and one
     # approval store across Native and MCP; never spend model tool-call steps
     # resolving device IDs one at a time.
-    try:
-        ninja_native._ensure()
-        bulk_result = await asyncio.to_thread(
-            ninja_native.try_bulk_device_organization_change, session_id, message_content
-        )
-        if bulk_result is not None:
-            if os.getenv("AGENT_BACKEND", "mcp").strip().lower() != "native":
-                await _record_mcp_direct_turn(session_id, message_content, bulk_result)
-            return bulk_result
-    except Exception as exc:
-        _logger.exception("Shared bulk device organization preflight failed")
-        return (
-            f"Bulk device resolution failed safely ({type(exc).__name__}: {exc}). "
-            "No NinjaOne changes were executed or prepared."
-        ), [{"kind": "policy", "stage": "bulk_resolution_failed",
-             "message": "Bulk resolution failed before any write request was prepared."}]
+    if (
+        re.search(r"\b(?:device|devices|endpoint|endpoints)\b", message_text, re.I)
+        and re.search(r"\b(?:organization|org)\b", message_text, re.I)
+        and re.search(r"\b(?:move|update|transfer|assign|change)\b", message_text, re.I)
+    ):
+        try:
+            ninja_native._ensure()
+            bulk_result = await asyncio.to_thread(
+                ninja_native.try_bulk_device_organization_change, session_id, message_content
+            )
+            if bulk_result is not None:
+                if os.getenv("AGENT_BACKEND", "mcp").strip().lower() != "native":
+                    await _record_mcp_direct_turn(session_id, message_content, bulk_result)
+                return bulk_result
+        except Exception as exc:
+            _logger.exception("Shared bulk device organization preflight failed")
+            return (
+                f"Bulk device resolution failed safely ({type(exc).__name__}: {exc}). "
+                "No NinjaOne changes were executed or prepared."
+            ), [{"kind": "policy", "stage": "bulk_resolution_failed",
+                 "message": "Bulk resolution failed before any write request was prepared."}]
     backend = os.getenv("AGENT_BACKEND", "mcp").strip().lower()
     if backend == "native":
         return await ninja_native.try_fast_path(session_id, message_content)
