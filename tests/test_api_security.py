@@ -221,7 +221,7 @@ def test_streamed_approval_event_includes_server_session_id(client, monkeypatch)
 def test_native_chat_approve_without_pending_action_does_not_retry_mutation(monkeypatch):
     import ninja_native
 
-    monkeypatch.setattr(ninja_native.core, "_ensure", lambda: None)
+    monkeypatch.setattr(ninja_native, "_ensure", lambda: None)
     monkeypatch.setattr(
         ninja_native.core,
         "recipe_add_device_access",
