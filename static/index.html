@@ -162,13 +162,18 @@ function renderApprovalCard(parent,action){
  const pending=document.createElement('span');pending.className='approval-pill';pending.textContent='NOT EXECUTED';
  heading.append(title,pending);
  const summary=document.createElement('p');summary.className='approval-summary';summary.textContent=approvalSummary(action);
- const endpoint=document.createElement('div');endpoint.className='approval-endpoint';endpoint.textContent=(action.method||'WRITE')+' '+(action.path||'');
+ const endpoint=document.createElement('div');endpoint.className='approval-endpoint';endpoint.textContent=(action.method||'WRITE')+' '+(action.path||'')+(action.batch_total?' · '+action.batch_total+' individually validated requests':'');
  const explanation=document.createElement('p');explanation.className='approval-explanation';
  explanation.textContent='Review the target and exact request. Nothing will change in NinjaOne until you approve.';
  card.append(heading,summary,endpoint,explanation);
  const details=document.createElement('details');details.className='approval-details';
  const summaryLine=document.createElement('summary');summaryLine.textContent='Review exact API request';
- const pre=document.createElement('pre');pre.textContent=JSON.stringify({query:action.query,body:action.body,media_type:action.media_type,expires_in_seconds:action.expires_in_seconds},null,2);
+ const pre=document.createElement('pre');pre.textContent=JSON.stringify(
+  action.batch
+   ? {batch_total:action.batch_total,requests:action.batch_items,expires_in_seconds:action.expires_in_seconds}
+   : {query:action.query,body:action.body,media_type:action.media_type,expires_in_seconds:action.expires_in_seconds},
+  null,2
+ );
  details.append(summaryLine,pre);card.append(details);
  const controls=document.createElement('div');controls.className='approval-controls';
  const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
