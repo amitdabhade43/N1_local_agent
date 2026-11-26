@@ -5,11 +5,13 @@ OpenAPI validation and approval remain owned by the NinjaOne adapter.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as dc_replace
+from functools import lru_cache
 from datetime import datetime, timezone
 from threading import RLock
 from typing import Any, Callable
 import json
+import re
 import time
 import inspect
 import uuid
@@ -147,6 +149,13 @@ class TaskRegistry:
             values = [task for task in values if task.parent_task_id == parent_task_id]
         return sorted(values, key=lambda task: task.created_at)
 
+    def children_of(self, parent_task_id: str | None) -> list[AgentTask]:
+        """Exact-parent filter. ``None`` means root-level tasks only (unlike ``list(None)``,
+        which returns every task and would make child limits global across requests)."""
+        with self._lock:
+            values = [t for t in self._tasks.values() if t.parent_task_id == parent_task_id]
+        return sorted(values, key=lambda task: task.created_at)
+
     def _require(self, task_id: str) -> AgentTask:
         task = self._tasks.get(task_id)
         if task is None:
@@ -235,62 +244,48 @@ class ToolRegistry:
             }})
         return schemas
 
+    def _checked(self, name: str, arguments: dict[str, Any], allowed: set[str] | None,
+                 before_execute: Callable[[ToolDefinition, dict[str, Any]], None] | None) -> ToolDefinition:
+        with self._lock:
+            tool = self._tools.get(name)
+        if tool is None:
+            raise KeyError(f"Unknown tool: {name}")
+        if allowed is not None and name not in allowed:
+            raise PermissionError(f"Agent is not permitted to use tool: {name}")
+        if not isinstance(arguments, dict):
+            raise TypeError("Tool arguments must be a JSON object.")
+        self._validate_arguments(tool.input_schema, arguments)
+        if before_execute:
+            before_execute(tool, arguments)
+        return tool
+
+    def _resolve_handler(self, tool: ToolDefinition) -> Callable[[dict[str, Any]], Any]:
+        if tool.handler is not None:
+            return tool.handler
+        if tool.lazy_loader is None:
+            raise RuntimeError(f"Tool has no handler: {tool.name}")
+        handler = tool.lazy_loader()  # may do I/O: deliberately outside the registry lock
+        if not callable(handler):
+            raise TypeError(f"Lazy loader for {tool.name} did not return a callable.")
+        with self._lock:
+            current = self._tools.get(tool.name)
+            if current is not None and current.handler is not None:
+                return current.handler  # another thread finished loading first
+            self._tools[tool.name] = dc_replace(tool, handler=handler, lazy_loader=None)
+        return handler
+
     def execute(self, name: str, arguments: dict[str, Any],
                 allowed: set[str] | None = None,
                 before_execute: Callable[[ToolDefinition, dict[str, Any]], None] | None = None) -> Any:
-        with self._lock:
-            tool = self._tools.get(name)
-            if tool is None:
-                raise KeyError(f"Unknown tool: {name}")
-            if allowed is not None and name not in allowed:
-                raise PermissionError(f"Agent is not permitted to use tool: {name}")
-            if not isinstance(arguments, dict):
-                raise TypeError("Tool arguments must be a JSON object.")
-            self._validate_arguments(tool.input_schema, arguments)
-            if before_execute:
-                before_execute(tool, arguments)
-            handler = tool.handler
-            if handler is None:
-                if tool.lazy_loader is None:
-                    raise RuntimeError(f"Tool has no handler: {name}")
-                handler = tool.lazy_loader()
-                if not callable(handler):
-                    raise TypeError(f"Lazy loader for {name} did not return a callable.")
-                self._tools[name] = ToolDefinition(
-                    name=tool.name, description=tool.description, handler=handler,
-                    input_schema=tool.input_schema, read_only=tool.read_only,
-                    concurrent_safe=tool.concurrent_safe, category=tool.category,
-                )
-        return handler(arguments)
+        tool = self._checked(name, arguments, allowed, before_execute)
+        return self._resolve_handler(tool)(arguments)
 
     async def aexecute(self, name: str, arguments: dict[str, Any],
                        allowed: set[str] | None = None,
                        before_execute: Callable[[ToolDefinition, dict[str, Any]], None] | None = None) -> Any:
         """Async counterpart used by MCP adapters while preserving registry policy."""
-        with self._lock:
-            tool = self._tools.get(name)
-            if tool is None:
-                raise KeyError(f"Unknown tool: {name}")
-            if allowed is not None and name not in allowed:
-                raise PermissionError(f"Agent is not permitted to use tool: {name}")
-            if not isinstance(arguments, dict):
-                raise TypeError("Tool arguments must be a JSON object.")
-            self._validate_arguments(tool.input_schema, arguments)
-            if before_execute:
-                before_execute(tool, arguments)
-            handler = tool.handler
-            if handler is None:
-                if tool.lazy_loader is None:
-                    raise RuntimeError(f"Tool has no handler: {name}")
-                handler = tool.lazy_loader()
-                if not callable(handler):
-                    raise TypeError(f"Lazy loader for {name} did not return a callable.")
-                self._tools[name] = ToolDefinition(
-                    name=tool.name, description=tool.description, handler=handler,
-                    input_schema=tool.input_schema, read_only=tool.read_only,
-                    concurrent_safe=tool.concurrent_safe, category=tool.category,
-                )
-        result = handler(arguments)
+        tool = self._checked(name, arguments, allowed, before_execute)
+        result = self._resolve_handler(tool)(arguments)
         return await result if inspect.isawaitable(result) else result
 
     @staticmethod
@@ -322,6 +317,26 @@ class ToolRegistry:
                     raise ValueError(f"Tool argument '{key}' is below its minimum.")
                 if "maximum" in definition and value > definition["maximum"]:
                     raise ValueError(f"Tool argument '{key}' exceeds its maximum.")
+        ToolRegistry._validate_deep(schema, arguments)
+
+    @staticmethod
+    def _validate_deep(schema: dict[str, Any], arguments: dict[str, Any]) -> None:
+        """Second pass with jsonschema for what the shallow checks above cannot see."""
+        if not schema:
+            return
+        try:
+            from jsonschema import Draft7Validator
+            from jsonschema.exceptions import SchemaError, best_match
+        except ImportError:  # pragma: no cover - jsonschema is a declared dependency
+            return
+        try:
+            Draft7Validator.check_schema(schema)
+        except SchemaError:
+            return  # a malformed tool schema must not make the tool unusable
+        error = best_match(Draft7Validator(schema).iter_errors(arguments))
+        if error is not None:
+            where = ".".join(str(part) for part in error.absolute_path)
+            raise ValueError(f"Invalid tool arguments{' at ' + where if where else ''}: {error.message}")
 
 
 @dataclass(frozen=True)
@@ -333,14 +348,35 @@ class AgentDefinition:
     allowed_tools: frozenset[str] = frozenset()
     max_iterations: int = 8
     read_only: bool = True
+    # Per-keyword weight overrides (default comes from AgentRegistry.keyword_weights, else 1).
+    weights: dict[str, int] = field(default_factory=dict, hash=False, compare=False)
+
+
+DEFAULT_KEYWORD_WEIGHTS: dict[str, int] = {
+    **{k: 3 for k in ("access", "accessible", "permission", "permissions", "grant", "revoke")},
+    **{k: 2 for k in ("policy", "policies", "ticket", "tickets", "script", "scripts", "automation")},
+}
+
+
+@lru_cache(maxsize=512)
+def _keyword_pattern(keyword: str) -> re.Pattern[str]:
+    """Whole-word match with an optional plural suffix.
+
+    Substring matching made "script" match "description" and "access" match
+    "accessories"; word boundaries prevent that while "ticket" still matches "tickets".
+    """
+    return re.compile(rf"\b{re.escape(keyword.casefold())}(?:s|es)?\b")
 
 
 class AgentRegistry:
     """Routes work to named specialist lanes without duplicating API clients."""
 
-    def __init__(self, default_agent: str = "general") -> None:
+    def __init__(self, default_agent: str = "general",
+                 keyword_weights: dict[str, int] | None = None, min_score: int = 1) -> None:
         self._agents: dict[str, AgentDefinition] = {}
         self.default_agent = default_agent
+        self.keyword_weights = dict(DEFAULT_KEYWORD_WEIGHTS if keyword_weights is None else keyword_weights)
+        self.min_score = max(1, int(min_score))
 
     def register(self, agent: AgentDefinition) -> None:
         if agent.name in self._agents:
@@ -350,38 +386,28 @@ class AgentRegistry:
     def get(self, name: str) -> AgentDefinition | None:
         return self._agents.get(name)
 
-    def route(self, request: str) -> AgentDefinition:
-        folded = str(request or "").casefold()
-        ranked = []
-        for agent in self._agents.values():
-            if agent.name == self.default_agent:
-                continue
-            score = sum(3 if keyword in {"access", "accessible", "permission", "permissions", "grant", "revoke"} else 2 if keyword in {"policy", "policies", "ticket", "tickets", "script", "scripts", "automation"} else 1 for keyword in agent.keywords if keyword in folded)
-            if score:
-                ranked.append((score, agent.name, agent))
-        if not ranked:
-            return self._agents[self.default_agent]
-        ranked.sort(key=lambda item: (-item[0], item[1]))
-        return ranked[0][2]
+    def _score(self, agent: AgentDefinition, folded: str) -> int:
+        weights = {**self.keyword_weights, **agent.weights}
+        return sum(weights.get(keyword, 1) for keyword in agent.keywords
+                   if _keyword_pattern(keyword).search(folded))
 
-    def route_many(self, request: str, limit: int = 3) -> list[AgentDefinition]:
+    def route_many(self, request: str, limit: int = 3, min_score: int | None = None) -> list[AgentDefinition]:
         """Select a small team of relevant specialists for cross-resource requests."""
         folded = str(request or "").casefold()
+        threshold = self.min_score if min_score is None else max(1, int(min_score))
         ranked = []
         for agent in self._agents.values():
             if agent.name == self.default_agent:
                 continue
-            score = sum(
-                3 if keyword in {"access", "accessible", "permission", "permissions", "grant", "revoke"}
-                else 2 if keyword in {"policy", "policies", "ticket", "tickets", "script", "scripts", "automation"}
-                else 1
-                for keyword in agent.keywords if keyword in folded
-            )
-            if score:
+            score = self._score(agent, folded)
+            if score >= threshold:
                 ranked.append((score, agent.name, agent))
         ranked.sort(key=lambda item: (-item[0], item[1]))
         selected = [item[2] for item in ranked[:max(1, int(limit))]]
         return selected or [self._agents[self.default_agent]]
+
+    def route(self, request: str) -> AgentDefinition:
+        return self.route_many(request, limit=1)[0]
 
     def all(self) -> list[AgentDefinition]:
         return list(self._agents.values())
@@ -460,7 +486,15 @@ class SkillRegistry:
 
 
 class SubagentManager:
-    """Bounded child execution with isolated context and inherited approval gate."""
+    """Bounded child execution with isolated context and inherited approval gate.
+
+    Limits are enforced per ``parent_task_id``. Create one root per user request with
+    ``begin_request`` and pass its id as ``parent_task_id`` so concurrent requests do not
+    consume each other's child budget.
+
+    Python threads cannot be killed: ``timeout`` stops *waiting* for a slow specialist and
+    reports it as failed, but the runner itself must enforce its own HTTP/LLM deadlines.
+    """
 
     EXCLUDED_CONTEXT_KEYS = frozenset({
         "messages", "history", "trajectory", "session", "session_id",
@@ -468,35 +502,75 @@ class SubagentManager:
         "api_key", "client_secret", "credentials", "authorization",
         "access_token", "refresh_token", "password",
     })
+    SECRET_TERMS = ("secret", "token", "credential", "password", "api_key", "apikey",
+                    "authorization", "bearer", "cookie")
 
     def __init__(self, tasks: TaskRegistry | None = None, events: EventBus | None = None,
-                 max_depth: int = 1, max_children: int = 4) -> None:
+                 max_depth: int = 1, max_children: int = 4,
+                 default_timeout: float | None = None,
+                 context_allowlist: frozenset[str] | None = None) -> None:
         self.tasks = tasks or TaskRegistry()
         self.events = events or EventBus()
         self.max_depth = max(0, int(max_depth))
         self.max_children = max(1, int(max_children))
+        self.default_timeout = default_timeout
+        self.context_allowlist = frozenset(context_allowlist) if context_allowlist is not None else None
+        self._spawn_lock = RLock()  # makes "count active children + create task" atomic
 
+    # -- request roots -------------------------------------------------------------------
+    def begin_request(self, label: str = "request", prompt: str = "") -> str:
+        task = self.tasks.create(label, prompt)
+        self.tasks.start(task.task_id)
+        return task.task_id
+
+    def end_request(self, task_id: str, error: str | None = None) -> None:
+        task = self.tasks.get(task_id)
+        if task is None or task.status in TaskRegistry.TERMINAL:
+            return
+        if error:
+            self.tasks.fail(task_id, error)
+        else:
+            self.tasks.complete(task_id, None)
+
+    # -- context isolation ---------------------------------------------------------------
+    @classmethod
+    def _is_secret_key(cls, key: Any) -> bool:
+        folded = str(key).casefold()
+        return folded in cls.EXCLUDED_CONTEXT_KEYS or any(term in folded for term in cls.SECRET_TERMS)
+
+    @classmethod
+    def sanitize_context(cls, value: Any, allowlist: frozenset[str] | None = None, _top: bool = True) -> Any:
+        """Drop secret-looking keys at every depth; optionally allowlist top-level keys."""
+        if isinstance(value, dict):
+            clean = {}
+            for key, item in value.items():
+                if cls._is_secret_key(key):
+                    continue
+                if _top and allowlist is not None and key not in allowlist:
+                    continue
+                clean[key] = cls.sanitize_context(item, None, False)
+            return clean
+        if isinstance(value, (list, tuple, set, frozenset)):
+            return [cls.sanitize_context(item, None, False) for item in value]
+        return value
+
+    # -- execution -----------------------------------------------------------------------
     def run(self, agent: AgentDefinition, prompt: str,
             runner: Callable[[AgentDefinition, str, dict[str, Any], Any], Any],
             parent_context: dict[str, Any] | None = None,
             parent_task_id: str | None = None, depth: int = 0,
             approval_gate: Any = None) -> Any:
-        if depth >= self.max_depth:
-            raise PermissionError("Subagent spawn depth limit reached.")
-        active = [task for task in self.tasks.list(parent_task_id)
-                  if task.status in {"queued", "running"}]
-        if len(active) >= self.max_children:
-            raise RuntimeError("Subagent concurrency limit reached.")
-        context = {
-            key: value for key, value in (parent_context or {}).items()
-            if key.casefold() not in self.EXCLUDED_CONTEXT_KEYS
-            and not any(secret_term in key.casefold() for secret_term in (
-                "secret", "token", "credential", "password", "api_key", "authorization"
-            ))
-        }
-        task = self.tasks.create(agent.name, prompt, parent_task_id,
-                                 {"depth": depth + 1, "allowed_tools": sorted(agent.allowed_tools)})
-        self.tasks.start(task.task_id)
+        with self._spawn_lock:
+            if depth >= self.max_depth:
+                raise PermissionError("Subagent spawn depth limit reached.")
+            active = [task for task in self.tasks.children_of(parent_task_id)
+                      if task.status in {"queued", "running"}]
+            if len(active) >= self.max_children:
+                raise RuntimeError("Subagent concurrency limit reached.")
+            task = self.tasks.create(agent.name, prompt, parent_task_id,
+                                     {"depth": depth + 1, "allowed_tools": sorted(agent.allowed_tools)})
+            self.tasks.start(task.task_id)
+        context = self.sanitize_context(parent_context or {}, self.context_allowlist)
         self.events.publish(RuntimeEvent("task_started", task.task_id, stage="subagent",
                                          message=f"{agent.name} started"))
         try:
@@ -517,15 +591,16 @@ class SubagentManager:
                  runner: Callable[[AgentDefinition, str, dict[str, Any], Any], Any],
                  parent_context: dict[str, Any] | None = None,
                  parent_task_id: str | None = None, depth: int = 0,
-                 approval_gate: Any = None) -> list[dict[str, Any]]:
+                 approval_gate: Any = None, timeout: float | None = None) -> list[dict[str, Any]]:
         """Execute independent read-only specialists concurrently with bounded fan-out.
 
-        Each job gets a separate child task and sanitized context. Failures are
-        returned per job so one unavailable specialist does not discard other
+        Each job gets a separate child task and sanitized context. Failures and timeouts
+        are returned per job so one unavailable specialist does not discard other
         completed evidence. Mutating specialists are deliberately rejected here;
         writes must remain in the foreground approval workflow.
         """
         from concurrent.futures import ThreadPoolExecutor, as_completed
+        from concurrent.futures import TimeoutError as FuturesTimeout
 
         jobs = list(jobs or [])
         if not jobs:
@@ -546,13 +621,16 @@ class SubagentManager:
                 + ", ".join(unsafe)
             )
 
-        active = [task for task in self.tasks.list(parent_task_id)
+        active = [task for task in self.tasks.children_of(parent_task_id)
                   if task.status in {"queued", "running"}]
         if len(active) + len(jobs) > self.max_children:
             raise RuntimeError("Subagent concurrency limit reached.")
 
+        wait_seconds = self.default_timeout if timeout is None else timeout
         results: dict[str, dict[str, Any]] = {}
-        with ThreadPoolExecutor(max_workers=min(self.max_children, len(jobs))) as pool:
+        # No ``with`` block: its exit would join (and so wait for) hung workers.
+        pool = ThreadPoolExecutor(max_workers=min(self.max_children, len(jobs)))
+        try:
             futures = {
                 pool.submit(
                     self.run, agent, prompt, runner, parent_context,
@@ -560,12 +638,21 @@ class SubagentManager:
                 ): agent.name
                 for agent, prompt in jobs
             }
-            for future in as_completed(futures):
-                name = futures[future]
-                try:
-                    results[name] = {"agent": name, "status": "completed",
-                                     "result": future.result(), "error": None}
-                except Exception as exc:
-                    results[name] = {"agent": name, "status": "failed",
-                                     "result": None, "error": f"{type(exc).__name__}: {exc}"}
+            try:
+                for future in as_completed(futures, timeout=wait_seconds):
+                    name = futures[future]
+                    try:
+                        results[name] = {"agent": name, "status": "completed",
+                                         "result": future.result(), "error": None}
+                    except Exception as exc:
+                        results[name] = {"agent": name, "status": "failed",
+                                         "result": None, "error": f"{type(exc).__name__}: {exc}"}
+            except FuturesTimeout:
+                pass
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        for name in names:
+            if name not in results:
+                results[name] = {"agent": name, "status": "failed", "result": None,
+                                 "error": f"TimeoutError: specialist did not finish within {wait_seconds}s"}
         return [results[agent.name] for agent, _prompt in jobs]

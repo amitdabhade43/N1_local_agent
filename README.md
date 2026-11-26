@@ -187,3 +187,19 @@ NINJA_AGENT_MAX_SECONDS=180
 The step count is a model-turn budget, not a limit on the number of NinjaOne records returned. Pagination still follows the OpenAPI cursor contract, and the wall-clock/iteration guards do not weaken write approval or the DELETE block.
 
 The runtime deliberately does not import ClawSpring's coding-agent permission model, workspace manipulation, shell execution, or worktree behavior. Those concepts are not appropriate for a NinjaOne tenant-operations agent. Any future subagent must inherit the same NinjaOne tool registry, OpenAPI validation, entity-resolution rules, approval gate and destructive-operation policy.
+
+## Local API security
+
+The approve endpoint executes NinjaOne writes, so `/api/*` is protected:
+
+- Every `/api/*` request (except `/api/health`) needs the `x-n1-token` header. The token is generated per launch (or taken from `N1_API_TOKEN`) and injected only into the pages this app serves (`/` and `/static/agent-execution-studio.html`), so other websites and DNS-rebinding pages cannot call the API.
+- Requests must carry an allowed `Host` header (`127.0.0.1`, `localhost`, `[::1]` by default; override with `ALLOWED_HOSTS`).
+- The app refuses to start on a non-loopback `HOST` unless both `N1_API_TOKEN` and `ALLOWED_HOSTS` are set. Put it behind TLS if you do.
+- HTML is served with `X-Frame-Options: DENY` so the approval buttons cannot be framed.
+- Limits: this does not protect against malware already running as your user (it can fetch `/` and read the token), and the in-memory approvals/token are per process, so run a single worker.
+
+An approval is only consumed once it can actually execute: if `NINJA_SCOPE` lacks `management` the prepared action stays pending (until its 10-minute expiry) so you can fix `.env` and approve the same card.
+
+## Specialist orchestration
+
+`AgentRegistry` picks specialists by whole-word keyword match (plural-tolerant, weighted; per-agent `weights` override the defaults, `min_score` sets a threshold). `SubagentManager` runs read-only specialists in parallel with: depth limit 1, at most 4 children **per parent task** (use `begin_request()` and pass its id as `parent_task_id`), recursive secret scrubbing of the context passed to children (optional `context_allowlist`), and a wait timeout (`NINJA_AGENT_MAX_SECONDS`) after which a slow specialist is reported as failed. Threads cannot be killed, so runners must also enforce their own HTTP/LLM timeouts. Mutating specialists are never run in parallel; writes stay in the foreground approval flow.

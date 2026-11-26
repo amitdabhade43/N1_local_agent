@@ -844,18 +844,21 @@ def execute_pending_action(action_id, session_id):
         if time.time() > action["expires_at"]:
             _pending_actions.pop(action_id, None)
             return {"ok": False, "error": "Approval request expired. Ask the agent to prepare it again."}
+        # Check scope BEFORE consuming: a configuration problem must not destroy the
+        # prepared action; the user can fix .env and approve the same card again.
+        scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
+        if "management" not in scopes:
+            return {
+                "ok": False,
+                "error": (
+                    "The configured NINJA_SCOPE does not include 'management'. "
+                    "Enable the Management scope for this NinjaOne OAuth app and set "
+                    "NINJA_SCOPE=monitoring management in .env before approving write operations. "
+                    "The prepared action stays pending until it expires."
+                ),
+            }
+        # Consume before execution: repeated clicks cannot submit the write twice.
         _pending_actions.pop(action_id, None)
-
-    scopes = set(re.split(r"[\s,]+", SCOPE.strip().lower()))
-    if "management" not in scopes:
-        return {
-            "ok": False,
-            "error": (
-                "The configured NINJA_SCOPE does not include 'management'. "
-                "Enable the Management scope for this NinjaOne OAuth app and set "
-                "NINJA_SCOPE=monitoring management in .env before approving write operations."
-            ),
-        }
 
     try:
         result = http_request(
@@ -1242,8 +1245,16 @@ NINJA_AGENTS.register(AgentDefinition(
 ))
 NINJA_TASKS = TaskRegistry(history_limit=250)
 NINJA_EVENT_BUS = EventBus()
+def _subagent_timeout():
+    try:
+        return max(1.0, float(os.getenv("NINJA_AGENT_MAX_SECONDS", "180")))
+    except ValueError:
+        return 180.0
+
+
 NINJA_SUBAGENTS = SubagentManager(
-    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4
+    tasks=NINJA_TASKS, events=NINJA_EVENT_BUS, max_depth=1, max_children=4,
+    default_timeout=_subagent_timeout(),
 )
 NINJA_SKILLS = SkillRegistry()
 NINJA_SKILLS.load_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills"))

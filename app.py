@@ -29,6 +29,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from pydantic import BaseModel
 
 load_dotenv()
+import n1_security
 import ninja_native  # after load_dotenv so NINJA_* settings from .env are visible
 from foundry_discovery import discover_foundry, is_vision_model
 
@@ -93,6 +94,9 @@ Rules:
 """
 
 app = FastAPI(title="NinjaOne Local Expert Agent")
+# Token auth + Host allowlist + token-bearing "/" and studio routes.
+# Must run before the /static mount so the explicit studio route wins.
+API_TOKEN = n1_security.install(app, HOST)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 mcp_client = MultiServerMCPClient({
@@ -1627,11 +1631,6 @@ async def run_agent(session_id: str, model_id: str, message_content: Any, base_u
         )
 
     return final_text or "The model returned no text response.", activity
-
-
-@app.get("/")
-async def index():
-    return FileResponse("static/index.html")
 
 
 @app.get("/api/config")
