@@ -302,6 +302,10 @@ async function send(){
  const progress=document.createElement('div');progress.className='progress';body.append(progress);
  const liveActivityKeys=new Set();
   function showProgress(message,stage,streamEvent){
+   // The first approval_required event may arrive before "complete". Capture
+   // the server-created session ID before rendering the card so its button
+   // submits the ID that owns the pending action.
+   if(streamEvent&&streamEvent.session_id)sessionId=streamEvent.session_id;
    const activity=streamEvent&&streamEvent.activity_event;
    if(activity){
     const key=activityKey(activity);if(liveActivityKeys.has(key))return;liveActivityKeys.add(key);
