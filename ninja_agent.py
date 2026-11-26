@@ -2361,12 +2361,15 @@ def recipe_move_devices_to_organization(question):
             return f"Organization ID {organization_id} was not found in the live NinjaOne organization inventory. No change was prepared."
         target_name = str(organization.get("name") or organization.get("displayName") or "").strip()
         requested_target = re.search(r"\b(?:in|to|into)\s+(?:the\s+)?(.+?)\s*\(\s*id\s*[:#=]?\s*\d+\s*\)", text, re.I)
-        if requested_target and target_name and requested_target.group(1).strip().casefold() != target_name.casefold():
+        requested_name = requested_target.group(1).strip().strip("*_ `") if requested_target else ""
+        if requested_name and target_name and requested_name.casefold() != target_name.casefold():
             return (
                 f"Target verification failed: organization ID {organization_id} is '{target_name}', "
-                f"but the request names '{requested_target.group(1).strip()}'. No change was prepared."
+                f"but the request names '{requested_name}'. No change was prepared."
             )
         devices = fetch(list_op, list_op["path"], {"pageSize": 1000})
+        if getattr(devices, "complete", True) is False:
+            return "NinjaOne returned an incomplete device inventory. I will not prepare a bulk update from partial results."
     except Exception as exc:
         return f"Live inventory resolution failed ({type(exc).__name__}: {exc}). No change was prepared."
 
@@ -2421,9 +2424,6 @@ def recipe_move_devices_to_organization(question):
             f"inventory, but will not prepare a partial bulk change. " + " | ".join(details) +
             ". No changes were prepared."
         )
-    if getattr(devices, "complete", True) is False:
-        return "NinjaOne returned an incomplete device inventory. I will not prepare a bulk update from partial results."
-
     requests_to_prepare = []
     body = {"organizationId": organization_id}
     for device in resolved:
