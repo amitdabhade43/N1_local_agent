@@ -175,8 +175,9 @@ function renderApprovalCard(parent,action){
   null,2
  );
  details.append(summaryLine,pre);card.append(details);
+ let skippedCard=null;
  if(Array.isArray(action.skipped_items)&&action.skipped_items.length){
-  const skippedCard=document.createElement('section');skippedCard.className='approval-card';
+  skippedCard=document.createElement('section');skippedCard.className='approval-card';
   const skippedHeading=document.createElement('div');skippedHeading.className='approval-heading';
   const skippedTitle=document.createElement('b');skippedTitle.textContent='Not included · '+action.skipped_items.length;
   const skippedPill=document.createElement('span');skippedPill.className='approval-pill';skippedPill.textContent='NOT EXECUTED';
@@ -199,7 +200,7 @@ function renderApprovalCard(parent,action){
   });
   skippedDetails.append(skippedSummary,skippedList);
   skippedCard.append(skippedHeading,skippedIntro,skippedDetails);
-  card.append(skippedCard);
+ 
  }
  const controls=document.createElement('div');controls.className='approval-controls';
  const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
@@ -249,6 +250,7 @@ function renderApprovalCard(parent,action){
  approve.onclick=()=>submitDecision('approve');
  reject.onclick=()=>submitDecision('reject');
  parent.append(card);
+ if(skippedCard)parent.append(skippedCard);
 }
 function activityKey(item){try{return JSON.stringify(item)}catch{return String(item)}}
  function activityLabel(item){
