@@ -612,20 +612,27 @@ def _run_inner(session_id, model_id, content, base, progress=None, api_key=None,
         return clarification, [{"kind": "clarification", "stage": "missing_required_fields",
                                 "message": "Requested first name, last name and email before preparing the create-end-user request."}]
     _ensure()
-    # A typed "yes"/"approved" is never an approval action. If the previous
-    # mutation turn only produced prose and no pending action exists, resume
-    # preparation from that original request so the UI can receive a real card.
+    # A typed "approve"/"yes" is never an approval action and must not
+    # re-run the previous mutation prompt. Re-running model inference here can
+    # reproduce the same prose-only "preparing approval" loop indefinitely.
     if _AFFIRMATIVE_REPLY_RE.fullmatch(q.strip()):
         if _pending_for_session(session_id):
-            return (
-                "There is already a pending NinjaOne approval request. Please use its "
-                "Approve and execute or Reject button; a chat reply cannot approve it.",
-                [],
+            message = (
+                "A real NinjaOne approval request is pending. Use its Approve and execute "
+                "or Reject button; a chat reply cannot approve it."
             )
-        recovered = _recover_unprepared_mutation(q, hist)
-        if recovered:
-            q = recovered
-            emit("Resuming the previous change request to create its approval card.", "understanding")
+        else:
+            message = (
+                "There is no active NinjaOne approval request to approve. The previous "
+                "response did not create a real approval card, and no change was made. "
+                "Please resend the original change request; I must create the approval card "
+                "before you can approve it."
+            )
+        return message, [{
+            "kind": "policy",
+            "stage": "approval_not_pending",
+            "message": "Chat confirmation was not treated as approval; no mutation was executed.",
+        }]
     execution_plan = core.build_execution_plan(q, hist)
     plan_event = {"kind": "execution_plan", "plan": execution_plan}
     record_activity(plan_event)
