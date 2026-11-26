@@ -2292,25 +2292,61 @@ def recipe_find(q):
     return f'Found {len(found)} match(es) for "{name}":\n' + "\n".join(lines)
 
 
+_BULK_INSTRUCTION_WORDS = frozenset({
+    "organization", "org", "device", "devices", "endpoint", "endpoints",
+    "please", "update", "move", "transfer", "assign", "change", "target",
+})
+_BULK_NAME_RE = re.compile(r"[A-Za-z0-9][\w.\-]*")
+
+
+def _has_bulk_instruction_word(text):
+    """True when a whole whitespace-delimited word is an instruction word.
+
+    Hyphenated device names such as DEVICE-12 or ORG-LAP-1 are single tokens and must
+    never be mistaken for instructions (they used to be dropped without any message).
+    """
+    return any(
+        token.strip(":,.;()[]*_`'\"").casefold() in _BULK_INSTRUCTION_WORDS
+        for token in str(text).split()
+    )
+
+
+def _split_bulk_list_prefix(line):
+    """Return the list after "<instruction prefix>:" (colon outside parentheses), else None.
+
+    "Move devices to organization X (ID: 7): PC-1, PC-2" -> "PC-1, PC-2". The colon inside
+    "(ID: 7)" is ignored, and the prefix must really contain an instruction word.
+    """
+    depth = 0
+    for index, char in enumerate(line):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth = max(0, depth - 1)
+        elif char == ":" and depth == 0:
+            prefix, rest = line[:index], line[index + 1:].strip()
+            if rest and _has_bulk_instruction_word(prefix):
+                return rest
+    return None
+
+
 def _bulk_device_names_from_request(question):
     """Extract a user-supplied device list without asking the LLM to resolve each item."""
     text = str(question or "").replace("\r", "")
-    lines = text.split("\n")
     candidates = []
-    for index, raw in enumerate(lines):
+    for raw in text.split("\n"):
         line = raw.strip()
         if not line:
             continue
-        if re.search(r"\b(?:devices?|endpoints?)\b", line, re.I):
-            tail = re.split(r"\b(?:devices?|endpoints?)\b\s*[:\-]?\s*", line, maxsplit=1, flags=re.I)
-            if len(tail) > 1 and re.search(r"[,;]", tail[1]):
-                line = tail[1]
-            else:
+        listed = _split_bulk_list_prefix(line)
+        if listed is not None:
+            line = listed
+        else:
+            has_list = bool(re.search(r"[,;]", line))
+            # Prose or a header such as "Devices:" with no list in it: nothing to extract.
+            if not has_list and _has_bulk_instruction_word(line) and (" " in line or line.endswith(":")):
                 continue
-        if re.search(r"\b(?:organization|org)\b|\b(?:please|move|update|transfer|assign)\b", line, re.I):
-            if not re.search(r"[,;]", line):
-                continue
-        line = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+        line = re.sub(r"^\s*(?:[-*\u2022]+|\d+[.)])\s*", "", line).strip()
         line = re.sub(
             r"\s+(?:in|to|into)\s+(?:(?:the\s+)?(?:organization|org)\s+)?[^,;]*\(\s*id\s*[:#=]?\s*\d+\s*\)\s*$",
             "", line, flags=re.I
@@ -2318,9 +2354,19 @@ def _bulk_device_names_from_request(question):
         line = re.sub(r"\s+(?:to|into)\s+(?:the\s+)?(?:organization|org)\b.*$", "", line, flags=re.I)
         for part in re.split(r"[,;]", line):
             name = part.strip().strip("\"'")
-            if not name or re.search(r"\b(?:organization|org|devices?|please|update|move|transfer|target)\b", name, re.I):
+            if not name:
                 continue
-            if len(name) > 128 or not re.search(r"[A-Za-z0-9]", name):
+            if " " in name and _has_bulk_instruction_word(name):
+                # A verb glued to the first list item: "Move PC-001, PC-002 to ...".
+                verb = re.fullmatch(
+                    r"(?:please\s+)?(?:move|update|transfer|assign|change)\s+(\S+)", name, flags=re.I
+                )
+                item = verb.group(1).strip("\"'") if verb else ""
+                name = (
+                    item if _BULK_NAME_RE.fullmatch(item)
+                    and item.casefold() not in _BULK_INSTRUCTION_WORDS else ""
+                )
+            if not name or len(name) > 128 or not re.search(r"[A-Za-z0-9]", name):
                 continue
             candidates.append(name)
     # Preserve duplicates so the resolver can report them instead of silently
@@ -2431,13 +2477,23 @@ def recipe_move_devices_to_organization(question):
             })
         else:
             row = matches[0]
-            if row.get("id") is None:
+            try:
+                device_id = int(row["id"]) if row.get("id") is not None else None
+            except (TypeError, ValueError):
+                device_id = None
+            if device_id is None:
                 skipped_items.append({
-                    "name": requested, "reason": "The matching inventory record has no device ID."
+                    "name": requested,
+                    "reason": "The matching inventory record has no usable numeric device ID."
+                })
+            elif str(row.get("organizationId")) == str(organization_id):
+                skipped_items.append({
+                    "name": requested,
+                    "reason": "Already in the target organization; no change is needed."
                 })
             else:
                 resolved.append({
-                    "name": device_name(row), "id": int(row["id"]),
+                    "name": device_name(row), "id": device_id,
                     "organization_id": row.get("organizationId")
                 })
 
