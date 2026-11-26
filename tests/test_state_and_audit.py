@@ -251,3 +251,19 @@ def test_session_store_behaves_like_a_dict_for_existing_callers():
         assert store["p"] == [9]
         store["q"] = [1]            # eviction bookkeeping must tolerate patch.dict's update()
     assert "p" not in store
+
+
+# ------------------------------------------------------------------ router-level audit
+def test_unknown_or_replayed_action_ids_are_audited_at_the_api(audit_file):
+    from starlette.testclient import TestClient
+
+    import app as app_module
+    with TestClient(app_module.app, base_url="http://127.0.0.1") as client:
+        headers = {"x-n1-token": app_module.API_TOKEN}
+        body = {"session_id": "guesser"}
+        assert client.post("/api/actions/does-not-exist/approve", json=body, headers=headers).json()["ok"] is False
+        assert client.post("/api/actions/does-not-exist/reject", json=body, headers=headers).json()["ok"] is False
+    events = _events(audit_file)
+    assert [(e["event"], e["reason"]) for e in events] == [
+        ("action_not_found", "approve"), ("action_not_found", "reject")]
+    assert events[0]["action_id"] == "does-not-exist" and events[0]["session"] != "guesser"

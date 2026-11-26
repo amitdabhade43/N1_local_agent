@@ -1784,6 +1784,7 @@ async def approve_native_action(action_id: str, req: ActionApprovalRequest):
         return result
     if backend == "mcp":
         return await execute_mcp_pending_action(action_id, req.session_id)
+    n1_audit.audit("action_not_found", req.session_id, action_id=action_id, reason="approve")
     return {"ok": False, "error": "Approval request not found or already used."}
 
 
@@ -1800,6 +1801,7 @@ async def reject_native_action(action_id: str, req: ActionApprovalRequest):
     if backend == "mcp":
         rejected = reject_mcp_pending_action(action_id, req.session_id)
         return {"ok": rejected, "message": "Action rejected." if rejected else "Approval request not found or already used."}
+    n1_audit.audit("action_not_found", req.session_id, action_id=action_id, reason="reject")
     return {"ok": False, "message": "Approval request not found or already used."}
 
 
