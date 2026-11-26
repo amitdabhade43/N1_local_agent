@@ -55,10 +55,10 @@ def test_bulk_device_move_resolves_1000_names_and_prepares_one_approval(monkeypa
     core.reject_pending_action(result["action_id"], "bulk-1000-test")
 
 
-def test_bulk_device_move_does_not_prepare_partial_or_ambiguous_inventory(monkeypatch):
+def test_bulk_device_move_prepares_valid_partial_and_reports_unresolved(monkeypatch):
     question = (
-        "Move devices to organization HOERBIGER - Unattended (ID: 7)\n"
-        "PC-ONE\nPC-MISSING\nPC-DUPLICATE"
+        "Move devices to organization HOERBIGER - Unattended (ID: 7)\\n"
+        "PC-ONE\\nPC-MISSING\\nPC-AMBIGUOUS\\nPC-DUP-INPUT\\nPC-DUP-INPUT\\nPC-TWO"
     )
     update_op = {
         "id": "updateDevice", "method": "PATCH", "path": "/v2/device/{id}",
@@ -74,25 +74,30 @@ def test_bulk_device_move_does_not_prepare_partial_or_ambiguous_inventory(monkey
         if operation["id"] == "getOrganizations"
         else [
             {"id": 1, "systemName": "PC-ONE"},
-            {"id": 2, "systemName": "PC-DUPLICATE"},
-            {"id": 3, "systemName": "PC-DUPLICATE"},
+            {"id": 2, "systemName": "PC-AMBIGUOUS"},
+            {"id": 3, "systemName": "PC-AMBIGUOUS"},
+            {"id": 4, "systemName": "PC-DUP-INPUT"},
+            {"id": 5, "systemName": "PC-TWO"},
         ]
     ))
     monkeypatch.setattr(core, "_argument_errors", lambda operation, args: [])
     core.clear_pending_session("bulk-partial-test")
     core.set_active_session("bulk-partial-test")
     try:
-        result = core.recipe_move_devices_to_organization(question)
+        result = json.loads(core.recipe_move_devices_to_organization(question))
     finally:
         core.clear_active_session()
 
-    assert "Not found: PC-MISSING" in result
-    assert "Ambiguous names: PC-DUPLICATE" in result
-    assert "No changes were prepared." in result
-    assert not any(
-        item.get("session_id") == "bulk-partial-test"
-        for item in core._pending_actions.values()
-    )
+    assert result["approval_required"] is True
+    assert result["partial_batch"] is True
+    assert result["batch_total"] == 2
+    assert [item["device_name"] for item in result["batch_items"]] == ["PC-ONE", "PC-TWO"]
+    skipped = {item["name"]: item["reason"] for item in result["skipped_items"]}
+    assert "No exact device-name match" in skipped["PC-MISSING"]
+    assert "Multiple NinjaOne devices" in skipped["PC-AMBIGUOUS"]
+    assert "Duplicate name in the supplied list" in skipped["PC-DUP-INPUT"]
+    assert result["skipped_total"] == 3
+    core.reject_pending_action(result["action_id"], "bulk-partial-test")
 
 
 def test_batch_approval_executes_each_exact_patch_once(monkeypatch):
