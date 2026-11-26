@@ -58,7 +58,7 @@ def test_bulk_device_move_resolves_1000_names_and_prepares_one_approval(monkeypa
 def test_bulk_device_move_prepares_valid_partial_and_reports_unresolved(monkeypatch):
     question = (
         "Move devices to organization HOERBIGER - Unattended (ID: 7)\n"
-        "PC-ONE\\nPC-MISSING\\nPC-AMBIGUOUS\\nPC-DUP-INPUT\\nPC-DUP-INPUT\\nPC-TWO"
+        "PC-ONE\nPC-MISSING\nPC-AMBIGUOUS\nPC-DUP-INPUT\nPC-DUP-INPUT\nPC-TWO"
     )
     update_op = {
         "id": "updateDevice", "method": "PATCH", "path": "/v2/device/{id}",
