@@ -1360,7 +1360,10 @@ async def try_direct_backend_request(session_id: str, message_content: Any):
     # resolving device IDs one at a time.
     if (
         re.search(r"\b(?:device|devices|endpoint|endpoints)\b", message_text, re.I)
-        and re.search(r"\b(?:organization|org)\b", message_text, re.I)
+        and (
+            re.search(r"\b(?:organization|org)\b", message_text, re.I)
+            or re.search(r"\(\s*id\s*[:#=]?\s*\d+\s*\)", message_text, re.I)
+        )
         and re.search(r"\b(?:move|update|transfer|assign|change)\b", message_text, re.I)
     ):
         try:
