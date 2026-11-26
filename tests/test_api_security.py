@@ -205,7 +205,7 @@ def test_streamed_approval_event_includes_server_session_id(client, monkeypatch)
     assert response.status_code == 200
     events = [
         json.loads(frame.split("data: ", 1)[1])
-        for frame in response.text.split("\\n\\n")
+        for frame in response.text.split("\n\n")
         if frame.startswith("data: ")
     ]
     approval = next(
