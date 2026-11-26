@@ -199,7 +199,7 @@ function renderApprovalCard(parent,action){
   });
   skippedDetails.append(skippedSummary,skippedList);
   skippedCard.append(skippedHeading,skippedIntro,skippedDetails);
-  parent.append(skippedCard);
+  card.append(skippedCard);
  }
  const controls=document.createElement('div');controls.className='approval-controls';
  const approve=document.createElement('button');approve.className='primary';approve.textContent='Approve and execute';
