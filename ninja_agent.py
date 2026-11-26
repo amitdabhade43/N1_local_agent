@@ -2329,7 +2329,10 @@ def _bulk_device_names_from_request(question):
 def recipe_move_devices_to_organization(question):
     """Resolve an arbitrary-size device list in one inventory read and prepare one approval."""
     text = str(question or "").strip()
-    if not re.search(r"\b(?:organization|org)\b", text, re.I):
+    if not (
+        re.search(r"\b(?:organization|org)\b", text, re.I)
+        or re.search(r"\(\s*id\s*[:#=]?\s*\d+\s*\)", text, re.I)
+    ):
         return None
     if not re.search(r"\b(?:move|update|transfer|assign|change)\b", text, re.I):
         return None
