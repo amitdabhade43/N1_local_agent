@@ -409,19 +409,42 @@ def normalize_nullable(schema: Any) -> Any:
     return result
 
 
+_SPEC_URI = "urn:n1:openapi"
+
+
+def _anchor_local_refs(node: Any) -> Any:
+    """Point "#/components/..." references at the registered OpenAPI document.
+
+    With the ``referencing`` library the validated schema itself becomes the root
+    document, so a bare local pointer would be looked up inside the request-body schema
+    instead of the spec.
+    """
+    if isinstance(node, dict):
+        return {
+            key: (f"{_SPEC_URI}{value}" if key == "$ref" and isinstance(value, str) and value.startswith("#")
+                  else _anchor_local_refs(value))
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_anchor_local_refs(item) for item in node]
+    return node
+
+
 def validate_payload(schema: dict | None, payload: Any, spec: dict) -> list[str]:
     """Validate a request body against the OpenAPI schema, including local refs."""
     if not schema:
         return []
     try:
-        from jsonschema import Draft7Validator, RefResolver
+        from jsonschema import Draft7Validator
+        from referencing import Registry, Resource
+        from referencing.jsonschema import DRAFT7
     except ImportError:
-        return ["Request-body validation requires the jsonschema package. Install requirements.txt."]
+        return ["Request-body validation requires the jsonschema and referencing packages. Install requirements.txt."]
 
-    candidate = normalize_nullable(copy.deepcopy(schema))
+    candidate = _anchor_local_refs(normalize_nullable(copy.deepcopy(schema)))
     try:
-        resolver = RefResolver.from_schema(spec)
-        validator = Draft7Validator(candidate, resolver=resolver)
+        registry = Registry().with_resource(_SPEC_URI, Resource(contents=spec, specification=DRAFT7))
+        validator = Draft7Validator(candidate, registry=registry)
         errors = sorted(validator.iter_errors(payload), key=lambda e: list(map(str, e.absolute_path)))
         return [
             f"{'.'.join(str(x) for x in error.absolute_path) or 'body'}: {error.message}"

@@ -1,0 +1,12 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+extend-exclude = [".venv", "logs"]
+
+[tool.ruff.lint]
+# Gate on real bugs only: syntax errors, undefined names, broken comparisons/format strings.
+# Unused imports/variables are reported by `ruff check --select F401,F841` but do not fail CI yet.
+select = ["E9", "F63", "F7", "F82"]

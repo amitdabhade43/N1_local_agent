@@ -203,3 +203,23 @@ An approval is only consumed once it can actually execute: if `NINJA_SCOPE` lack
 ## Specialist orchestration
 
 `AgentRegistry` picks specialists by whole-word keyword match (plural-tolerant, weighted; per-agent `weights` override the defaults, `min_score` sets a threshold). `SubagentManager` runs read-only specialists in parallel with: depth limit 1, at most 4 children **per parent task** (use `begin_request()` and pass its id as `parent_task_id`), recursive secret scrubbing of the context passed to children (optional `context_allowlist`), and a wait timeout (`NINJA_AGENT_MAX_SECONDS`) after which a slow specialist is reported as failed. Threads cannot be killed, so runners must also enforce their own HTTP/LLM timeouts. Mutating specialists are never run in parallel; writes stay in the foreground approval flow.
+
+## Audit log
+
+Every write approval is recorded in `logs/n1-audit.log` (JSON lines, rotating 5 MB x 5; change with `N1_AUDIT_LOG`, or set it to `off`). Events: `action_prepared`, `action_approved`, `action_rejected`, `action_expired`, `action_blocked` (missing `management` scope), `action_executed`, `action_failed`, `action_not_found` (unknown or replayed action IDs), plus `batch_item_executed` / `batch_item_failed` per device and a `batch_executed` summary for bulk moves.
+
+Only an allowlist of fields is written (action and operation IDs, method, path, backend, status code, counts, error class). Request bodies, query strings, headers, tokens and credentials cannot be logged, and the chat session ID is stored only as a short hash. Errors returned to the UI keep NinjaOne HTTP statuses and validation messages but never raw exception text; the rest goes to the server log.
+
+Chat histories and pending approvals are held in bounded in-memory stores (sessions expire after 24 h or beyond 200 sessions; 50 native / 100 MCP pending approvals). They are per process, so run a single worker.
+
+## Development
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.lock
+.\.venv\Scripts\python.exe -m ruff check .
+.\.venv\Scripts\python.exe -m pytest -q
+```
+
+- `requirements.txt` / `requirements-dev.txt` hold the loose, human-edited constraints. `requirements.lock` / `requirements-dev.lock` are the exact, cross-platform pins that `run.ps1` and CI install. Regenerate them after editing the `.txt` files: `uv pip compile requirements.txt --universal --python-version 3.12 -o requirements.lock` (same for the dev file).
+- `run.ps1` installs dependencies only when the lock file changed and starts the app with `python app.py`, which loads `.env` itself (`HOST` defaults to `127.0.0.1`, `PORT` to `8080`).
+- CI (`.github/workflows/ci.yml`) runs ruff (syntax errors and undefined names) and the test suite on Ubuntu and Windows for every push and pull request.
