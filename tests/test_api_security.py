@@ -215,3 +215,39 @@ def test_streamed_approval_event_includes_server_session_id(client, monkeypatch)
     )
     assert approval["session_id"]
     assert approval["activity_event"]["action"]["action_id"] == "stream-action"
+
+
+
+def test_native_chat_approve_without_pending_action_does_not_retry_mutation(monkeypatch):
+    import ninja_native
+
+    monkeypatch.setattr(ninja_native.core, "_ensure", lambda: None)
+    monkeypatch.setattr(
+        ninja_native.core,
+        "recipe_add_device_access",
+        lambda question: pytest.fail("approval confirmation must not rerun mutation preparation"),
+    )
+    ninja_native.clear_session("approve-loop-test")
+
+    answer, activity = ninja_native._try_fast_path("approve-loop-test", "approve")
+
+    assert "no active" in answer.lower()
+    assert any(item.get("stage") == "approval_not_pending" for item in activity)
+
+
+def test_mcp_chat_approve_without_pending_action_does_not_retry_mutation(monkeypatch):
+    import asyncio
+    import app as app_module
+
+    async def fake_tools():
+        return [object()]
+
+    monkeypatch.setenv("AGENT_BACKEND", "mcp")
+    monkeypatch.setattr(app_module, "get_tools", fake_tools)
+
+    answer, activity = asyncio.run(
+        app_module.run_agent("approve-loop-mcp-test", "model", "approve", "http://local")
+    )
+
+    assert "no active" in answer.lower()
+    assert any(item.get("stage") == "approval_not_pending" for item in activity)
