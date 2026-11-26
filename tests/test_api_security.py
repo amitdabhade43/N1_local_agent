@@ -125,3 +125,56 @@ def test_action_consumed_once_when_scope_present(monkeypatch):
     assert "a2" not in ninja_agent._pending_actions
     assert ninja_agent.execute_pending_action("a2", "s1")["ok"] is False
     assert len(calls) == 1
+
+
+
+def test_native_approval_is_routed_by_action_id_even_if_backend_switches(client, monkeypatch):
+    import app as app_module
+
+    action = _pending("native-switch", "session-native")
+    monkeypatch.setitem(ninja_agent._pending_actions, "native-switch", action)
+    monkeypatch.setenv("AGENT_BACKEND", "mcp")
+
+    response = client.post(
+        "/api/actions/native-switch/reject",
+        json={"session_id": "session-native"},
+        headers={"x-n1-token": client.token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert "native-switch" not in ninja_agent._pending_actions
+
+
+def test_mcp_approval_is_routed_by_action_id_even_if_backend_switches(client, monkeypatch):
+    import app as app_module
+
+    action = {
+        "action_id": "mcp-switch",
+        "session_id": "session-mcp",
+        "expires_at": time.time() + 60,
+    }
+    monkeypatch.setitem(app_module._mcp_pending_actions, "mcp-switch", action)
+    monkeypatch.setenv("AGENT_BACKEND", "native")
+
+    response = client.post(
+        "/api/actions/mcp-switch/reject",
+        json={"session_id": "session-mcp"},
+        headers={"x-n1-token": client.token},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert "mcp-switch" not in app_module._mcp_pending_actions
+
+
+def test_unknown_approval_action_returns_structured_failure(client, monkeypatch):
+    monkeypatch.setenv("AGENT_BACKEND", "native")
+    response = client.post(
+        "/api/actions/not-pending/approve",
+        json={"session_id": "session"},
+        headers={"x-n1-token": client.token},
+    )
+    assert response.status_code == 200
+    assert response.json()["ok"] is False
+    assert "not found" in response.json()["error"].lower()
