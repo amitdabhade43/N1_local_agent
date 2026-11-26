@@ -933,6 +933,10 @@ def execute_pending_action(action_id, session_id):
                 "total": len(results),
                 "succeeded": len(results) - len(failures),
                 "failed": len(failures),
+                "error": (
+                    f"{len(failures)} of {len(results)} device updates failed after approval."
+                    if failures else None
+                ),
                 "results": results,
             }
         result = http_request(
