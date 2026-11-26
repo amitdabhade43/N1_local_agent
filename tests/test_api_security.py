@@ -178,3 +178,40 @@ def test_unknown_approval_action_returns_structured_failure(client, monkeypatch)
     assert response.status_code == 200
     assert response.json()["ok"] is False
     assert "not found" in response.json()["error"].lower()
+
+
+
+def test_streamed_approval_event_includes_server_session_id(client, monkeypatch):
+    import json
+    import app as app_module
+
+    async def fake_direct(session_id, message):
+        action = {
+            "action_id": "stream-action",
+            "method": "PATCH",
+            "path": "/v2/device/1",
+            "body": {"organizationId": 7},
+        }
+        activity = [{"kind": "approval_required", "action": action}]
+        return "Approval required", activity
+
+    monkeypatch.setattr(app_module, "try_direct_backend_request", fake_direct)
+    response = client.post(
+        "/api/chat/stream",
+        json={"message": "move device 1 to organization 7", "provider": "foundry", "model": "test"},
+        headers={"x-n1-token": client.token},
+    )
+
+    assert response.status_code == 200
+    events = [
+        json.loads(frame.split("data: ", 1)[1])
+        for frame in response.text.split("\\n\\n")
+        if frame.startswith("data: ")
+    ]
+    approval = next(
+        event for event in events
+        if event.get("type") == "progress"
+        and (event.get("activity_event") or {}).get("kind") == "approval_required"
+    )
+    assert approval["session_id"]
+    assert approval["activity_event"]["action"]["action_id"] == "stream-action"
