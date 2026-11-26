@@ -787,6 +787,50 @@ def clear_active_session():
     _active_session.value = None
 
 
+def _prepare_batch_mutation(op, requests_to_prepare, summary):
+    """Store many validated writes behind one session-bound approval decision."""
+    session_id = getattr(_active_session, "value", None)
+    if not session_id:
+        return err("Mutation blocked: no active chat session is associated with this request.")
+    if not requests_to_prepare:
+        return err("No device updates were prepared.")
+    action_id = secrets.token_urlsafe(24)
+    action = {
+        "action_id": action_id,
+        "session_id": session_id,
+        "operation_id": op["id"],
+        "method": op["method"],
+        "path": op["path"],
+        "batch_requests": requests_to_prepare,
+        "summary": summary,
+        "expires_at": time.time() + 600,
+    }
+    with _pending_lock:
+        expired = [key for key, value in _pending_actions.items() if time.time() > value.get("expires_at", 0)]
+        for key in expired:
+            _pending_actions.pop(key, None)
+        if len(_pending_actions) >= 50:
+            return err("Too many pending approval requests. Approve, reject or clear an existing request first.")
+        _pending_actions[action_id] = action
+    return json.dumps({
+        "approval_required": True,
+        "action_id": action_id,
+        "operation_id": op["id"],
+        "method": op["method"],
+        "path": op["path"],
+        "summary": summary,
+        "batch": True,
+        "batch_total": len(requests_to_prepare),
+        "batch_items": [
+            {"device_name": item["device_name"], "device_id": item["path_params"]["id"],
+             "body": item["body"]}
+            for item in requests_to_prepare
+        ],
+        "expires_in_seconds": 600,
+        "note": "No request has been executed. One approval decision covers the complete batch."
+    }, default=str)
+
+
 def _prepare_mutation(op, path, query, body, headers=None):
     session_id = getattr(_active_session, "value", None)
     if not session_id:
@@ -861,6 +905,36 @@ def execute_pending_action(action_id, session_id):
         _pending_actions.pop(action_id, None)
 
     try:
+        if action.get("batch_requests") is not None:
+            results = []
+            failures = []
+            for item in action["batch_requests"]:
+                path = action["path"]
+                for name, value in (item.get("path_params") or {}).items():
+                    path = path.replace("{" + name + "}", quote(str(value), safe=""))
+                try:
+                    result = http_request(
+                        action["method"], path, item.get("query") or {}, item.get("body"),
+                        item.get("media_type") or "application/json",
+                        item.get("headers") or {}, approved=True
+                    )
+                    results.append({"device_name": item["device_name"], "device_id": item["path_params"]["id"],
+                                    "ok": True, "result": result})
+                except Exception as exc:
+                    failure = {"device_name": item["device_name"], "device_id": item["path_params"]["id"],
+                               "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+                    results.append(failure)
+                    failures.append(failure)
+            return {
+                "ok": not failures,
+                "partial": bool(failures) and len(failures) < len(results),
+                "operation_id": action["operation_id"],
+                "method": action["method"],
+                "total": len(results),
+                "succeeded": len(results) - len(failures),
+                "failed": len(failures),
+                "results": results,
+            }
         result = http_request(
             action["method"], action["path"], action["query"], action["body"],
             action["media_type"], action.get("headers"), approved=True
