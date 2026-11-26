@@ -2299,7 +2299,7 @@ def _bulk_device_names_from_request(question):
         line = raw.strip()
         if not line:
             continue
-        if index == 0 and re.search(r"\b(?:devices?|endpoints?)\b", line, re.I):
+        if re.search(r"\b(?:devices?|endpoints?)\b", line, re.I):
             tail = re.split(r"\b(?:devices?|endpoints?)\b\s*[:\-]?\s*", line, maxsplit=1, flags=re.I)
             if len(tail) > 1 and re.search(r"[,;]", tail[1]):
                 line = tail[1]
@@ -2309,6 +2309,10 @@ def _bulk_device_names_from_request(question):
             if not re.search(r"[,;]", line):
                 continue
         line = re.sub(r"^\s*(?:[-*•]+|\d+[.)])\s*", "", line).strip()
+        line = re.sub(
+            r"\s+(?:in|to|into)\s+(?:(?:the\s+)?(?:organization|org)\s+)?[^,;]*\(\s*id\s*[:#=]?\s*\d+\s*\)\s*$",
+            "", line, flags=re.I
+        )
         line = re.sub(r"\s+(?:to|into)\s+(?:the\s+)?(?:organization|org)\b.*$", "", line, flags=re.I)
         for part in re.split(r"[,;]", line):
             name = part.strip().strip("\"'")
