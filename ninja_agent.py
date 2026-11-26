@@ -2360,7 +2360,7 @@ def recipe_move_devices_to_organization(question):
         if not organization:
             return f"Organization ID {organization_id} was not found in the live NinjaOne organization inventory. No change was prepared."
         target_name = str(organization.get("name") or organization.get("displayName") or "").strip()
-        requested_target = re.search(r"\b(?:in|to|into)\s+(?:the\s+)?(.+?)\s*\(\s*id\s*[:#=]?\s*\d+\s*\)", text, re.I)
+        requested_target = re.search(r"\b(?:in|to|into)\s+(?:(?:the\s+)?(?:organization|org)\s+)?(.+?)\s*\(\s*id\s*[:#=]?\s*\d+\s*\)", text, re.I)
         requested_name = requested_target.group(1).strip().strip("*_ `") if requested_target else ""
         if requested_name and target_name and requested_name.casefold() != target_name.casefold():
             return (
