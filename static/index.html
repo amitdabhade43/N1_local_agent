@@ -204,8 +204,10 @@ function renderApprovalCard(parent,action){
     const data=result.result||{};
     const name=[data.firstName,data.lastName].filter(Boolean).join(' ');
     const accessible=Array.isArray(data.accessibleDeviceIds)?data.accessibleDeviceIds:null;
-    resultText.textContent=(name?name+' · ':'')+(data.email?data.email+' · ':'')+
-      (accessible?'Accessible device IDs now: '+accessible.join(', '):'NinjaOne returned a successful response.');
+    resultText.textContent=result.total!=null
+      ?('NinjaOne accepted '+result.succeeded+' of '+result.total+' device updates'+(result.failed?' · failed: '+result.failed:'')+'.')
+      :(name?name+' · ':'')+(data.email?data.email+' · ':'')+
+       (accessible?'Accessible device IDs now: '+accessible.join(', '):'NinjaOne returned a successful response.');
     const raw=document.createElement('details');const rawSummary=document.createElement('summary');rawSummary.textContent='View API response';
     const rawPre=document.createElement('pre');rawPre.textContent=JSON.stringify(result,null,2);raw.append(rawSummary,rawPre);
     resultBox.append(resultTitle,resultText,raw);card.append(resultBox);
