@@ -787,7 +787,7 @@ def clear_active_session():
     _active_session.value = None
 
 
-def _prepare_batch_mutation(op, requests_to_prepare, summary):
+def _prepare_batch_mutation(op, requests_to_prepare, summary, skipped_items=None):
     """Store many validated writes behind one session-bound approval decision."""
     session_id = getattr(_active_session, "value", None)
     if not session_id:
@@ -826,6 +826,8 @@ def _prepare_batch_mutation(op, requests_to_prepare, summary):
              "body": item["body"]}
             for item in requests_to_prepare
         ],
+        "skipped_items": skipped_items or [],
+        "skipped_total": len(skipped_items or []),
         "expires_in_seconds": 600,
         "note": "No request has been executed. One approval decision covers the complete batch."
     }, default=str)
@@ -2321,13 +2323,9 @@ def _bulk_device_names_from_request(question):
             if len(name) > 128 or not re.search(r"[A-Za-z0-9]", name):
                 continue
             candidates.append(name)
-    unique, seen = [], set()
-    for name in candidates:
-        key = name.casefold()
-        if key not in seen:
-            seen.add(key)
-            unique.append(name)
-    return unique
+    # Preserve duplicates so the resolver can report them instead of silently
+    # collapsing repeated names into a seemingly clean request.
+    return candidates
 
 
 def recipe_move_devices_to_organization(question):
@@ -2400,40 +2398,54 @@ def recipe_move_devices_to_organization(question):
             if label:
                 by_name.setdefault(label.casefold(), []).append(row)
 
-    resolved, missing, ambiguous = [], [], []
+    input_counts = Counter(name.casefold() for name in names)
+    duplicate_inputs = {key for key, count in input_counts.items() if count > 1}
+    resolved, skipped_items = [], []
+    processed = set()
     for requested in names:
-        matches = by_name.get(requested.casefold(), [])
+        key = requested.casefold()
+        if key in processed:
+            continue
+        processed.add(key)
+        if key in duplicate_inputs:
+            skipped_items.append({
+                "name": requested,
+                "reason": "Duplicate name in the supplied list; excluded to avoid duplicate updates."
+            })
+            continue
+        matches = by_name.get(key, [])
         if not matches:
-            missing.append(requested)
+            skipped_items.append({
+                "name": requested,
+                "reason": "No exact device-name match in the complete NinjaOne inventory."
+            })
         elif len(matches) != 1:
-            ambiguous.append({"name": requested, "matches": [
-                {"id": item.get("id"), "name": device_name(item),
-                 "organizationId": item.get("organizationId")}
-                for item in matches[:10]
-            ]})
+            skipped_items.append({
+                "name": requested,
+                "reason": "Multiple NinjaOne devices have this name; manual selection is required.",
+                "matches": [
+                    {"id": item.get("id"), "name": device_name(item),
+                     "organizationId": item.get("organizationId")}
+                    for item in matches[:10]
+                ]
+            })
         else:
             row = matches[0]
             if row.get("id") is None:
-                missing.append(requested + " (inventory record has no device ID)")
+                skipped_items.append({
+                    "name": requested, "reason": "The matching inventory record has no device ID."
+                })
             else:
                 resolved.append({
                     "name": device_name(row), "id": int(row["id"]),
                     "organization_id": row.get("organizationId")
                 })
 
-    if missing or ambiguous:
-        details = []
-        if missing:
-            details.append("Not found: " + ", ".join(missing[:100]))
-        if ambiguous:
-            details.append("Ambiguous names: " + "; ".join(
-                f'{item["name"]} -> IDs {", ".join(str(match["id"]) for match in item["matches"])}'
-                for item in ambiguous
-            ))
+    if not resolved:
+        details = "; ".join(f'{item["name"]}: {item["reason"]}' for item in skipped_items)
         return (
-            f"I resolved {len(resolved)} of {len(names)} requested device names against the complete "
-            f"inventory, but will not prepare a partial bulk change. " + " | ".join(details) +
-            ". No changes were prepared."
+            f"No devices were uniquely resolved for approval out of {len(names)} supplied entries. "
+            f"Nothing was prepared. Not included: {details}"
         )
     requests_to_prepare = []
     body = {"organizationId": organization_id}
@@ -2452,7 +2464,24 @@ def recipe_move_devices_to_organization(question):
         })
     target_label = target_name or f"organization ID {organization_id}"
     summary = f"Move {len(resolved)} devices to {target_label} (ID: {organization_id})"
-    return _prepare_batch_mutation(update_op, requests_to_prepare, summary)
+    prepared_text = _prepare_batch_mutation(
+        update_op, requests_to_prepare, summary, skipped_items=skipped_items
+    )
+    try:
+        prepared = json.loads(prepared_text)
+    except (TypeError, ValueError):
+        return prepared_text
+    if prepared.get("approval_required"):
+        prepared["requested_total"] = len(names)
+        prepared["resolved_total"] = len(resolved)
+        prepared["skipped_total"] = len(skipped_items)
+        prepared["partial_batch"] = bool(skipped_items)
+        prepared["note"] = (
+            "Only uniquely resolved devices are included in this approval. "
+            "Skipped devices are listed separately and will not be changed."
+        )
+        return json.dumps(prepared, default=str)
+    return prepared_text
 
 
 def recipe_add_device_access(q):
